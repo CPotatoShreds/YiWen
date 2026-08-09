@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="#B03A2E" stroke="#8F2A1F" stroke-width="1.5"/>
+  <rect x="4.25" y="4.25" width="23.5" height="23.5" rx="4" fill="none" stroke="#F6F1E3" stroke-opacity="0.5" stroke-width="0.75"/>
+  <text x="16" y="22.5" text-anchor="middle" font-family="'Kaiti SC','STKaiti','PingFang SC','Microsoft YaHei',serif" font-size="19" font-weight="700" fill="#F6F1E3">异</text>
+</svg>
