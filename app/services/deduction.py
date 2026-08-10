@@ -35,6 +35,7 @@ from app.core.logger import get_logger
 from app.models.ability import Ability
 from app.models.user import User
 from app.services.nodes.deducer import OPENINGS, build_deduce_chain, build_endings
+from app.services.nodes.discusser import build_discuss_llm
 from app.services.nodes.transcribe_validator import build_repair_chain, build_validate_chain
 from app.services.nodes.transcriber import build_transcribe_chain
 from app.services.reliability import ainvoke_with_reliability
@@ -44,7 +45,7 @@ logger = get_logger("deduction")
 
 @dataclass
 class DeductionResult:
-    """一场推演的产出：上帝视角全文、A/B 视角全文、胜负判定。"""
+    """一场推演的产出：上帝视角全文、A/B 视角全文、胜负判定、战前讨论报告。"""
 
     god: str
     narration_a: str
@@ -52,6 +53,7 @@ class DeductionResult:
     winner_side: str  # "A" | "B" | "draw"
     winner_id: int | None
     result: str  # 胜者奇人名字或"和局"
+    discuss_report: str = ""  # 讨论节点产出（可能为空：外部未传且讨论失败降级）
 
 
 def _render_ability(a: Ability) -> str:
@@ -139,6 +141,7 @@ async def _safe_validate(
     god: str,
     viewer_name: str,
     narration: str,
+    trace_context: dict | None = None,
 ) -> object | None:
     """调用单侧校验链；可靠性层重试耗尽（或结构化输出失败）→ None，视为"无法判定"。"""
     try:
@@ -146,6 +149,7 @@ async def _safe_validate(
             build_validate(),
             {"info": info, "god": god, "viewer_name": viewer_name, "narration": narration},
             operation="validate",
+            trace_context=trace_context,
         )
     except Exception:  # noqa: BLE001 - 可靠性层已记异常日志；无法判定时保留原文，不冤枉合格叙述
         logger.warning("validate_unavailable viewer=%s", viewer_name)
@@ -159,6 +163,7 @@ async def _safe_repair(
     viewer_name: str,
     narration: str,
     violations: list[str],
+    trace_context: dict | None = None,
 ) -> str | None:
     """调用单侧修复链按质检违规点重写；失败 → None（调用方兜底上帝正文）。"""
     try:
@@ -172,6 +177,7 @@ async def _safe_repair(
                 "violations": "\n".join(f"- {v}" for v in violations),
             },
             operation="repair",
+            trace_context=trace_context,
         )
     except Exception:  # noqa: BLE001 - 可靠性层已记异常日志；兜底上帝正文
         logger.warning("repair_unavailable viewer=%s", viewer_name)
@@ -186,6 +192,7 @@ async def _settle_side(
     god: str,
     viewer_name: str,
     narration: str,
+    trace_context: dict | None = None,
 ) -> str:
     """单侧视角定稿：校验 → 合格直接用；不合格 → 修复一次再校验；仍不合格/修复失败 → 原文稿件兜底。
 
@@ -195,16 +202,18 @@ async def _settle_side(
     """
     if narration == god:
         return narration  # 转写失败已降级为上帝正文，无可修的原文稿件，原样返回
-    verdict = await _safe_validate(build_validate, info, god, viewer_name, narration)
+    verdict = await _safe_validate(build_validate, info, god, viewer_name, narration, trace_context=trace_context)
     if verdict is None:
         return narration  # 无法判定：保留原文
     if verdict.passes:
         return narration
-    repaired = await _safe_repair(build_repair, info, god, viewer_name, narration, list(verdict.violations))
+    repaired = await _safe_repair(
+        build_repair, info, god, viewer_name, narration, list(verdict.violations), trace_context=trace_context
+    )
     if repaired is None or not repaired.strip():
         logger.warning("repair_unavailable viewer=%s -> keep original", viewer_name)
         return narration
-    re_verdict = await _safe_validate(build_validate, info, god, viewer_name, repaired)
+    re_verdict = await _safe_validate(build_validate, info, god, viewer_name, repaired, trace_context=trace_context)
     if re_verdict is not None and re_verdict.passes:
         return repaired
     logger.warning("narration_failed_validation viewer=%s -> keep original", viewer_name)
@@ -224,22 +233,28 @@ async def run_deduction(
     tactic_b: str,
     style_a: str = "",
     style_b: str = "",
+    build_discuss: Callable[[], Runnable] = build_discuss_llm,
     build_deduce: Callable[[], Runnable] = build_deduce_chain,
     build_transcribe: Callable[[], Runnable] = build_transcribe_chain,
     build_validate: Callable[[], Runnable] = build_validate_chain,
     build_repair: Callable[[], Runnable] = build_repair_chain,
     opening: str | None = None,
+    discuss_report: str = "",
+    trace_context: dict | None = None,
 ) -> DeductionResult:
     """一次性推演一场对战并转写双视角，转写经校验节点定稿。
 
-    流程：选开场（随机或显式）→ 建三选一结尾模板（奇人名字）→ 推演 LLM 一口气输出完整
-    对战（含结尾句）→ 解析胜负 → 对完整上帝叙述做一次并发转写（转写 LLM 扮演该视角奇人、
-    第一人称向自己异闻师讲述经历，结果由角色自然交代）→ 校验节点逐侧定稿（校验 → 修复一次
-    → 再校验 → 原文稿件兜底）→ 发布单条 SSE segment。推演 LLM 重试耗尽抛 ChainFailure 向上，
-    由调用方标记 failed；转写失败降级为上帝正文兜底。
+    流程：选开场（随机或显式）→ 建三选一结尾模板（奇人名字）→ **讨论节点先对双方异能与战术
+    做分析报告**（能力理论模拟 + 实战拉片式推演，失败降级跳过，推演照旧）→ 推演 LLM 以
+    「双方信息 + 讨论报告」为输入一口气输出完整对战（含结尾句）→ 解析胜负 → 对完整上帝叙述
+    做一次并发转写（转写 LLM 扮演该视角奇人、第一人称向自己异闻师讲述经历，结果由角色自然
+    交代）→ 校验节点逐侧定稿（校验 → 修复一次 → 再校验 → 原文稿件兜底）→ 发布单条 SSE
+    segment。推演 LLM 重试耗尽抛 ChainFailure 向上，由调用方标记 failed；讨论/转写失败降级
+    不废场。
 
     推演过程沿 SSE 实时推送进度：dueling（上帝视角生成中）→ recounting（上帝视角完成、
-    奇人回归、开始转写）→ segment（转写正文）。LLM 上下文只含奇人名字，异闻师名字仅服务端日志。
+    奇人回归、开始转写）→ segment（转写正文）。讨论在后台进行，不占用 SSE 事件面。LLM 上下文
+    只含奇人名字，异闻师名字仅服务端日志。
     """
     opening, map_name = _pick_opening(opening)
     info = _combat_info(
@@ -249,6 +264,23 @@ async def run_deduction(
 
     deduce_llm = build_deduce()
     transcribe_chain = build_transcribe()
+
+    # 讨论节点：推演前先产出双方异能/战术分析报告（能力理论模拟 + 实战拉片），作为推演输入。
+    # 报告由外部传入（discuss_report）时直接复用；否则调讨论 LLM 生成。失败降级为仅用 info
+    # 推演（讨论是增强、不是必需），绝不因讨论失败废掉整场对决。
+    if not discuss_report:
+        try:
+            discuss_report = str(
+                await ainvoke_with_reliability(
+                    build_discuss(),
+                    {"info": info},
+                    operation="discuss",
+                    trace_context=trace_context,
+                )
+            )
+        except Exception:  # noqa: BLE001 - 讨论失败降级：推演照旧用双方信息
+            logger.warning("discuss_unavailable -> fallback to direct deduce")
+            discuss_report = ""
 
     logger.info(
         "battle_start a=%s(%s) b=%s(%s) abilities=%d/%d",
@@ -265,12 +297,14 @@ async def run_deduction(
         deduce_llm,
         {
             "info": info,
+            "discuss_report": discuss_report,
             "opening": opening,
             "ending_a": endings["A"],
             "ending_b": endings["B"],
             "ending_draw": endings["draw"],
         },
         operation="deduce",
+        trace_context=trace_context,
     )
     god = (opening + "\n\n" + seg).strip()
 
@@ -296,6 +330,7 @@ async def run_deduction(
                 "viewer_name_b": fighter_b,
             },
             operation="transcribe",
+            trace_context=trace_context,
         )
     except Exception:  # noqa: BLE001 - 转写失败（已重试耗尽）：两侧降级为上帝正文兜底
         tr = None
@@ -310,6 +345,7 @@ async def run_deduction(
             god=god,
             viewer_name=fighter_a,
             narration=raw_a,
+            trace_context=trace_context,
         ),
         _settle_side(
             build_validate=build_validate,
@@ -318,6 +354,7 @@ async def run_deduction(
             god=god,
             viewer_name=fighter_b,
             narration=raw_b,
+            trace_context=trace_context,
         ),
     )
 
@@ -330,4 +367,5 @@ async def run_deduction(
         winner_side=winner_side,
         winner_id=winner_id,
         result=result,
+        discuss_report=discuss_report,
     )

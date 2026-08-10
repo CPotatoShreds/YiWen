@@ -6,11 +6,10 @@ from pydantic import BaseModel, Field
 
 
 class GuessCardOut(BaseModel):
-    """一张猜词空白卡片：已匹配片段 + 猜测条进度 + 是否看破（看破即揭示真实奇术）。"""
+    """一张猜词空白卡片：已匹配片段 + 是否看破（看破即揭示真实奇术）。"""
 
     index: int  # 卡片编号（1 起）
     matched: list[str] = []  # 已贴到该卡的败方片段
-    progress: int = 0  # 猜测条进度（0-100）
     cracked: bool = False  # 是否已看破
     name: str | None = None  # 看破后揭示的真实奇术名称
     effect: str | None = None  # 看破后揭示的真实奇术效果

@@ -1,5 +1,6 @@
 // API 客户端：JWT 注入 + 统一错误处理 + 连接超时 + GET 失败自动重试
-export const API_BASE = "http://localhost:8102/api";
+// 同源相对路径：dev 时由 Vite 代理转发到后端（樱花只穿透前端，外网访问须同源）
+export const API_BASE = "/api";
 
 let token: string | null = localStorage.getItem("token");
 

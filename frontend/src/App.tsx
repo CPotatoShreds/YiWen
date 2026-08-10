@@ -18,6 +18,7 @@ import AdminAbilities from "./pages/admin/AdminAbilities";
 import AdminBattles from "./pages/admin/AdminBattles";
 import AdminRelations from "./pages/admin/AdminRelations";
 import AdminTraffic from "./pages/admin/AdminTraffic";
+import TestArena from "./pages/admin/TestArena";
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
@@ -57,6 +58,7 @@ export default function App() {
               <Route path="battles" element={<AdminBattles />} />
               <Route path="relations" element={<AdminRelations />} />
               <Route path="traffic" element={<AdminTraffic />} />
+              <Route path="test" element={<TestArena />} />
             </Route>
           </Routes>
         </main>

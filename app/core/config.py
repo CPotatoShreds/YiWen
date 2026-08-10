@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
-    # 数据库（默认本地 SQLite，生产可换 PostgreSQL）
-    DATABASE_URL: str = "sqlite+aiosqlite:///./ynfight.db"
+    # 数据库（默认本地 Docker PostgreSQL，见 docker-compose.yml；测试用独立临时库）
+    DATABASE_URL: str = "postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight"
 
     # 安全 / JWT
     SECRET_KEY: str = "dev-secret-change-me"

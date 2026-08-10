@@ -24,7 +24,13 @@ class Battle(Base):
     __tablename__ = "battles"
     # 并发防重：同一用户最多一场在途对决（先查后插有竞态，唯一索引兜底）
     __table_args__ = (
-        Index("uq_battles_user_a_pending", "user_a_id", unique=True, sqlite_where=text("status = 'pending'")),
+        Index(
+            "uq_battles_user_a_pending",
+            "user_a_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -60,7 +66,7 @@ class BattleGuess(Base):
 
     battle_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     used_abilities: Mapped[list] = mapped_column(JSON, default=list)  # [{name, effect}] 实际使用子集（服务端保密，前端只见数量）
-    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched: [str], progress: int, cracked: bool}] 与 used_abilities 同序
+    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched: [str], cracked: bool}] 与 used_abilities 同序
     guess_history: Mapped[list] = mapped_column(JSON, default=list)  # 败方每次道出的猜测原文（按提交顺序，双方可见）
     attempts_used: Mapped[int] = mapped_column(Integer, default=0)
     attempts_max: Mapped[int] = mapped_column(Integer, default=5)

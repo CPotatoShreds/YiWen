@@ -186,3 +186,13 @@ export function BookIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function TestTubeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M10 2v6L4.5 18a2.5 2.5 0 0 0 2.2 3.8h10.6A2.5 2.5 0 0 0 19.5 18L14 8V2" />
+      <path d="M8.5 2h7" />
+      <path d="M7.5 14h9" />
+    </svg>
+  );
+}

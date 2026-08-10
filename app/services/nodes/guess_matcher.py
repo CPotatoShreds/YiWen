@@ -1,8 +1,18 @@
-"""猜词匹配者节点：败方每次道出猜测，把猜测内容匹配到各张空白卡片并给出进度增量。结构化输出 CardMatches。
+"""猜词节点：拆分 → 配对匹配 → 检定。
 
-取代旧的 guess_judge.py（一次性整体打分）。提示词为用户可手调的草稿（玩法冻结后不可改）。
-关键约束：snippet 只能引用败方自己的话，绝不允许泄露真实奇术名/效果——这是胜负关键。
+取代旧的单次整体判定（guess_matcher 旧版/guess_judge）。败方每次道出猜测，走三条流水线：
+
+1. 拆分（split）：用户以换行分隔对多门奇术的猜测，后端按换行切成原子条目（取消 LLM 拆分）。
+2. 配对（pair）：原子猜测 × 实际异能一一配对（一次只拿一对进上下文），并发判定该条猜测
+   对该异能是否有价值；有价值的片段以能力侧措辞转述上卡。
+3. 检定（verify）：对卡片已积累片段做布尔检定——完整覆盖核心机制/效果/限制即视为猜出。
+
+关键约束（玩法冻结后不可改）：配对片段只能引用败方自己点到的特征，绝不允许泄露奇术真实
+名称/效果原文——这是胜负关键。提示词为用户可手调的草稿；配对/检定采用单条消息（system
+提示词即用户消息），无冗余收尾。
 """
+
+import re
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
@@ -10,60 +20,124 @@ from pydantic import BaseModel, Field
 
 from app.services.llm import build_chat_model
 
-GUESS_MATCHER_PROMPT = """你是异能对战的说书人裁断。败方在猜对家实际使用过的奇术：对家使用过的每门奇术对应一张空白卡片，
-败方多次道出猜测，每次猜测命中哪门，就把相关内容贴到哪张卡上并解锁一部分猜测条。
-
-败方视角叙述（败方唯一的线索来源，话本各看各的）：
-{narration}
-
-对家实际使用过的奇术（仅作你判定的参考基准，**严禁**把名称、效果或任何原文泄露进输出）：
-{abilities}
-
-当前各卡已匹配内容（index 为卡片编号，1 起）：
-{cards}
-
-败方本轮新道出的猜测文本：
+# 环节一：拆分。用户以换行分隔对各奇术的猜测，后端按换行切原子条目。
+# 保留此提示词仅作玩法规则存档（曾用于 LLM 拆分，现由 split_atomic_guesses 纯函数实现）。
+GUESS_SPLIT_PROMPT = """用户正在根据一段叙述文本猜测里面的人物拥有什么能力，用户会输入一段话或者一些碎片化词句来表示他的猜测，请把它拆成互不相干的原子猜测条目
+用户猜测文本：
 {text}
 
-请逐条比对本轮猜测文本与每门奇术：猜测中提到并指向该奇术的片段，作为该卡的匹配片段输出；
-同时给出进度增量 progress_delta（0-100）——本次猜测推动对该奇术理解的进展，猜得越准越高
-（完全点到核心机制可到 100，模糊提及给低值，完全无关为 0）。
-
-约束：
-1. snippet 是对应奇术特征的语义转述：以奇术侧的说法描述败方本轮话中**指向该奇术**的部分
-   （如败方说「无敌」、奇术含免疫伤害效果 → 可输出「该奇术有免疫伤害效果」；败方说「击掌才能发动」→
-   可输出「以击掌为发动条件」）。但**只允许覆盖败方本轮已经点到的特征**，不得引入败方未提到的效果细节
-   （额外效果、冷却、限制等），也不得出现奇术的真实名称——既不提前揭示答案，也不给败方新线索。
-2. 只输出本轮有进展的卡片；本轮未被提到的卡片不输出（其进度保持不变）。
-3. index 为该卡编号（1 起），与「当前各卡已匹配内容」的 index 对应。"""
-
-# 猜词匹配模板：system（判定规则）+ user（占位符 {narration}/{abilities}/{cards}/{text}）
-GUESS_MATCHER_TEMPLATE = ChatPromptTemplate.from_messages(
-    [
-        ("system", GUESS_MATCHER_PROMPT),
-        ("user", "请输出本轮有进展的卡片匹配结果（index、snippet、progress_delta）。"),
-    ]
-)
-
-
-class CardMatch(BaseModel):
-    """单张卡片的匹配结果：落入该卡的内容片段与进度增量。"""
-
-    index: int = Field(description="卡片编号（1 起）")
-    snippet: str = Field(description="本轮猜测指向该奇术的语义转述（以奇术侧措辞覆盖败方点到的特征，禁止出现奇术真实名称）")
-    progress_delta: int = Field(description="本轮对该奇术理解的进展增量（0-100）")
+拆分规则：
+1. 拆分出的一个条目只保留一个特征
+2. 明显重复的条目合并成一条。
+3. 整体含糊、无法进一步拆分时，输出单一条目。
+4. 文本为空或无意义时输出空列表。
+5.用户输入内容中有明显分隔的一般不会自动合并，比如用户输入“无敌，收到攻击”
+只输出拆出的条目，不要解释，不要补充文本里没有的信息。
+以下是一些供你参照的示例：
+示例 1：
+用户猜测文本：
+他可以飞行、隐身、发射火球。
+拆分结果：
+- 飞行效果
+- 隐身效果
+- 发射火球
+示例 2：
+用户猜测文本：
+免疫攻击，即死效果，需要击掌触发，
+"""
 
 
-class CardMatches(BaseModel):
-    """本轮有进展的卡片匹配结果列表（无进展的卡不输出）。"""
+def split_atomic_guesses(text: str) -> list[str]:
+    """把用户输入的猜测文本按换行切成原子条目（用户以换行分隔对不同奇术的猜测）。
 
-    matches: list[CardMatch] = Field(description="本轮有进展的卡片匹配结果")
-
-
-def build_guess_matcher_llm() -> Runnable:
-    """猜词匹配 LLM：结构化输出 CardMatches（method="function_calling"——DeepSeek 唯一可用方式）。
-
-    不把 GUESS_MATCHER_TEMPLATE 用 `|` 拼进链：调用方用 GUESS_MATCHER_TEMPLATE.format_messages(...) 生成消息后
-    ainvoke，保留对 build_chat_model 的桩兼容（`|` 组合会把 mock runnable 包成 RunnableLambda，破坏测试桩）。
+    逐条去首尾空白，过滤空行；条目过长按逗号/分号/顿号再切（兼容换行后仍夹杂的碎片式描述）。
     """
-    return build_chat_model(thinking=False).with_structured_output(CardMatches, method="function_calling")
+    items: list[str] = []
+    for line in re.split(r"\n", text):
+        for piece in re.split(r"[，,；;、]", line):
+            piece = piece.strip().strip("。．.")
+            if piece:
+                items.append(piece)
+    return items
+
+
+# 环节二：配对匹配。一次只拿一条原子猜测 + 一门实际奇术。
+# 携带该奇术在之前机会中已解锁的片段（existing），要求只对新增特征做增量判断、
+# 避免重复输出相同描述。玩家流（battle.py）与试验场（test_battle.py）共用。
+GUESS_PAIR_PROMPT = """用户正在根据一段叙述文本猜测里面的人物拥有什么能力，用户会输入一段话或者一些碎片化词句来表示他的猜测。
+以下是用户的一条猜测与人物实际使用的一个能力。
+你的任务是通过比对用户本次的猜测文本，能力的实际信息，以及用户在之前的猜测中已经猜出的线索，判断该条猜测是否命中了新的有价值的线索，并输出一条新的线索（若有）。
+
+用户的猜测：
+{item_text}
+
+人物实际使用的能力：
+{ability}
+
+用户在之前的猜测中已经猜出的线索（只作去重基准，**不要重复输出**这些已解锁的内容）：
+{existing}
+
+一项完整的能力可以由以下要素构成：**限制**（外部的发动条件、代价、触发禁忌）、**发动方式**（如何使出）、
+**效果**（做什么/对目标产生什么）、**达成效果的方式**（通过什么手段实现该效果）、
+**表征**（外在呈现：外观、颜色、声音、场面）、**其他限制参数**（比如范围，持续时间，冷却等相关内容）。
+以上几个所谓的要素仅作参考，实际需要你结合具体的能力本身做判断。
+**匹配时不能只凭语义上的重合或相近下判断**——同一个东西，在某些能力里是效果，在另一些能力里
+却是限制或发动条件。判定前先自问：这段用户描述和这门奇术的**哪一个要素**重合？
+它是在描述能力能做到什么（效果/达成方式/作用范围）？还是表明其限制？亦或只是表征相关（外观/声势）？
+把重合的要素记在心上，据此判断它是否指出了该奇术的真正特征。
+
+你需要全面对比用户的猜测文本与该能力的实际信息，如果用户命中了有价值的新线索，就提炼出来将其输出，需要兼顾
+1.准确性：该线索是描述该能力的正确说法，没有扭曲，削弱或夸大能力的相关信息，不包含不符合能力实际的内容，不包含能力实际上不具备的内容
+2.忠实性：确保该线索内容来自用户给出的猜测文本，或者是基于猜测文本的合理同语义/相近语义的转述，不包含用户猜测文本中没有提及的内容，不包含过度发散或者不合理的迁移
+"""
+
+# 环节三：检定。对卡片已积累的全部片段做布尔判定。
+GUESS_VERIFY_PROMPT = """用户正在根据一段叙述文本猜测里面的人物拥有什么能力，用户已经完成了一轮或者若干轮猜测。
+以下是用户累计猜测出来的线索与人物实际使用的一个能力。
+你的任务是判定该能力是否算得上已被用户猜出，并给出简短的判定理由。
+
+用户已积累的全部线索：
+{matched}
+
+人物实际使用的能力：
+{ability}
+
+判定规则：
+不要求精确命中全部细节，要求覆盖该能力的核心机制，限制条件与效果，一些关键的设计。
+一项完整的能力可以由以下要素构成：**限制**（外部的发动条件、代价、触发禁忌）、**发动方式**（如何使出）、
+**效果**（做什么/对目标产生什么）、**达成效果的方式**（通过什么手段实现该效果）、
+**表征**（外在呈现：外观、颜色、声音、场面）、**其他限制参数**（比如范围，持续时间，冷却等相关内容）。
+以上几个所谓的要素仅作参考，实际需要你结合具体的能力本身做判断。
+你需要思考，对于上面这个能力，其重要的要素有哪些（不要拘泥于上面的参考要素），线索需要覆盖哪些内容才算得上是真正猜出能力？
+
+你需要全面对比用户累计的猜测出来的线索与该能力的实际信息，判断该能力是否算得上已被猜出，并给出简短的，让能力的设计者与猜测者都服气的判定理由。
+
+"""
+
+GUESS_PAIR_TEMPLATE = ChatPromptTemplate.from_messages([("user", GUESS_PAIR_PROMPT)])
+GUESS_VERIFY_TEMPLATE = ChatPromptTemplate.from_messages([("user", GUESS_VERIFY_PROMPT)])
+
+
+class PairMatch(BaseModel):
+    """环节二输出：单条原子猜测对单门奇术的匹配结果。"""
+
+    think: str = Field(default="", description="简短的思考过程和初步答案（若有）")
+    check: str = Field(default="", description="简短的核验初步结果确保准确性与忠实性，不扭曲，无错误，无泄露。若没有任何有价值的新线索则输出空字符串")
+    snippet: str = Field(default="", description="最后敲定的线索文本，若没有任何有价值的新线索则输出空字符串")
+
+
+class Verification(BaseModel):
+    """环节三输出：对整张卡片是否已完整猜出的布尔检定。"""
+
+    guessed: bool = Field(description="是否已猜出该能力")
+    reason: str = Field(description="简短判定理由")
+
+
+def build_guess_pair_llm() -> Runnable:
+    """配对 LLM：结构化输出 PairMatch。"""
+    return build_chat_model(thinking=False).with_structured_output(PairMatch, method="function_calling")
+
+
+def build_guess_verify_llm() -> Runnable:
+    """检定 LLM：结构化输出 Verification。"""
+    return build_chat_model(thinking=False).with_structured_output(Verification, method="function_calling")

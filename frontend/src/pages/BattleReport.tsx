@@ -19,7 +19,6 @@ interface AbilityLite {
 interface GuessCard {
   index: number;
   matched: string[];
-  progress: number;
   cracked: boolean;
   name?: string;
   effect?: string;
@@ -123,9 +122,6 @@ function GuessBoard({ cards }: { cards: GuessCard[] }) {
                   ))}
                 </ul>
               )}
-              <div className="guess-bar">
-                <div className="guess-bar__fill" style={{ width: `${card.progress}%` }} />
-              </div>
             </>
           )}
         </div>
@@ -493,7 +489,7 @@ export default function BattleReport() {
         )}
       </div>
 
-      {/* 猜奇术：空白卡片 + 猜测条（仅败方视角；赢家观战面板见下方） */}
+      {/* 猜奇术：空白卡片（仅败方视角；赢家观战面板见下方） */}
       {isGuesser && b.guess_total > 0 && (
         <div className="panel rise rise-3">
           <div className="panel__head">
@@ -501,7 +497,7 @@ export default function BattleReport() {
           </div>
           <p className="muted" style={{ marginBottom: 12 }}>
             对家共动用 <b>{b.guess_total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
-            命中内容会落到对应卡片上并解锁猜测条；猜测条看满即看破该门奇术，全部看破即可逆转胜负。
+            命中内容会落到对应卡片上；卡片被完整看透即看破该门奇术，全部看破即可逆转胜负。
           </p>
 
           <GuessFeed guesses={b.guess_history} />
@@ -522,6 +518,9 @@ export default function BattleReport() {
                   placeholder="如：他似乎能操控火焰，还能在近身时冻结我的兵刃……"
                 />
               </div>
+              <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                支持同时对多个奇术进行猜测，请通过换行来分隔你对不同奇术的猜测。
+              </p>
               <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
                 <TargetIcon size={16} />
                 {guessing ? "思量中…" : "道出猜测"}

@@ -76,7 +76,7 @@ def build_endings(map_name: str, name_a: str, name_b: str) -> dict[str, str]:
     }
 
 
-# 上帝视角推演模板：system（推演指导）+ user（双方信息、开场白、三选一结尾句）
+# 上帝视角推演模板：system（推演指导）+ user（双方信息、战前讨论报告、开场白、三选一结尾句）
 DEDUCE_TEMPLATE = ChatPromptTemplate.from_messages(
     [
         ("system", DEDUCE_SYSTEM_PROMPT),
@@ -84,7 +84,8 @@ DEDUCE_TEMPLATE = ChatPromptTemplate.from_messages(
             "user",
             (
                 "【双方信息】\n{info}\n\n"
-                "根据对战双方信息，推演这场战斗从开场到结局的完整过程，直到胜负分明或同归于尽，一气呵成。\n"
+                "【战前讨论报告】\n{discuss_report}\n\n"
+                "根据对战双方信息与战前讨论报告，推演这场战斗从开场到结局的完整过程，直到胜负分明或同归于尽，一气呵成。\n"
                 "请以以下内容作为开头：\n{opening}\n\n"
                 "推演结束时，必须从以下三句结尾中**原文照抄与结果一致的一句**作为全文最后一句（一字不改）：\n"
                 "1. {ending_a}\n"

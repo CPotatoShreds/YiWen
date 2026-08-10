@@ -105,3 +105,104 @@ export interface Friendship {
   status: string;
   created_at: string;
 }
+
+// ---------- 对战试验场 ----------
+
+export interface TestUser {
+  id: number;
+  username: string;
+  exp: number;
+  rank_points: number;
+  created_at: string;
+}
+
+export interface TestBattleStory {
+  narration?: string;
+  narration_a?: string;
+  narration_b?: string;
+  discuss_report?: string;
+  result?: string;
+  abilities_a?: { name: string; effect: string }[];
+  abilities_b?: { name: string; effect: string }[];
+  error_message?: string;
+}
+
+export interface GuessRoundPair {
+  item: string;
+  snippet: string;
+}
+
+export interface GuessRound {
+  round: number;
+  items: string[];
+  pairs: GuessRoundPair[];
+}
+
+export interface GuessVerify {
+  round: number;
+  guessed: boolean;
+  reason: string;
+}
+
+export interface TestGuessCard {
+  index: number;
+  matched: string[];
+  cracked: boolean;
+  cracked_round?: number | null;
+  rounds?: GuessRound[];
+  verifies?: GuessVerify[];
+  name?: string | null;
+  effect?: string | null;
+}
+
+export interface TestBattle {
+  id: number;
+  user_a: string;
+  user_b: string;
+  fighter_a: string;
+  fighter_b: string;
+  status: string;
+  winner: string | null;
+  winner_fighter: string | null;
+  story: TestBattleStory | null;
+  rank_delta_a: number;
+  rank_delta_b: number;
+  guess_by: string | null;
+  guess_state: string;
+  guess_hit: boolean | null;
+  guess_score: number | null;
+  revealed: boolean;
+  guess_history: string[];
+  guess_total: number;
+  guess_cards: TestGuessCard[] | null;
+  guess_attempts_used: number;
+  guess_attempts_max: number;
+  created_at: string;
+}
+
+export interface TestLoadout {
+  id: number;
+  user_id: number;
+  username: string | null;
+  name: string;
+  style: string;
+  abilities: Ability[];
+}
+
+export interface LlmTrace {
+  id: number;
+  kind: string;
+  operation: string;
+  status: string;
+  trace_id: string | null;
+  error: string | null;
+  latency_ms: number;
+  tokens_input: number;
+  tokens_output: number;
+  created_at: string;
+}
+
+export interface LlmTraceDetail extends LlmTrace {
+  request_json: unknown;
+  response_json: unknown;
+}

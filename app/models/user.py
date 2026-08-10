@@ -29,7 +29,7 @@ class User(Base):
     last_login_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD 开张日
     last_battle_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # 当日首次启程
     reveal_on_miss: Mapped[bool] = mapped_column(Boolean, default=False)  # 对家猜奇术未中时是否看破我的奇术
-    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))  # 管理员：可登录后台
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))  # 管理员：可登录后台
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     @property

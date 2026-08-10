@@ -1,18 +1,21 @@
-"""后台管理路由：仪表盘 / 数据库 CRUD / 流量。全部要求管理员权限。
+"""后台管理路由：仪表盘 / 数据库 CRUD / 流量 / 对战试验场。全部要求管理员权限。
 
 - 用户、异能：完整增删改查
 - 对战、奇人、故人：查看 + 删除
+- 对战试验场：纯测试对战与猜词（test_* 表），对玩家数据零持久性影响
 - SQLite 未开 foreign_keys、FK 均无 ondelete → 删除一律手动清理依赖行（仿
   app/api/routes/loadouts.py 与 abilities.py 的既有模式）
 """
 
+import asyncio
 import json
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +24,16 @@ from app.db.base import get_db
 from app.models.ability import Ability
 from app.models.battle import Battle, BattleGuess
 from app.models.friendship import Friendship
+from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
 from app.models.request_log import RequestLog
+from app.models.test_battle import (
+    TestBattle,
+    TestBattleGuess,
+    TestLoadout,
+    TestLoadoutAbility,
+    TestUser,
+)
 from app.models.user import User
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut
@@ -36,10 +47,31 @@ from app.schemas.admin import (
     DailyPoint,
     EndpointStat,
     FriendshipRowOut,
+    LlmTraceDetailOut,
+    LlmTraceOpStat,
+    LlmTraceOut,
+    LlmTraceStatsOut,
     RecentBattle,
     RequestLogOut,
     StatsOut,
+    TestBattleOut,
+    TestBattleStartIn,
+    TestFighterIn,
+    TestGuessIn,
+    TestLoadoutCreateIn,
+    TestLoadoutOut,
+    TestReportOut,
+    TestSkipIn,
+    TestUserCreate,
+    TestUserOut,
     TrafficOut,
+)
+from app.services.battle import GUESS_ATTEMPTS_MAX
+from app.services.test_battle import (
+    generate_test_discuss_report,
+    resolve_test_battle,
+    resolve_test_battle_from_deduction,
+    submit_test_guess,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -47,6 +79,9 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 RECENT_BATTLES = 10  # 仪表盘最近场数
 BATTLE_LIST_LIMIT = 100  # 行迹列表上限
 ENDPOINT_TOP = 12  # 接口流量 TOP 数量
+
+# 持有后台任务引用，防止 asyncio 在任务完成前 GC 取消它
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _ability_id(name: str, effect: str) -> str:
@@ -59,6 +94,14 @@ async def _names(db: AsyncSession, ids: set[int]) -> dict[int, str]:
     if not ids:
         return {}
     rows = await db.execute(select(User).where(User.id.in_(ids)))
+    return {u.id: u.username for u in rows.scalars().all()}
+
+
+async def _test_names(db: AsyncSession, ids: set[int]) -> dict[int, str]:
+    """批量解析测试账号 id → 用户名（测试账号独立于玩家表，须查 test_users）。"""
+    if not ids:
+        return {}
+    rows = await db.execute(select(TestUser).where(TestUser.id.in_(ids)))
     return {u.id: u.username for u in rows.scalars().all()}
 
 
@@ -374,6 +417,7 @@ async def admin_delete_ability(
     """强制删除奇术：从所有异闻师与奇人中移除（管理员权限，与用户侧引用计数删除不同）。"""
     await db.execute(delete(UserAbility).where(UserAbility.ability_id == ability_id))
     await db.execute(delete(LoadoutAbility).where(LoadoutAbility.ability_id == ability_id))
+    await db.execute(delete(TestLoadoutAbility).where(TestLoadoutAbility.ability_id == ability_id))
     ability = await db.get(Ability, ability_id)
     if ability is not None:
         await db.delete(ability)
@@ -590,23 +634,27 @@ async def admin_traffic(
     total, avg = (
         await db.execute(select(func.count(), func.avg(RequestLog.duration_ms)).select_from(RequestLog))
     ).one()
+    # 近 24h 与近 7 日：截止时间在 Python 侧计算（func.datetime("now", …) 是 SQLite 方言），
+    # 按日聚合也在 Python 侧做（func.date 在 PG 下编译为 date()，不存在）。
+    # created_at 列是无时区的 TIMESTAMP（func.now() 落 naive UTC），比较参数须同样 naive，否则
+    # asyncpg 报 offset-naive/aware 不可相减。
+    _now = datetime.now(UTC).replace(tzinfo=None)
     last_24h = (
         await db.execute(
             select(func.count())
             .select_from(RequestLog)
-            .where(RequestLog.created_at >= func.datetime("now", "-1 day"))
+            .where(RequestLog.created_at >= _now - timedelta(days=1))
         )
     ).scalar_one()
 
-    # 近 7 日序列（SQLite 侧按日聚合，Python 侧按 UTC 零填充缺日）
-    daily_rows = (
-        await db.execute(
-            select(func.date(RequestLog.created_at).label("day"), func.count())
-            .where(RequestLog.created_at >= func.datetime("now", "-6 days"))
-            .group_by(func.date(RequestLog.created_at))
-        )
-    ).all()
-    daily_map = {day: cnt for day, cnt in daily_rows}
+    # 近 7 日序列（Python 侧按 UTC 零填充缺日）
+    seven_days_cutoff = _now - timedelta(days=6)
+    recent_ts = (
+        (await db.execute(select(RequestLog.created_at).where(RequestLog.created_at >= seven_days_cutoff)))
+        .scalars()
+        .all()
+    )
+    daily_map = Counter(ts.replace(tzinfo=UTC).date().isoformat() for ts in recent_ts)
     today = datetime.now(UTC).date()
     daily = [
         DailyPoint(date=(today - timedelta(days=i)).isoformat(), count=daily_map.get((today - timedelta(days=i)).isoformat(), 0))
@@ -627,7 +675,7 @@ async def admin_traffic(
         key = _norm_path(path)
         acc = merged.setdefault(key, [0, 0.0])
         acc[0] += n
-        acc[1] += (ep_avg or 0) * n  # 加权平均
+        acc[1] += float(ep_avg or 0) * n  # 加权平均（PG 下 func.avg 返回 Decimal，须转 float）
     endpoints = [
         EndpointStat(path=k, count=acc[0], avg_ms=acc[1] / acc[0])
         for k, acc in merged.items()
@@ -647,3 +695,545 @@ async def admin_traffic(
         endpoints=endpoints,
         recent=[RequestLogOut.model_validate(r) for r in recent],
     )
+
+
+# ---------- 对战试验场：纯测试，对玩家数据零持久性影响 ----------
+
+
+def _test_user_out(u: TestUser) -> TestUserOut:
+    return TestUserOut(
+        id=u.id,
+        username=u.username,
+        exp=u.exp,
+        rank_points=u.rank_points,
+        created_at=u.created_at,
+    )
+
+
+@router.get("/test/users", response_model=list[TestUserOut])
+async def admin_test_users(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TestUserOut]:
+    """测试账号列表（按 id 序）。"""
+    rows = (await db.execute(select(TestUser).order_by(TestUser.id))).scalars().all()
+    return [_test_user_out(u) for u in rows]
+
+
+@router.post("/test/users", response_model=TestUserOut, status_code=status.HTTP_201_CREATED)
+async def admin_test_create_user(
+    body: TestUserCreate,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestUserOut:
+    """新建测试账号；用户名缺省用词库自动起名。"""
+    username = (body.username or "").strip()
+    if not username:
+        import random
+
+        from scripts.namegen import gen_username
+
+        username = gen_username(random.Random())
+    exists = await db.execute(select(TestUser).where(TestUser.username == username))
+    if exists.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="测试账号名已被占用")
+    user = TestUser(username=username, exp=body.exp, rank_points=body.rank_points)
+    db.add(user)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="测试账号名已被占用")
+    await db.refresh(user)
+    return _test_user_out(user)
+
+
+@router.delete("/test/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_test_delete_user(
+    user_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除测试账号（级联删其参与的测试行迹、持久测试奇人与装配）。"""
+    target = await db.get(TestUser, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试账号不存在")
+    battle_ids = (
+        await db.execute(
+            select(TestBattle.id).where(or_(TestBattle.user_a_id == user_id, TestBattle.user_b_id == user_id))
+        )
+    ).scalars().all()
+    if battle_ids:
+        await db.execute(delete(TestBattleGuess).where(TestBattleGuess.battle_id.in_(battle_ids)))
+        await db.execute(delete(TestBattle).where(TestBattle.id.in_(battle_ids)))
+    loadout_ids = (
+        await db.execute(select(TestLoadout.id).where(TestLoadout.user_id == user_id))
+    ).scalars().all()
+    if loadout_ids:
+        await db.execute(delete(TestLoadoutAbility).where(TestLoadoutAbility.loadout_id.in_(loadout_ids)))
+        await db.execute(delete(TestLoadout).where(TestLoadout.id.in_(loadout_ids)))
+    await db.delete(target)
+    await db.commit()
+
+
+@router.get("/test/loadouts", response_model=list[TestLoadoutOut])
+async def admin_test_loadouts(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TestLoadoutOut]:
+    """持久测试奇人列表（含绑定账号名与装配奇术，倒序）。"""
+    loadouts = (await db.execute(select(TestLoadout).order_by(TestLoadout.id.desc()))).scalars().all()
+    if not loadouts:
+        return []
+    name_map = await _test_names(db, {l.user_id for l in loadouts})
+    return [await _test_loadout_out(db, l, name_map.get(l.user_id)) for l in loadouts]
+
+
+async def _test_loadout_out(db: AsyncSession, l: TestLoadout, username: str | None) -> TestLoadoutOut:
+    """序列化一个持久测试奇人（含按装配顺序的奇术）。"""
+    ab_rows = await db.execute(
+        select(Ability)
+        .join(TestLoadoutAbility, TestLoadoutAbility.ability_id == Ability.id)
+        .where(TestLoadoutAbility.loadout_id == l.id)
+        .order_by(TestLoadoutAbility.added_at)
+    )
+    return TestLoadoutOut(
+        id=l.id,
+        user_id=l.user_id,
+        username=username,
+        name=(l.name or "").strip() or "奇人",
+        style=l.style,
+        abilities=[AbilityOut.model_validate(a) for a in ab_rows.scalars().all()],
+    )
+
+
+@router.post("/test/loadouts", response_model=TestLoadoutOut, status_code=status.HTTP_201_CREATED)
+async def admin_test_generate_loadout(
+    body: TestLoadoutCreateIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestLoadoutOut:
+    """生成持久测试奇人：校验奇术 → 自动绑定新测试账号 → 词库随机起名（风格空）→ 落库。"""
+    import random
+
+    from scripts.namegen import gen_loadout_name, gen_username
+
+    abilities: list[Ability] = []
+    for aid in body.abilities:
+        ability = await db.get(Ability, aid)
+        if ability is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"奇术不存在: {aid}")
+        abilities.append(ability)
+
+    rng = random.Random()
+    # 自动绑定账号：词库起名，撞车重抽
+    while True:
+        username = gen_username(rng)
+        exists = await db.execute(select(TestUser).where(TestUser.username == username))
+        if exists.scalar_one_or_none() is None:
+            break
+    user = TestUser(username=username)
+    db.add(user)
+    await db.flush()
+
+    # 奇人名随机，唯一索引撞车重抽
+    while True:
+        name = gen_loadout_name(rng)
+        exists = await db.execute(select(TestLoadout).where(TestLoadout.name == name))
+        if exists.scalar_one_or_none() is None:
+            break
+    loadout = TestLoadout(user_id=user.id, name=name, style="")
+    db.add(loadout)
+    await db.flush()
+    for ability in abilities:
+        db.add(TestLoadoutAbility(loadout_id=loadout.id, ability_id=ability.id))
+    await db.commit()
+    await db.refresh(loadout)
+    return await _test_loadout_out(db, loadout, user.username)
+
+
+@router.delete("/test/loadouts/{loadout_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_test_delete_loadout(
+    loadout_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除持久测试奇人：若绑定账号无其他奇人且无对局引用，一并删除（避免残留空号）。"""
+    loadout = await db.get(TestLoadout, loadout_id)
+    if loadout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试奇人不存在")
+    owner_id = loadout.user_id
+    await db.execute(delete(TestLoadoutAbility).where(TestLoadoutAbility.loadout_id == loadout.id))
+    await db.delete(loadout)
+    # 绑定账号无其他奇人且未参与任何对局 → 一并清理
+    has_other = (
+        await db.execute(
+            select(TestLoadout.id).where(TestLoadout.user_id == owner_id).limit(1)
+        )
+    ).scalar_one_or_none()
+    has_battle = (
+        await db.execute(
+            select(TestBattle.id).where(or_(TestBattle.user_a_id == owner_id, TestBattle.user_b_id == owner_id)).limit(1)
+        )
+    ).scalar_one_or_none()
+    if has_other is None and has_battle is None:
+        owner = await db.get(TestUser, owner_id)
+        if owner is not None:
+            await db.delete(owner)
+    await db.commit()
+
+
+async def _resolve_fighter(
+    db: AsyncSession,
+    fighter: TestFighterIn,
+    default_owner: TestUser,
+) -> tuple[TestUser, str, list[Ability]]:
+    """把一侧的奇人解析为 (测试账号, 奇人名, 奇术列表)。
+
+    优先持久测试奇人（test_loadout_id，绑定账号随奇人）；其次玩家奇人（loadout_id）；
+    最后临时内联（name+abilities，兼容测试保留）。
+    """
+    owner = default_owner
+    if fighter.test_loadout_id is not None:
+        loadout = await db.get(TestLoadout, fighter.test_loadout_id)
+        if loadout is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试奇人不存在")
+        owner = await db.get(TestUser, loadout.user_id)
+        if owner is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试奇人绑定账号不存在")
+        ab_rows = await db.execute(
+            select(Ability)
+            .join(TestLoadoutAbility, TestLoadoutAbility.ability_id == Ability.id)
+            .where(TestLoadoutAbility.loadout_id == loadout.id)
+            .order_by(TestLoadoutAbility.added_at)
+        )
+        abilities = list(ab_rows.scalars().all())
+        name = (loadout.name or "").strip() or "奇人"
+    else:
+        if fighter.owner:
+            row = await db.execute(select(TestUser).where(TestUser.username == fighter.owner))
+            owner = row.scalar_one_or_none()
+            if owner is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"测试账号不存在: {fighter.owner}")
+        if fighter.loadout_id is not None:
+            loadout = await db.get(Loadout, fighter.loadout_id)
+            if loadout is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="奇人不存在")
+            ab_rows = await db.execute(
+                select(Ability)
+                .join(LoadoutAbility, LoadoutAbility.ability_id == Ability.id)
+                .where(LoadoutAbility.loadout_id == loadout.id)
+                .order_by(LoadoutAbility.added_at)
+            )
+            abilities = list(ab_rows.scalars().all())
+            name = (loadout.name or "").strip() or "奇人"
+        else:
+            abilities = []
+            for aid in fighter.abilities:
+                ability = await db.get(Ability, aid)
+                if ability is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"奇术不存在: {aid}")
+                abilities.append(ability)
+            name = (fighter.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="奇人缺少名字")
+    if not abilities:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="奇人缺少奇术（至少一门）")
+    return owner, name, abilities
+
+
+async def _test_battle_out_full(db: AsyncSession, battle: TestBattle) -> TestBattleOut:
+    """测试行迹完整序列化（含双方测试账号名、奇人名、猜词状态）。"""
+    ids = {battle.user_a_id, battle.user_b_id}
+    if battle.winner_id:
+        ids.add(battle.winner_id)
+    if battle.guess_by:
+        ids.add(battle.guess_by)
+    name_map = await _test_names(db, ids)
+    guess = await db.get(TestBattleGuess, battle.id)
+    guess_total = len(guess.used_abilities) if guess and guess.used_abilities else 0
+    guess_cards = None
+    if guess is not None and guess.used_abilities:
+        guess_cards = [
+            {
+                "index": i + 1,
+                "matched": c["matched"],
+                "cracked": c["cracked"],
+                "cracked_round": c.get("cracked_round"),
+                "rounds": c.get("rounds") or [],
+                "verifies": c.get("verifies") or [],
+                **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+            }
+            for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
+        ]
+    return TestBattleOut(
+        id=battle.id,
+        user_a=name_map.get(battle.user_a_id, "?"),
+        user_b=name_map.get(battle.user_b_id, "?"),
+        fighter_a=battle.loadout_a_name or "?",
+        fighter_b=battle.loadout_b_name or "?",
+        status=battle.status,
+        winner=name_map.get(battle.winner_id) if battle.winner_id else None,
+        winner_fighter=(
+            (battle.loadout_a_name or None) if battle.winner_id == battle.user_a_id
+            else ((battle.loadout_b_name or None) if battle.winner_id == battle.user_b_id else None)
+        ),
+        story=_load_story(battle.story),
+        rank_delta_a=battle.rank_delta_a,
+        rank_delta_b=battle.rank_delta_b,
+        guess_by=name_map.get(battle.guess_by) if battle.guess_by else None,
+        guess_state=battle.guess_state,
+        guess_hit=battle.guess_hit,
+        guess_score=battle.guess_score,
+        revealed=battle.revealed,
+        guess_history=list(guess.guess_history) if guess else [],
+        guess_total=guess_total,
+        guess_cards=guess_cards,
+        guess_attempts_used=guess.attempts_used if guess else 0,
+        guess_attempts_max=guess.attempts_max if guess else GUESS_ATTEMPTS_MAX,
+        created_at=battle.created_at,
+    )
+
+
+@router.post("/test/battles", response_model=TestBattleOut, status_code=status.HTTP_201_CREATED)
+async def admin_test_start_battle(
+    body: TestBattleStartIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestBattleOut:
+    """真实推演一场测试对战：建 pending，后台跑推演 + 结算（只落 test_* 表）。"""
+    user_a, name_a, abilities_a = await _resolve_fighter(db, body.fighter_a, await _default_test_user(db))
+    user_b, name_b, abilities_b = await _resolve_fighter(db, body.fighter_b, user_a)
+    if name_a == name_b:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="双方奇人同名，请改名后重试")
+    battle = TestBattle(
+        user_a_id=user_a.id,
+        user_b_id=user_b.id,
+        status="pending",
+        story="",
+        loadout_a_name=name_a,
+        loadout_b_name=name_b,
+    )
+    db.add(battle)
+    await db.commit()
+    await db.refresh(battle)
+
+    task = asyncio.create_task(
+        resolve_test_battle_from_deduction(
+            battle.id,
+            ability_ids_a=[a.id for a in abilities_a],
+            ability_ids_b=[a.id for a in abilities_b],
+            style_a=body.fighter_a.style or "",
+            style_b=body.fighter_b.style or "",
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return await _test_battle_out_full(db, battle)
+
+
+@router.post("/test/battles/report", response_model=TestReportOut)
+async def admin_test_generate_report(
+    body: TestBattleStartIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestReportOut:
+    """仅生成战前讨论报告（不推演、不落库）：复用讨论节点与推演同一套信息组装。"""
+    user_a, name_a, abilities_a = await _resolve_fighter(db, body.fighter_a, await _default_test_user(db))
+    _, name_b, abilities_b = await _resolve_fighter(db, body.fighter_b, user_a)
+    if name_a == name_b:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="双方奇人同名，请改名后重试")
+    report = await generate_test_discuss_report(
+        fighter_a=name_a,
+        fighter_b=name_b,
+        abilities_a=abilities_a,
+        abilities_b=abilities_b,
+        style_a=body.fighter_a.style or "",
+        style_b=body.fighter_b.style or "",
+    )
+    return TestReportOut(report=report)
+
+
+@router.post("/test/battles/skip", response_model=TestBattleOut, status_code=status.HTTP_201_CREATED)
+async def admin_test_skip_battle(
+    body: TestSkipIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestBattleOut:
+    """跳过对战直接指定胜负：零 LLM，直接进猜词阶段（默认全部奇术被使用）。"""
+    if body.winner not in ("A", "B", "draw"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="winner 须为 A / B / draw")
+    user_a, name_a, abilities_a = await _resolve_fighter(db, body.fighter_a, await _default_test_user(db))
+    user_b, name_b, abilities_b = await _resolve_fighter(db, body.fighter_b, user_a)
+    if name_a == name_b:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="双方奇人同名，请改名后重试")
+    battle = await resolve_test_battle(
+        db,
+        user_a=user_a,
+        user_b=user_b,
+        fighter_a=name_a,
+        fighter_b=name_b,
+        abilities_a=abilities_a,
+        abilities_b=abilities_b,
+        winner_side=body.winner,
+    )
+    return await _test_battle_out_full(db, battle)
+
+
+@router.get("/test/battles", response_model=list[TestBattleOut])
+async def admin_test_battles(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TestBattleOut]:
+    """测试行迹列表（倒序）。"""
+    rows = (await db.execute(select(TestBattle).order_by(TestBattle.id.desc()).limit(50))).scalars().all()
+    return [await _test_battle_out_full(db, b) for b in rows]
+
+
+@router.get("/test/battles/{battle_id}", response_model=TestBattleOut)
+async def admin_test_battle_detail(
+    battle_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestBattleOut:
+    """单场测试行迹详情。"""
+    battle = await db.get(TestBattle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试行迹不存在")
+    return await _test_battle_out_full(db, battle)
+
+
+@router.post("/test/battles/{battle_id}/guess", response_model=TestBattleOut)
+async def admin_test_guess(
+    battle_id: int,
+    body: TestGuessIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestBattleOut:
+    """对测试行迹猜奇术（复用三环节，只更新 test_* 表）。"""
+    battle = await db.get(TestBattle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试行迹不存在")
+    guesser = await db.get(TestUser, battle.guess_by or 0)
+    if guesser is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无败方可猜")
+    try:
+        await submit_test_guess(db, battle, guesser, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return await _test_battle_out_full(db, battle)
+
+
+@router.delete("/test/battles/{battle_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_test_delete_battle(
+    battle_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除测试行迹（含猜词状态）。"""
+    battle = await db.get(TestBattle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试行迹不存在")
+    guess = await db.get(TestBattleGuess, battle_id)
+    if guess is not None:
+        await db.delete(guess)
+    await db.delete(battle)
+    await db.commit()
+
+
+async def _default_test_user(db: AsyncSession) -> TestUser:
+    """取第一个测试账号兜底；一个都没有时自动建一个（词库起名），保证试验场可即开即用。"""
+    row = (await db.execute(select(TestUser).order_by(TestUser.id).limit(1))).scalar_one_or_none()
+    if row is not None:
+        return row
+    import random
+
+    from scripts.namegen import gen_username
+
+    user = TestUser(username=gen_username(random.Random()))
+    db.add(user)
+    await db.flush()
+    return user
+
+
+# ---------- LLM 链路追踪 ----------
+
+
+@router.get("/llm-traces", response_model=list[LlmTraceOut])
+async def admin_llm_traces(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    operation: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    trace_id: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[LlmTraceOut]:
+    """LLM 调用追踪列表（按 id 倒序，支持按环节/场景/业务 id 过滤）。"""
+    stmt = select(LlmTrace)
+    if operation:
+        stmt = stmt.where(LlmTrace.operation == operation)
+    if kind:
+        stmt = stmt.where(LlmTrace.kind == kind)
+    if trace_id:
+        stmt = stmt.where(LlmTrace.trace_id == trace_id)
+    rows = (
+        (await db.execute(stmt.order_by(LlmTrace.id.desc()).limit(limit).offset(offset)))
+        .scalars()
+        .all()
+    )
+    return [LlmTraceOut.model_validate(r) for r in rows]
+
+
+@router.get("/llm-traces/stats", response_model=LlmTraceStatsOut)
+async def admin_llm_trace_stats(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LlmTraceStatsOut:
+    """LLM 调用聚合：总量 / 失败量 + 按环节分组的调用数、失败数、平均耗时。
+
+    注意：必须注册在 /llm-traces/{trace_id}（int 路径参数）之前，否则 "stats" 会被当作 trace_id 解析。
+    """
+    total, fail_total = (
+        await db.execute(
+            select(func.count(), func.sum(case((LlmTrace.status == "fail", 1), else_=0))).select_from(LlmTrace)
+        )
+    ).one()
+    op_rows = (
+        await db.execute(
+            select(
+                LlmTrace.operation,
+                func.count().label("cnt"),
+                func.sum(case((LlmTrace.status == "fail", 1), else_=0)).label("fails"),
+                func.avg(LlmTrace.latency_ms).label("avg"),
+            )
+            .group_by(LlmTrace.operation)
+            .order_by(func.count().desc())
+        )
+    ).all()
+    return LlmTraceStatsOut(
+        total=int(total or 0),
+        fail_total=int(fail_total or 0),
+        by_operation=[
+            LlmTraceOpStat(
+                operation=op,
+                count=int(cnt or 0),
+                fail_count=int(fails or 0),
+                avg_ms=float(avg or 0.0),
+            )
+            for op, cnt, fails, avg in op_rows
+        ],
+    )
+
+
+@router.get("/llm-traces/{trace_id}", response_model=LlmTraceDetailOut)
+async def admin_llm_trace_detail(
+    trace_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LlmTraceDetailOut:
+    """单条 LLM 追踪详情（含完整请求输入与模型输出）。"""
+    trace = await db.get(LlmTrace, trace_id)
+    if trace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="追踪记录不存在")
+    return LlmTraceDetailOut.model_validate(trace)

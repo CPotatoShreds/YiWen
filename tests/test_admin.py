@@ -1,22 +1,21 @@
 """后台管理路由测试：权限、用户/异能 CRUD、级联删除、仪表盘、流量。
 
-直接改库用原生 sqlite3 直连测试库（conftest 已把 DATABASE_URL 指到临时库），
-避免跨事件循环操作全局 async engine 的连接池（aiosqlite 连接与创建它的 loop 关联）。
+直接改库用 psycopg（同步驱动）直连测试库，避免跨事件循环操作全局 async engine
+的连接池（app 用 asyncpg，psycopg 是独立连接，无 loop 冲突）。
 """
 
 import os
-import sqlite3
 from uuid import uuid4
 
+import psycopg
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 
-def _sqlite() -> sqlite3.Connection:
-    """直连 pytest 临时测试库。"""
-    url = os.environ["DATABASE_URL"]
-    return sqlite3.connect(url.split("///", 1)[1])
+def _sqlite() -> psycopg.Connection:
+    """直连 pytest 临时测试库（PG）。"""
+    return psycopg.connect(os.environ["DATABASE_URL"].replace("+asyncpg", ""))
 
 
 def _new_user(client, prefix="testadm") -> tuple[str, str, dict]:
@@ -37,7 +36,7 @@ def _user_id(client, headers) -> int:
 def _promote(username: str) -> None:
     """直接改库把用户提为管理员。"""
     con = _sqlite()
-    cur = con.execute("UPDATE users SET is_admin=1 WHERE username=?", (username,))
+    cur = con.execute("UPDATE users SET is_admin=TRUE WHERE username=%s", (username,))
     assert cur.rowcount == 1, f"promote failed for {username}"
     con.commit()
     con.close()
@@ -50,19 +49,21 @@ def _insert_battle(user_a_id: int, user_b_id: int, status: str = "done") -> int:
     cur = con.execute(
         "INSERT INTO battles (user_a_id, user_b_id, story, status, rank_delta_a, rank_delta_b,"
         " friendly, guess_text, guess_state, revealed)"
-        " VALUES (?, ?, '', ?, 0, 0, 0, '', 'none', 0)",
+        " VALUES (%s, %s, '', %s, 0, 0, FALSE, '', 'none', FALSE)"
+        " RETURNING id",
         (user_a_id, user_b_id, status),
     )
+    new_id = cur.fetchone()[0]
     con.commit()
     con.close()
-    return cur.lastrowid
+    return new_id
 
 
 def _insert_battle_guess(battle_id: int) -> None:
     con = _sqlite()
     con.execute(
         "INSERT INTO battle_guesses (battle_id, used_abilities, cards, guess_history, attempts_used, attempts_max, flipped)"
-        " VALUES (?, '[]', '[]', '[]', 0, 5, 0)",
+        " VALUES (%s, '[]', '[]', '[]', 0, 5, FALSE)",
         (battle_id,),
     )
     con.commit()
@@ -72,7 +73,7 @@ def _insert_battle_guess(battle_id: int) -> None:
 def _insert_request_log(user_id: int | None, path: str = "/api/auth/me") -> None:
     con = _sqlite()
     con.execute(
-        "INSERT INTO request_logs (method, path, status_code, duration_ms, user_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO request_logs (method, path, status_code, duration_ms, user_id) VALUES (%s, %s, %s, %s, %s)",
         ("GET", path, 200, 4, user_id),
     )
     con.commit()
@@ -133,7 +134,7 @@ def test_admin_user_crud():
         # 删除
         assert client.delete(f"/api/admin/users/{new_id}", headers=h).status_code == 204
         con = _sqlite()
-        assert con.execute("SELECT 1 FROM users WHERE id=?", (new_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM users WHERE id=%s", (new_id,)).fetchone() is None
         con.close()
 
 
@@ -181,19 +182,19 @@ def test_user_delete_cascade():
         assert client.delete(f"/api/admin/users/{c_id}", headers=h_a).status_code == 204
 
         con = _sqlite()
-        assert con.execute("SELECT 1 FROM users WHERE id=?", (c_id,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM user_abilities WHERE user_id=?", (c_id,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM loadouts WHERE user_id=?", (c_id,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM loadout_abilities WHERE loadout_id=?", (lid,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM users WHERE id=%s", (c_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM user_abilities WHERE user_id=%s", (c_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM loadouts WHERE user_id=%s", (c_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM loadout_abilities WHERE loadout_id=%s", (lid,)).fetchone() is None
         assert (
-            con.execute("SELECT 1 FROM battles WHERE user_a_id=? OR user_b_id=?", (c_id, c_id)).fetchone() is None
+            con.execute("SELECT 1 FROM battles WHERE user_a_id=%s OR user_b_id=%s", (c_id, c_id)).fetchone() is None
         )
-        assert con.execute("SELECT 1 FROM battle_guesses WHERE battle_id=?", (bid,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM battle_guesses WHERE battle_id=%s", (bid,)).fetchone() is None
         assert (
-            con.execute("SELECT 1 FROM friendships WHERE user_id=? OR friend_id=?", (c_id, c_id)).fetchone() is None
+            con.execute("SELECT 1 FROM friendships WHERE user_id=%s OR friend_id=%s", (c_id, c_id)).fetchone() is None
         )
         # 请求日志软引用置空：不再有 user_id=c_id 的行
-        assert con.execute("SELECT 1 FROM request_logs WHERE user_id=?", (c_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM request_logs WHERE user_id=%s", (c_id,)).fetchone() is None
         con.close()
 
 
@@ -223,8 +224,8 @@ def test_ability_admin_crud_and_force_delete():
         # 强制删除：user_abilities 引用一并清
         assert client.delete(f"/api/admin/abilities/{aid}", headers=h).status_code == 204
         con = _sqlite()
-        assert con.execute("SELECT 1 FROM abilities WHERE id=?", (aid,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM user_abilities WHERE ability_id=?", (aid,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM abilities WHERE id=%s", (aid,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM user_abilities WHERE ability_id=%s", (aid,)).fetchone() is None
         con.close()
 
 
@@ -253,13 +254,13 @@ def test_battle_read_and_delete():
         # done 可删（连同猜词状态）
         assert client.delete(f"/api/admin/battles/{done_id}", headers=h_a).status_code == 204
         con = _sqlite()
-        assert con.execute("SELECT 1 FROM battles WHERE id=?", (done_id,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM battle_guesses WHERE battle_id=?", (done_id,)).fetchone() is None
-        assert con.execute("SELECT 1 FROM battles WHERE id=?", (pending_id,)).fetchone() is not None
+        assert con.execute("SELECT 1 FROM battles WHERE id=%s", (done_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM battle_guesses WHERE battle_id=%s", (done_id,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM battles WHERE id=%s", (pending_id,)).fetchone() is not None
         con.close()
         # 顺带清掉 pending（后台禁止删 pending，直接改库清理本测试的 raw 数据）
         con = _sqlite()
-        con.execute("DELETE FROM battles WHERE id=?", (pending_id,))
+        con.execute("DELETE FROM battles WHERE id=%s", (pending_id,))
         con.commit()
         con.close()
 
@@ -280,7 +281,7 @@ def test_loadout_and_friendship_delete():
         # 奇人删除
         assert client.delete(f"/api/admin/loadouts/{ld['id']}", headers=h_a).status_code == 204
         con = _sqlite()
-        assert con.execute("SELECT 1 FROM loadouts WHERE id=?", (ld["id"],)).fetchone() is None
+        assert con.execute("SELECT 1 FROM loadouts WHERE id=%s", (ld["id"],)).fetchone() is None
         con.close()
 
         # 故人列表 → 删除
@@ -290,7 +291,7 @@ def test_loadout_and_friendship_delete():
         assert client.delete(f"/api/admin/friendships/{row['user_id']}/{row['friend_id']}", headers=h_a).status_code == 204
         con = _sqlite()
         assert con.execute(
-            "SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?",
+            "SELECT 1 FROM friendships WHERE user_id=%s AND friend_id=%s",
             (row["user_id"], row["friend_id"]),
         ).fetchone() is None
         con.close()
@@ -338,3 +339,251 @@ def test_traffic_aggregation():
         assert t["daily"][-1]["count"] >= 1  # 今天有请求
         assert any(ep["path"].endswith("/auth/me") for ep in t["endpoints"])
         assert len(t["recent"]) >= 1
+
+
+# ---------- 对战试验场 ----------
+
+
+def _test_ability(client, headers, name, effect):
+    """后台建一个奇术，返回 id。"""
+    r = client.post("/api/admin/abilities", json={"name": name, "effect": effect}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_test_arena_skip_battle_and_guess():
+    """试验场：建测试账号 → 组装临时奇人 → 指定胜负 → 猜词（验证玩家表零污染）。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+
+        # 建两个测试账号
+        a = client.post("/api/admin/test/users", json={"username": None, "exp": 10, "rank_points": 1000}, headers=h)
+        assert a.status_code == 201, a.text
+        b = client.post("/api/admin/test/users", json={"username": "b_bot", "rank_points": 1000}, headers=h)
+        assert b.status_code == 201, b.text
+
+        # 生成持久测试奇人（勾选奇术，名字随机、账号自动绑定）
+        aid = _test_ability(client, h, "燃烬之握", "点燃一切")
+        bid = _test_ability(client, h, "霜语者", "冻结一切")
+        l_a = client.post("/api/admin/test/loadouts", json={"abilities": [aid]}, headers=h)
+        assert l_a.status_code == 201, l_a.text
+        l_a_id = l_a.json()["id"]
+        assert l_a_id >= 1  # 持久化：真实 id，不再是 -1
+        assert l_a.json()["username"]  # 自动绑定账号
+        l_b = client.post("/api/admin/test/loadouts", json={"abilities": [bid]}, headers=h)
+        assert l_b.status_code == 201, l_b.text
+        l_b_id = l_b.json()["id"]
+
+        # 指定胜负（skip）前记录玩家表基线（共享测试库可能已有他测造的 battles 行）
+        con = _sqlite()
+        battles_before = con.execute("SELECT COUNT(*) FROM battles").fetchone()[0]
+        guesses_before = con.execute("SELECT COUNT(*) FROM battle_guesses").fetchone()[0]
+        con.close()
+
+        # 指定胜负（skip）→ 直接进猜词阶段
+        r = client.post(
+            "/api/admin/test/battles/skip",
+            json={
+                "fighter_a": {"name": "赤焰君临", "abilities": [aid], "owner": a.json()["username"]},
+                "fighter_b": {"name": "霜语者", "abilities": [bid], "owner": b.json()["username"]},
+                "winner": "A",
+            },
+            headers=h,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["status"] == "done"
+        assert body["winner"] == a.json()["username"]
+        assert body["guess_state"] in ("none", "guessing")
+        assert body["guess_total"] == 1  # 无叙述 → 默认全部奇术被使用
+        tb_id = body["id"]
+
+        # 猜词（三环节打桩默认不命中 → 无看破，次数耗尽揭示）
+        g = client.post(
+            f"/api/admin/test/battles/{tb_id}/guess",
+            json={"text": "能点燃一切"},
+            headers=h,
+        )
+        assert g.status_code == 200, g.text
+        assert g.json()["guess_state"] == "guessing"
+
+        # 玩家侧零污染：battles / battle_guesses 未新增（仅测试域落 test_* 表）
+        con = _sqlite()
+        assert con.execute("SELECT COUNT(*) FROM battles").fetchone()[0] == battles_before
+        assert con.execute("SELECT COUNT(*) FROM battle_guesses").fetchone()[0] == guesses_before
+        assert con.execute("SELECT COUNT(*) FROM users WHERE username IN ('赤焰君临','霜语者')").fetchone()[0] == 0
+        con.close()
+
+        # 测试行迹列表可见
+        lst = client.get("/api/admin/test/battles", headers=h).json()
+        assert any(b["id"] == tb_id for b in lst)
+
+        # 删除测试行迹 + 测试账号 + 持久测试奇人
+        assert client.delete(f"/api/admin/test/battles/{tb_id}", headers=h).status_code == 204
+        assert client.delete(f"/api/admin/test/users/{b.json()['id']}", headers=h).status_code == 204
+        assert client.delete(f"/api/admin/test/loadouts/{l_a_id}", headers=h).status_code == 204
+        assert client.delete(f"/api/admin/test/loadouts/{l_b_id}", headers=h).status_code == 204
+
+
+def test_test_arena_lists_persistent_loadouts():
+    """试验场读持久测试奇人：含绑定账号名与装配奇术。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+        aid = _test_ability(client, h, "焚天", "烈焰焚城")
+        created = client.post("/api/admin/test/loadouts", json={"abilities": [aid]}, headers=h)
+        assert created.status_code == 201, created.text
+        c = created.json()
+
+        rows = client.get("/api/admin/test/loadouts", headers=h).json()
+        assert any(
+            l["id"] == c["id"] and l["name"] == c["name"] and l["user_id"] == c["user_id"]
+            and l["username"] and len(l["abilities"]) >= 1
+            for l in rows
+        )
+
+
+def test_test_arena_generate_loadout_persists_and_auto_account():
+    """生成持久奇人：自动绑定账号、刷新仍存在、删奇人连带清空无对局引用账号；有对局则保留账号。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+        aid = _test_ability(client, h, "燃烬之握", "点燃一切")
+
+        con = _sqlite()
+        base_tl = con.execute("SELECT COUNT(*) FROM test_loadouts").fetchone()[0]
+        base_tu = con.execute("SELECT COUNT(*) FROM test_users").fetchone()[0]
+
+        created = client.post("/api/admin/test/loadouts", json={"abilities": [aid]}, headers=h)
+        assert created.status_code == 201, created.text
+        c = created.json()
+        assert c["id"] > 0
+        assert c["name"]
+        assert c["style"] == ""  # 风格恒空
+        assert c["username"]  # 自动绑定账号
+        assert c["user_id"] > 0
+
+        # 自动账号 + 持久奇人落库
+        assert con.execute("SELECT COUNT(*) FROM test_loadouts").fetchone()[0] == base_tl + 1
+        assert con.execute("SELECT COUNT(*) FROM test_users").fetchone()[0] == base_tu + 1
+        join_row = con.execute(
+            "SELECT 1 FROM test_loadout_abilities WHERE loadout_id=%s AND ability_id=%s",
+            (c["id"], aid),
+        ).fetchone()
+        assert join_row is not None
+        con.close()
+
+        # 再 GET（模拟刷新/切页）→ 持久存在
+        again = client.get("/api/admin/test/loadouts", headers=h).json()
+        assert any(l["id"] == c["id"] for l in again)
+
+        # 无对局引用 → 删奇人连带删绑定账号
+        assert client.delete(f"/api/admin/test/loadouts/{c['id']}", headers=h).status_code == 204
+        con = _sqlite()
+        assert con.execute("SELECT COUNT(*) FROM test_loadouts WHERE id=%s", (c["id"],)).fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM test_users WHERE id=%s", (c["user_id"],)).fetchone()[0] == 0
+        con.close()
+
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+        aid = _test_ability(client, h, "燃烬之握", "点燃一切")
+        bid = _test_ability(client, h, "霜语者", "冻结一切")
+        l = client.post("/api/admin/test/loadouts", json={"abilities": [aid]}, headers=h).json()
+        r = client.post(
+            "/api/admin/test/battles/skip",
+            json={
+                "fighter_a": {"test_loadout_id": l["id"]},
+                "fighter_b": {"name": "对家", "abilities": [bid], "owner": None},
+                "winner": "A",
+            },
+            headers=h,
+        )
+        assert r.status_code == 201, r.text
+        tb_id = r.json()["id"]
+        # 有对局引用 → 删奇人后账号保留（行迹用户名仍可解析）
+        assert client.delete(f"/api/admin/test/loadouts/{l['id']}", headers=h).status_code == 204
+        con = _sqlite()
+        assert con.execute("SELECT COUNT(*) FROM test_users WHERE id=%s", (l["user_id"],)).fetchone()[0] == 1
+        con.close()
+        detail = client.get(f"/api/admin/test/battles/{tb_id}", headers=h).json()
+        assert detail["user_a"] == l["username"]
+        assert client.delete(f"/api/admin/test/battles/{tb_id}", headers=h).status_code == 204
+
+
+# ---------- LLM 链路追踪 ----------
+
+
+def _wait_for_trace_count(con, n, timeout=3.0):
+    """追踪落库是异步 fire-and-forget 任务：轮询 sqlite 直连直到达到期望条数。"""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        cnt = con.execute("SELECT COUNT(*) FROM llm_traces").fetchone()[0]
+        if cnt >= n:
+            return cnt
+        time.sleep(0.05)
+    return cnt
+
+
+def test_llm_trace_recorded_for_guess_flow():
+    """试验场猜词（打桩 LLM）应落 llm_traces 追踪记录：含环节、请求、输出，且管理端可查。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+
+        aid = _test_ability(client, h, "燃烬之握", "点燃一切")
+        r = client.post(
+            "/api/admin/test/battles/skip",
+            json={
+                "fighter_a": {"name": "赤焰君临", "abilities": [aid], "owner": None},
+                "fighter_b": {"name": "霜语者", "abilities": [aid], "owner": None},
+                "winner": "A",
+            },
+            headers=h,
+        )
+        assert r.status_code == 201, r.text
+        tb_id = r.json()["id"]
+
+        # 提交猜词（拆分是纯函数无 LLM；配对打桩返回空，但仍会触发 LLM 调用并落追踪）
+        g = client.post(
+            f"/api/admin/test/battles/{tb_id}/guess",
+            json={"text": "能点燃一切"},
+            headers=h,
+        )
+        assert g.status_code == 200, g.text
+
+        # 追踪落库是异步任务，轮询等待 guess_pair 记录出现
+        con = _sqlite()
+        n = _wait_for_trace_count(con, 1)
+        con.close()
+        assert n >= 1, "应至少有一条 llm_traces 记录"
+
+        # 管理端列表可见（带环节/场景过滤）
+        lst = client.get(f"/api/admin/llm-traces?kind=test_guess&trace_id={tb_id}", headers=h).json()
+        ops = {t["operation"] for t in lst}
+        assert "guess_pair" in ops, f"应含 guess_pair，实际 {ops}"
+        assert all(t["kind"] == "test_guess" and t["trace_id"] == str(tb_id) for t in lst)
+
+        # 详情含请求输入
+        detail = client.get(f"/api/admin/llm-traces/{lst[0]['id']}", headers=h).json()
+        assert detail["request_json"] is not None
+        assert detail["status"] in ("ok", "fail")
+
+        # 统计聚合可用
+        stats = client.get("/api/admin/llm-traces/stats", headers=h).json()
+        assert stats["total"] >= 1
+        assert any(op["operation"] == "guess_pair" for op in stats["by_operation"])
+
+        # 清掉测试行迹（trace 保留，不清理测试方便复盘）
+        client.delete(f"/api/admin/test/battles/{tb_id}", headers=h)
+
+
+def test_llm_trace_forbidden_for_non_admin():
+    """追踪仅管理员可见。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        assert client.get("/api/admin/llm-traces", headers=h).status_code == 403
+        assert client.get("/api/admin/llm-traces/stats", headers=h).status_code == 403

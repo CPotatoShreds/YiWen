@@ -12,12 +12,14 @@ from app.core.config import get_settings
 from app.services.reliability import LLM_TIMEOUT_SECONDS
 
 
-def build_chat_model(thinking: bool = True, max_tokens: int | None = None) -> ChatOpenAI:
+def build_chat_model(thinking: bool = True, max_tokens: int | None = None, temperature: float | None = None) -> ChatOpenAI:
     """构造配置好的 ChatOpenAI。
 
     - thinking=False 时通过 extra_body 禁用 DeepSeek 思考模式（提速降本，质量略降）。
     - `max_tokens`：输出上限（None 时用模型默认）。一次性推演完整对战这类长输出场景需显式调大，
       否则输出被截断会导致结尾句缺失。
+    - `temperature`：采样温度（None 时用模型默认）。分析类节点（如讨论节点）需要低温度、稳定的
+      报告输出时显式传入。
     - 结构化调用：`await build_chat_model().with_structured_output(Model).ainvoke(messages)`。
     - `timeout`：httpx 层请求超时（可靠性层另有 `wait_for` 硬上限，双保险防无限挂起）。
     """
@@ -30,6 +32,8 @@ def build_chat_model(thinking: bool = True, max_tokens: int | None = None) -> Ch
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     if not thinking:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     return ChatOpenAI(**kwargs)

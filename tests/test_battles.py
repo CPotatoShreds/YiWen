@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import CardMatch, CardMatches
+from app.services.nodes.guess_matcher import PairMatch, Verification
 from app.services.nodes.usage_judge import UsedAbilities
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
@@ -44,16 +44,23 @@ def _transcribe(nar_a: str, nar_b: str, delay: float = 0):
     return chain
 
 
-def _matcher(matches: list[CardMatch]) -> CardMatches:
-    """mock _build_matcher_llm：返回指定卡片匹配结果。"""
-    return CardMatches(matches=matches)
+def _guess_pipeline(pair_fn, verify_guessed):
+    """mock 猜词配对/检定两环节：返回 (pair_chain, verify_chain)。
 
+    pair 收到的是 format_messages 生成的 messages 列表，side_effect 拼接全部消息文本后交给
+    pair_fn 分派（含奇术真名，用于按目标卡判定）；verify 固定返回给定检定结果。
+    拆分环节为纯函数 split_atomic_guesses，无需打桩。
+    """
+    pair_chain = MagicMock()
 
-def _matcher_chain(matches: list[CardMatch]):
-    """mock _build_matcher_llm 的返回链：ainvoke 返回给定匹配结果。"""
-    chain = MagicMock()
-    chain.ainvoke = AsyncMock(return_value=_matcher(matches))
-    return chain
+    async def _pair_ainvoke(kwargs):
+        text = "\n".join(m.content for m in kwargs)
+        return pair_fn(text)
+
+    pair_chain.ainvoke = AsyncMock(side_effect=_pair_ainvoke)
+    verify_chain = MagicMock()
+    verify_chain.ainvoke = AsyncMock(return_value=Verification(guessed=verify_guessed, reason="检定"))
+    return pair_chain, verify_chain
 
 
 def _usage_chain(indices: list[int]):
@@ -188,11 +195,13 @@ def test_battle_flow_and_guess_miss():
         assert me_a["exp"] == 20 and me_b["exp"] == 20
         assert me_a["rank_points"] == 984 and me_b["rank_points"] == 1016
 
-        # A 猜一次（匹配 delta=0，未看破）→ 机会耗尽，B 显式开启 reveal_on_miss，结束后揭示
+        # A 猜一次（配对判定无价值、检定未猜出）→ 机会耗尽，B 显式开启 reveal_on_miss，结束后揭示
         assert client.put("/api/auth/settings", json={"reveal_on_miss": True}, headers=h_b).status_code == 200
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="不是控制重力", progress_delta=0)]
-        )):
+        pair, verify = _guess_pipeline(lambda kw: PairMatch(snippet=""), False)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "控制重力"}, headers=h_a)
         assert g.status_code == 200
         gb = g.json()
@@ -236,10 +245,12 @@ def test_guess_hit_flips_winner_and_rank():
         assert NAR_B in b["story"]["narration_b"]  # B 只见自己的视角
         assert "narration_a" not in b["story"]
 
-        # B 一次道出命中全部奇术（delta=100）→ 全破逆转，名望回滚重算
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="掌控雷电轰击目标", progress_delta=100)]
-        )):
+        # B 一次道出命中全部奇术（配对有价值 + 检定猜出）→ 全破逆转，名望回滚重算
+        pair, verify = _guess_pipeline(lambda kw: PairMatch(snippet="召唤雷霆轰击对手"), True)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
         gb = g.json()
         assert gb["guess_hit"] is True
@@ -281,9 +292,11 @@ def test_reveal_on_miss_toggle_hides_ability():
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
 
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="不猜了", progress_delta=0)]
-        )):
+        pair, verify = _guess_pipeline(lambda kw: PairMatch(snippet=""), False)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "不猜了"}, headers=h_a)
         gb = g.json()
         assert gb["guess_hit"] is False
@@ -543,7 +556,10 @@ def test_battle_deduce_failure_marks_failed_with_message():
 
 
 def test_guess_failure_returns_retryable_400():
-    """猜奇术匹配 LLM 重试耗尽 → 400 解释文本；不消耗次数、状态不变，可重试（不破坏已落定的对战）。"""
+    """猜词无法拆出有效原子条目 → 400 解释文本；不消耗次数、状态不变，可重试（不破坏已落定的对战）。
+
+    拆分已改为按换行切分（纯函数）：输入只有分隔符/空白时切不出条目，走可重试文案。
+    """
     with TestClient(app) as client:
         tok_a = _mk_user(client, "testgfail")
         tok_b = _mk_user(client, "testgfail")
@@ -559,11 +575,8 @@ def test_guess_failure_returns_retryable_400():
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)  # B 败方可猜
 
-        # 匹配 LLM 恒失败（重试耗尽后 ChainFailure → 400 文案）
-        chain = MagicMock()
-        chain.ainvoke = AsyncMock(side_effect=TimeoutError("判定僵死"))
-        with patch("app.services.battle._build_matcher_llm", return_value=chain):
-            g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "能反弹一切攻击的能力"}, headers=h_b)
+        # 只输入分隔符/空白 → 拆不出原子条目，400 可重试文案，且不消耗次数可重试
+        g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "，，，\n\n，，，"}, headers=h_b)
         assert g.status_code == 400
         assert g.json()["detail"] == "奇术判定失联，请稍后重试猜奇术。"
         # 判定失败不消耗次数、不落 done：仍可重试
@@ -606,9 +619,11 @@ def test_usage_subset_limits_cards():
 
         # 看破该卡 → 揭示的正是「使用过」的那门（装配清单之一；装配顺序在 SQLite 秒级时间戳
         # 下不稳定，故只断言名字落在装配的两门之内）
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="掌控雷电轰击目标", progress_delta=100)]
-        )):
+        pair, verify = _guess_pipeline(lambda kw: PairMatch(snippet="召唤雷霆轰击对手"), True)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
         gb = g.json()
         assert gb["guess_cards"][0]["cracked"] is True
@@ -642,10 +657,17 @@ def test_guess_cracks_card_reveals_ability():
         assert b["guess_total"] == 2
         assert b["can_guess"] is True
 
-        # 只命中第 1 门（雷暴召来）→ 该卡看破揭示，第 2 门（影刃）不动，未全破仍在猜词中
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="掌控雷电轰击目标", progress_delta=100)]
-        )):
+        # 只命中「雷暴召来」→ 该卡看破揭示，另一门（影刃）不动，未全破仍在猜词中
+        def pair_fn(text):
+            return PairMatch(
+                snippet="召唤雷霆轰击对手" if "雷暴" in text else "",
+            )
+
+        pair, verify = _guess_pipeline(pair_fn, True)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
         gb = g.json()
         assert gb["guessed"] is False  # 未全破，猜词继续
@@ -653,13 +675,11 @@ def test_guess_cracks_card_reveals_ability():
         assert gb["can_guess"] is True
         assert gb["guess_score"] == 0.5  # 1/2
         assert gb["guess_attempts_used"] == 1
-        c0, c1 = gb["guess_cards"]
-        # 装配顺序在 SQLite 秒级时间戳下不稳定（同秒装配的 added_at 并列），故不断言具体哪门，
-        # 只断言：被命中的第一张卡看破并揭示装配清单内的真实奇术，另一张卡原样不动
-        assert c0["cracked"] is True and c0["name"] in {"雷暴召来", "影刃"}
-        assert c0["matched"] == ["掌控雷电轰击目标"]
-        assert c1["cracked"] is False and c1["name"] is None
-        assert c1["progress"] == 0
+        # 装配顺序在 SQLite 秒级时间戳下不稳定，故不断言具体哪门；只断言：
+        # 恰好一张卡被命中看破（片段上卡 + 揭示装配清单内真实奇术），另一张原样不动
+        assert sorted(c["cracked"] for c in gb["guess_cards"]) == [False, True]
+        assert sorted(c["matched"] for c in gb["guess_cards"]) == [[], ["召唤雷霆轰击对手"]]
+        assert {c["name"] for c in gb["guess_cards"]} == {"雷暴召来", None}
 
 
 def test_winner_sees_guesser_progress():
@@ -700,13 +720,20 @@ def test_winner_sees_guesser_progress():
         assert b["guess_attempts_used"] == 0
         assert b["guess_history"] == []
         assert b["guess_cards"] and len(b["guess_cards"]) == 2
-        assert all(not c["cracked"] and c["matched"] == [] and c["progress"] == 0 for c in b["guess_cards"])
+        assert all(not c["cracked"] and c["matched"] == [] for c in b["guess_cards"])
         assert b["guessed"] is False  # 尚未开始猜词，赢家面板显示「正在猜」
 
         # 败方猜一次（命中第 1 门，未全破）→ 赢家视角实时看到进度推进与猜测原文
-        with patch("app.services.battle._build_matcher_llm", return_value=_matcher_chain(
-            [CardMatch(index=1, snippet="掌控雷电轰击目标", progress_delta=100)]
-        )):
+        def pair_fn(text):
+            return PairMatch(
+                snippet="召唤雷霆轰击对手" if "雷暴" in text else "",
+            )
+
+        pair, verify = _guess_pipeline(pair_fn, True)
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
         assert g.status_code == 200
         b2 = client.get(f"/api/battles/{b['id']}", headers=h_a).json()
@@ -714,10 +741,10 @@ def test_winner_sees_guesser_progress():
         assert b2["guess_history"] == ["掌控雷电轰击目标"]  # 正是败方提交的原文
         assert b2["guess_score"] == 0.5  # 1/2
         assert b2["guessed"] is False  # 未全破，仍在猜词中
-        c0, c1 = b2["guess_cards"]
-        assert c0["cracked"] is True and c0["name"] in {"雷暴召来", "影刃"}
-        assert c0["matched"] == ["掌控雷电轰击目标"]  # 片段赢家也可见
-        assert c1["cracked"] is False and c1["matched"] == []
+        # 装配顺序不稳定：恰好一张卡看破并揭示真实奇术（片段赢家也可见），另一张未破
+        assert sorted(c["cracked"] for c in b2["guess_cards"]) == [False, True]
+        assert sorted(c["matched"] for c in b2["guess_cards"]) == [[], ["召唤雷霆轰击对手"]]
+        assert {c["name"] for c in b2["guess_cards"]} == {"雷暴召来", None}
 
 
 def test_same_name_fighters_disambiguated():

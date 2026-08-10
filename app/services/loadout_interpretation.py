@@ -84,6 +84,7 @@ async def ensure_loadout_interpretation(loadout_id: int) -> None:
                     abilities=abilities_txt,
                 ),
                 operation="loadout_interpretation",
+                trace_context={"kind": "background", "trace_id": str(loadout_id)},
             )
             loadout.style_interpretation = (out.style or "").strip()
             loadout.tactic_interpretation = (out.tactic or "").strip()

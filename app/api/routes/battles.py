@@ -101,14 +101,13 @@ async def _to_out(db: AsyncSession, battle: Battle, viewer_id: int | None = None
     guess_total = 0
     guess_history: list[str] = []
     if guess is not None and guess.used_abilities:
-        # 猜词数据对双方可见：赢家据此实时看到败方猜词进度（卡片进度/片段/看破 + 每次猜测原文）。
+        # 猜词数据对双方可见：赢家据此实时看到败方猜词进度（卡片片段/看破 + 每次猜测原文）。
         # 未看破卡不带真实奇术（保密）；看破卡揭示该门名称/效果。
         guess_total = len(guess.used_abilities)
         guess_cards = [
             {
                 "index": i + 1,
                 "matched": c["matched"],
-                "progress": c["progress"],
                 "cracked": c["cracked"],
                 **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
             }

@@ -31,11 +31,14 @@ ynfight/
 uv sync
 cd frontend && npm install
 
+# 启动数据库（Docker PostgreSQL，见 docker-compose.yml；首次会拉镜像）
+docker compose up -d
+
 # 一键启动前后端（同一终端；后端 8102，前端 5174）
 # 安全退出：输入 q 后回车 —— 同时关闭前后端，不残留进程
 dev.bat
 
-# 运行测试
+# 运行测试（自动重建独立测试库 ynfight_test）
 uv run pytest
 
 # 代码检查
@@ -45,6 +48,8 @@ uv run ruff check .
 uv run alembic upgrade head
 ```
 
-SQLite 默认使用根目录的 `ynfight.db`；`ynfight.db-wal` 和 `ynfight.db-shm` 是同一数据库的运行时临时文件，不是额外数据库。不要手动删除正在运行实例的这两个文件。
+数据库为本地 Docker PostgreSQL（`postgres:16-alpine`，用户/库均为 `ynfight`，端口 5432），连接串在 `.env` 的 `DATABASE_URL`（默认 `postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight`）。测试会重建独立的 `ynfight_test` 库，不碰开发数据。
+
+> 备选：如需单文件 SQLite 本地调试，把 `.env` 的 `DATABASE_URL` 改为 `sqlite+aiosqlite:///./ynfight.db` 即可。
 
 - API 文档：http://localhost:8102/api/docs

@@ -52,6 +52,7 @@ async def ensure_ability_understanding(ability_id: str) -> None:
                     "tactic": ability.tactic,
                 },
                 operation="understanding",
+                trace_context={"kind": "background", "trace_id": str(ability_id)},
             )
             ability.understanding = (text or "").strip()
             await db.commit()

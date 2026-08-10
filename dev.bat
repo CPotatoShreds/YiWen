@@ -20,6 +20,13 @@ if not exist ".venv\Scripts\python.exe" (
     echo [错误] 未找到 .venv\Scripts\python.exe，请先运行 uv sync。
     exit /b 1
 )
+echo === 启动数据库（Docker PostgreSQL）===
+docker compose up -d
+if errorlevel 1 (
+    echo [错误] Docker PostgreSQL 启动失败，请确认 Docker Desktop 已运行。
+    exit /b 1
+)
+
 echo === 应用数据库迁移 ===
 .venv\Scripts\python.exe -m alembic upgrade head
 if errorlevel 1 (

@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3Icon, BookIcon, GearIcon, TargetIcon, UsersIcon } from "./icons";
+import { BarChart3Icon, BookIcon, GearIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
@@ -8,6 +8,7 @@ const links = [
   { to: "/admin/battles", label: "行迹", icon: GearIcon },
   { to: "/admin/relations", label: "关系", icon: UsersIcon },
   { to: "/admin/traffic", label: "流量", icon: BarChart3Icon },
+  { to: "/admin/test", label: "试验场", icon: TestTubeIcon },
 ];
 
 export default function AdminLayout() {

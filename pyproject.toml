@@ -12,6 +12,8 @@ dependencies = [
     # 数据库
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    "asyncpg>=0.30",
+    "psycopg[binary]>=3.2",
     "alembic>=1.14",
     # 配置与数据校验
     "pydantic>=2.9",
