@@ -1,23 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import type { Battle } from "../types";
 import MatchCard from "../components/MatchCard";
 import { LockIcon, TrophyIcon } from "../components/icons";
 
-interface AbilityLite {
-  name: string;
-  effect: string;
-}
-interface Battle {
-  user_a: string;
-  user_b: string;
-  fighter_a: string;
-  fighter_b: string;
-  status: string;
-  winner: string | null;
-  revealed: boolean;
-  story: { narration_a?: string; narration_b?: string; abilities_a?: AbilityLite[]; abilities_b?: AbilityLite[] } | null;
-}
 
 function toStatus(s: string): "pending" | "done" | "failed" {
   if (s === "pending") return "pending";

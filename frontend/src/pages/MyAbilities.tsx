@@ -1,29 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
+import type { Ability, Loadout } from "../types";
+import { LOADOUT_NUMBERS, loadoutLabel } from "../types";
 import { CheckIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
 
-interface Ability {
-  id: string;
-  name: string;
-  effect: string;
-}
-interface Loadout {
-  id: number;
-  name: string;
-  style: string;
-  enabled: boolean;
-  tactic: string;
-  abilities: Ability[];
-}
-
-const NUM = ["壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾"];
 const MAX_SLOTS = 4; // 每位奇人最多装配 4 个奇术
-
-// 奇人展示名：有姓名用姓名，否则占位「奇人·壹/贰/…/拾」
-function loadoutLabel(l: Loadout, i: number): string {
-  return l.name || `奇人·${NUM[i] ?? i + 1}`;
-}
 
 // 奇术信息悬浮提示：鼠标悬浮显示名目与效果
 function Tip({ label, children }: { label: string; children: ReactNode }) {
@@ -699,7 +681,7 @@ export default function MyAbilities() {
           {loadouts.map((l, i) => (
             <div className={`poker${l.enabled ? " is-on" : ""}`} key={l.id}>
               <div className="poker__head">
-                <span className="poker__seal">{NUM[i] ?? i + 1}</span>
+                <span className="poker__seal">{LOADOUT_NUMBERS[i] ?? i + 1}</span>
                 <span className="poker__name">{loadoutLabel(l, i)}</span>
                 <label className="toggle" title={l.enabled ? "点击未解封" : "点击解封"}>
                   <input

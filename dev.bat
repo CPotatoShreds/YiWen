@@ -1,6 +1,6 @@
-﻿@echo off
+@echo off
 setlocal EnableExtensions
-chcp 65001 >nul
+chcp 936 >nul
 cd /d "%~dp0"
 
 set "BACK_PORT=8102"

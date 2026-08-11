@@ -73,20 +73,20 @@ async def list_friends(
 ) -> list[FriendOut]:
     """我的故人（含待收拜帖）。"""
     result = await db.execute(
-        select(Friendship).where(
+        select(User, Friendship)
+        .join(
+            Friendship,
             or_(
-                and_(Friendship.user_id == current.id, Friendship.status == "accepted"),
-                and_(Friendship.friend_id == current.id, Friendship.status == "accepted"),
-            )
+                and_(Friendship.user_id == current.id, Friendship.friend_id == User.id),
+                and_(Friendship.friend_id == current.id, Friendship.user_id == User.id),
+            ),
         )
+        .where(Friendship.status == "accepted")
     )
-    out = []
-    for f in result.scalars().all():
-        other_id = f.friend_id if f.user_id == current.id else f.user_id
-        other = await db.get(User, other_id)
-        if other:
-            out.append(FriendOut(id=other.id, username=other.username, status=f.status))
-    return out
+    return [
+        FriendOut(id=user.id, username=user.username, status=friendship.status)
+        for user, friendship in result.all()
+    ]
 
 
 @router.get("/requests", response_model=list[FriendOut])
@@ -96,14 +96,11 @@ async def pending_requests(
 ) -> list[FriendOut]:
     """递来的待收拜帖。"""
     result = await db.execute(
-        select(Friendship).where(
-            Friendship.friend_id == current.id,
-            Friendship.status == "pending",
-        )
+        select(User, Friendship)
+        .join(Friendship, Friendship.user_id == User.id)
+        .where(Friendship.friend_id == current.id, Friendship.status == "pending")
     )
-    out = []
-    for f in result.scalars().all():
-        requester = await db.get(User, f.user_id)
-        if requester:
-            out.append(FriendOut(id=requester.id, username=requester.username, status=f.status))
-    return out
+    return [
+        FriendOut(id=user.id, username=user.username, status=friendship.status)
+        for user, friendship in result.all()
+    ]

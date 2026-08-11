@@ -11,7 +11,7 @@ from typing import Annotated
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.db.base import get_db
 from app.models.user import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -37,7 +37,8 @@ def create_access_token(user_id: int) -> str:
 
 
 async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    request: Request,
+    token: Annotated[str | None, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     credentials_exc = HTTPException(
@@ -45,6 +46,9 @@ async def get_current_user(
         detail="无效或过期的凭证",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = token or request.cookies.get(settings.AUTH_COOKIE_NAME)
+    if not token:
+        raise credentials_exc
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         user_id = int(payload.get("sub"))

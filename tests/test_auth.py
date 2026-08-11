@@ -45,6 +45,7 @@ def test_register_login_me():
         assert me["rank_points"] == 1000
         assert me["max_loadouts"] == 3
 
-        # 无 token
-        r7 = client.get("/api/auth/me")
+        # 无 cookie / token
+        with TestClient(app) as anonymous:
+            r7 = anonymous.get("/api/auth/me")
         assert r7.status_code == 401

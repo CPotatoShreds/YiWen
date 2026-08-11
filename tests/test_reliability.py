@@ -101,7 +101,6 @@ def test_run_deduction_one_shot():
 
         async def _ainvoke(kwargs):
             captured["info"] = kwargs["info"]
-            captured["opening"] = kwargs["opening"]
             captured["discuss_report"] = kwargs["discuss_report"]
             return "血影以血咒反噬，青锋倒下。胜者：血影"
 
@@ -155,7 +154,8 @@ def test_run_deduction_one_shot():
     assert captured["discuss_report"] == "金身可挡精神冲击，但若先被信息定位再偷袭则破。"
     # 转写恰 1 次，拿到完整上帝全文（开场白 + 推演段），视角身份注入奇人名字；不再注入系统固定首尾
     assert captured["god"] == res.god
-    assert res.god.startswith(captured["opening"])
+    # 上帝视角 = 模型完整输出：不再服务端前置开场白（信任模型按模板已输出开场白）
+    assert res.god == "血影以血咒反噬，青锋倒下。胜者：血影"
     assert captured["viewer_a"] == "青锋" and captured["viewer_b"] == "血影"
     assert "pov_opening" not in captured["keys"] and "pov_closing" not in captured["keys"]
     assert res.narration_a == "新A"

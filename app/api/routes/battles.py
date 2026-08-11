@@ -79,11 +79,25 @@ async def _resolve_fighters(db: AsyncSession, battle: Battle) -> dict[str, str]:
     return {"a": by_id.get(battle.loadout_a_id, ""), "b": by_id.get(battle.loadout_b_id, "")}
 
 
-async def _to_out(db: AsyncSession, battle: Battle, viewer_id: int | None = None) -> BattleOut:
-    names = await _resolve_names(db, battle)
-    fighters = await _resolve_fighters(db, battle)
-    fighter_a = fighters["a"] or names.get(battle.user_a_id, "?")
-    fighter_b = fighters["b"] or names.get(battle.user_b_id, "?")
+async def _to_out(
+    db: AsyncSession,
+    battle: Battle,
+    viewer_id: int | None = None,
+    *,
+    names: dict[int, str] | None = None,
+    fighter_names: dict[int, str] | None = None,
+    guesses: dict[int, BattleGuess] | None = None,
+) -> BattleOut:
+    names = names if names is not None else await _resolve_names(db, battle)
+    if fighter_names is None:
+        fighters = await _resolve_fighters(db, battle)
+        fighter_a = fighters["a"]
+        fighter_b = fighters["b"]
+    else:
+        fighter_a = fighter_names.get(battle.loadout_a_id, "") if battle.loadout_a_id else ""
+        fighter_b = fighter_names.get(battle.loadout_b_id, "") if battle.loadout_b_id else ""
+    fighter_a = fighter_a or names.get(battle.user_a_id, "?")
+    fighter_b = fighter_b or names.get(battle.user_b_id, "?")
     # 双方同名时以「奇人名（异闻师名）」区分（与推演时命名规则一致，保证胜者名对得上叙述）
     fighter_a, fighter_b = disambiguate_fighters(
         fighter_a, fighter_b, names.get(battle.user_a_id, "?"), names.get(battle.user_b_id, "?")
@@ -95,7 +109,7 @@ async def _to_out(db: AsyncSession, battle: Battle, viewer_id: int | None = None
         winner_fighter = fighter_b
     story = json.loads(battle.story) if battle.story else None
     story = _filter_story(story, viewer_id, battle.revealed, battle.user_a_id, battle.user_b_id)
-    guess = await db.get(BattleGuess, battle.id)
+    guess = guesses.get(battle.id) if guesses is not None else await db.get(BattleGuess, battle.id)
     is_guesser = viewer_id is not None and battle.guess_by == viewer_id
     guess_cards = None
     guess_total = 0
@@ -294,7 +308,27 @@ async def my_battles(
         .order_by(Battle.created_at.desc())
         .limit(50)
     )
-    return [await _to_out(db, b, viewer_id=current.id) for b in result.scalars().all()]
+    battles = result.scalars().all()
+    if not battles:
+        return []
+    user_ids = {user_id for battle in battles for user_id in (battle.user_a_id, battle.user_b_id, battle.winner_id) if user_id}
+    loadout_ids = {loadout_id for battle in battles for loadout_id in (battle.loadout_a_id, battle.loadout_b_id) if loadout_id}
+    names = {
+        user.id: user.username
+        for user in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+    }
+    fighter_names = {
+        loadout.id: (loadout.name or "").strip()
+        for loadout in (await db.execute(select(Loadout).where(Loadout.id.in_(loadout_ids)))).scalars().all()
+    }
+    guesses = {
+        guess.battle_id: guess
+        for guess in (await db.execute(select(BattleGuess).where(BattleGuess.battle_id.in_(b.id for b in battles)))).scalars().all()
+    }
+    return [
+        await _to_out(db, battle, viewer_id=current.id, names=names, fighter_names=fighter_names, guesses=guesses)
+        for battle in battles
+    ]
 
 
 @router.get("/share/{token}", response_model=BattleOut)

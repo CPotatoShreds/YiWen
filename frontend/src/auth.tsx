@@ -1,7 +1,7 @@
 // 认证上下文：token 管理 + 当前用户
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { api, getToken, setToken } from "./api";
+import { api } from "./api";
 
 export interface User {
   id: number;
@@ -30,14 +30,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
-    if (getToken()) {
-      api<User>("/auth/me")
-        .then(setUser)
-        .catch(() => setUser(null))
-        .finally(() => setInitializing(false));
-    } else {
-      setInitializing(false);
-    }
+    // Cookie 会话由浏览器自动携带，刷新时直接验证当前会话。
+    api<User>("/auth/me")
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setInitializing(false));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -49,11 +46,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function login(username: string, password: string) {
-    const r = await api<{ access_token: string }>("/auth/login", {
+    await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    setToken(r.access_token);
     await refresh();
   }
 
@@ -62,9 +58,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await login(username, password);
   }
 
-  function logout() {
-    setToken(null);
-    setUser(null);
+  async function logout() {
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } finally {
+      setUser(null);
+    }
   }
 
   return (

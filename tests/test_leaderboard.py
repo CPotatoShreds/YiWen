@@ -51,4 +51,5 @@ def test_leaderboard_orders_and_reports_me():
         assert data2["me"]["username"] == b and data2["me"]["rank"] > data["me"]["rank"]
 
         # 未登录不可见
-        assert client.get("/api/leaderboard").status_code == 401
+        with TestClient(app) as anonymous:
+            assert anonymous.get("/api/leaderboard").status_code == 401

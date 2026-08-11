@@ -2,24 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import type { Loadout } from "../types";
+import { LOADOUT_NUMBERS, loadoutLabel } from "../types";
 import { LockIcon, PencilIcon, PlusIcon, SwordIcon } from "../components/icons";
 import { BattleBanner, InkMountains } from "../components/Ornaments";
 import StatNumber from "../components/StatNumber";
-
-interface Loadout {
-  id: number;
-  name: string;
-  style: string;
-  enabled: boolean;
-  tactic?: string;
-  abilities: { id: string; name: string }[];
-}
-
-const NUM = ["壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾"];
-// 奇人展示名：有姓名用姓名，否则占位「奇人·壹/贰/…/拾」
-function loadoutLabel(l: Loadout, i: number): string {
-  return l.name || `奇人·${NUM[i] ?? i + 1}`;
-}
 
 export default function Home() {
   const { user, refresh } = useAuth();
@@ -168,7 +155,7 @@ export default function Home() {
               <div className={`char-card${l.enabled ? " is-on" : ""}`} key={l.id}>
                 <div className="char-card__head">
                   <span className="char-card__name">
-                    <span className="seal">{NUM[i] ?? i + 1}</span>
+                    <span className="seal">{LOADOUT_NUMBERS[i] ?? i + 1}</span>
                     {loadoutLabel(l, i)}
                   </span>
                   <span className="char-card__count">{l.abilities.length} 奇术</span>

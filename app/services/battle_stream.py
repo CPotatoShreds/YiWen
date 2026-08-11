@@ -59,8 +59,7 @@ class BattleStream:
         for q in list(self._subscribers):
             q.put_nowait(_SENTINEL)
         self._subscribers.clear()
-        # 不从注册表弹出：已关闭总线保留给「竞态迟到」的订阅者补发历史，等最后一个
-        # 订阅者 unsubscribe 时再清（见 subscribe / unsubscribe）。
+        _registry.pop(self.battle_id, None)
 
 
 _registry: dict[int, BattleStream] = {}

@@ -6,6 +6,7 @@ import MatchCard from "../components/MatchCard";
 import { CheckIcon, ClockIcon, EyeIcon, LockIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
 import { Brush } from "../components/Ornaments";
 import { streamEvents } from "../sse";
+import type { Battle, GuessCard } from "../types";
 
 // SSE 重连退避参数：3s → 6s → 12s → … → 上限 30s，最多 10 次（耗尽显示「连接中断」手动续接）
 const RETRY_BASE = 3000;
@@ -15,47 +16,6 @@ const MAX_RETRIES = 10;
 interface AbilityLite {
   name: string;
   effect: string;
-}
-interface GuessCard {
-  index: number;
-  matched: string[];
-  cracked: boolean;
-  name?: string;
-  effect?: string;
-}
-interface Battle {
-  id: number;
-  user_a: string;
-  user_b: string;
-  fighter_a: string;
-  fighter_b: string;
-  status: string;
-  winner: string | null;
-  rank_delta_a: number;
-  rank_delta_b: number;
-  share_token: string;
-  share_token_b?: string;
-  story: {
-    narration_a?: string;
-    narration_b?: string;
-    abilities_a?: AbilityLite[];
-    abilities_b?: AbilityLite[];
-    insight_a?: string;
-    insight_b?: string;
-  } | null;
-  can_guess: boolean;
-  guessed: boolean;
-  guess_hit: boolean | null;
-  guess_score?: number;
-  guess_by?: string | null;
-  guess_history: string[];
-  guess_text: string;
-  guess_total: number;
-  guess_cards?: GuessCard[] | null;
-  guess_attempts_used: number;
-  guess_attempts_max: number;
-  revealed: boolean;
-  friendly: boolean;
 }
 
 function AbilityList({ title, list, me, insight }: { title: string; list?: AbilityLite[]; me?: boolean; insight?: string }) {

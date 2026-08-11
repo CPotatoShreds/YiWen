@@ -1,0 +1,3 @@
+# dev.bat 工作树用 GBK：cmd 原生代码页 936，规避 chcp 65001 解析 UTF-8 批处理的多字节偏移 bug
+# git 仓库仍存 UTF-8，checkout/add 时按属性自动转换（需 git 2.13+）
+dev.bat text working-tree-encoding=GBK

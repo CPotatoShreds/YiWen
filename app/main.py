@@ -3,9 +3,12 @@
 启动：uv run uvicorn app.main:app --reload
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -45,3 +48,23 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix="/api")
+
+# ── 生产静态托管 ─────────────────────────────────────────────────────────
+# 前端构建产物打进镜像 static/（见 Dockerfile）。纯后端开发时 static/ 不存在，
+# 不注册静态路由，保持原有 404 行为。API 路由先注册优先匹配，SPA 回退不碰 /api。
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+if (STATIC_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="static_assets")
+
+if (STATIC_DIR / "index.html").exists():
+    INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str) -> FileResponse | HTMLResponse:
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = STATIC_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return HTMLResponse(INDEX_HTML)

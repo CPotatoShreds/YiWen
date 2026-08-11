@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.db.base import get_db
 from app.models.ability import Ability
 from app.models.battle import Battle
-from app.models.loadout import Loadout, LoadoutAbility
+from app.models.loadout import MAX_LOADOUT_ABILITIES, Loadout, LoadoutAbility
 from app.models.user import User, loadout_capacity
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut
@@ -168,6 +168,16 @@ async def add_ability_to_loadout(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未拥有该奇术")
     existing = await db.get(LoadoutAbility, (loadout_id, ability_id))
     if existing is None:
+        count = await db.execute(
+            select(func.count())
+            .select_from(LoadoutAbility)
+            .where(LoadoutAbility.loadout_id == loadout_id)
+        )
+        if count.scalar_one() >= MAX_LOADOUT_ABILITIES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"每位奇人最多装配 {MAX_LOADOUT_ABILITIES} 个奇术",
+            )
         db.add(LoadoutAbility(loadout_id=loadout_id, ability_id=ability_id))
         await db.commit()
     if loadout.style or loadout.tactic:

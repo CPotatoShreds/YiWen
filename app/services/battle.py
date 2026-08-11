@@ -155,8 +155,9 @@ async def start_battle(
     existing = await db.execute(
         select(Battle).where(Battle.user_a_id == user_a.id, Battle.status == "pending")
     )
-    if existing.scalar_one_or_none():
-        return existing.scalar_one_or_none()
+    existing_battle = existing.scalar_one_or_none()
+    if existing_battle:
+        return existing_battle
 
     if opponent_id is None:
         opponent_id = await pick_opponent(db, user_a.id)

@@ -1,5 +1,5 @@
-// SSE 客户端：fetch + ReadableStream 解析 text/event-stream（可带 Authorization 头）
-import { API_BASE, getToken } from "./api";
+// SSE 客户端：fetch + ReadableStream 解析 text/event-stream（Cookie 会话）
+import { API_BASE } from "./api";
 
 export interface SseHandlers {
   onEvent?: (ev: { type: string; [k: string]: unknown }) => void;
@@ -18,15 +18,13 @@ export async function streamEvents(
   signal?: AbortSignal,
 ): Promise<void> {
   const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const ctrl = new AbortController();
   const onExternalAbort = () => ctrl.abort();
   signal?.addEventListener("abort", onExternalAbort);
   const timeout = window.setTimeout(() => ctrl.abort(), CONNECT_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, { headers, signal: ctrl.signal });
+    res = await fetch(`${API_BASE}${path}`, { headers, credentials: "include", signal: ctrl.signal });
   } finally {
     window.clearTimeout(timeout);
     signal?.removeEventListener("abort", onExternalAbort);

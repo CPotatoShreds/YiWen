@@ -306,7 +306,9 @@ async def run_deduction(
         operation="deduce",
         trace_context=trace_context,
     )
-    god = (opening + "\n\n" + seg).strip()
+    # 上帝视角 = 模型完整输出：开场白已由模型按模板输出，服务端不再前置（避免开场白重复）。
+    # 模型偶发未输出开场白时，上帝视角以模型输出为准（不展示给玩家，仅存储/试验场可见）。
+    god = seg.strip()
 
     # 胜负从结尾句解析；解析不到（LLM 未按模板收尾）保守判和局
     winner_side = _parse_winner(seg, endings, fighter_a, fighter_b) or "draw"

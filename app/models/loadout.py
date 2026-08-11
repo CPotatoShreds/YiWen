@@ -10,6 +10,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
+MAX_LOADOUT_ABILITIES = 4
+
 
 class Loadout(Base):
     __tablename__ = "loadouts"
