@@ -60,7 +60,7 @@ if (STATIC_DIR / "assets").exists():
 if (STATIC_DIR / "index.html").exists():
     INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    @app.get("/{full_path:path}")
+    @app.get("/{full_path:path}", response_model=None)
     async def spa_fallback(full_path: str) -> FileResponse | HTMLResponse:
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
