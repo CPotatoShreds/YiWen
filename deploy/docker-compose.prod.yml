@@ -1,0 +1,50 @@
+# 服务器端生产编排 — 2 容器：postgres + app（app 托管前端静态文件）
+# 用法：cd deploy && docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+# （deploy.sh 已封装：同步代码 + 远端构建启动）
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ynfight-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ynfight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ynfight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ynfight"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ynfight:latest
+    container_name: ynfight-app
+    restart: unless-stopped
+    ports:
+      - "8102:8102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # 容器内走 postgres 服务名；口令由 --env-file 插值
+      DATABASE_URL: postgresql+asyncpg://ynfight:${POSTGRES_PASSWORD}@postgres:5432/ynfight
+    volumes:
+      - appdata:/app/data
+    # 注意：SSE 为进程内总线，app 必须保持单副本、uvicorn 单进程，勿扩缩容
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
+  appdata:

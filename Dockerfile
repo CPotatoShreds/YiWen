@@ -1,0 +1,36 @@
+# ── Stage 1: Frontend build ──────────────────────────────────────────────
+FROM node:20-alpine AS frontend-builder
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+# output → /src/frontend/dist
+
+# ── Stage 2: Backend runtime ──────────────────────────────────────────────
+FROM python:3.12-slim AS backend
+WORKDIR /app
+
+# Python deps（asyncpg/psycopg[binary]/bcrypt 均有 manylinux 轮子，无需编译工具）
+COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir -e .
+
+# Source
+COPY app/ ./app/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Frontend build output from stage 1
+COPY --from=frontend-builder /src/frontend/dist ./static/
+
+# Persistent state（SECRET_KEY、行迹 md、日志，挂卷 /app/data）
+RUN mkdir -p /app/data
+
+# Runtime（SSE 为进程内总线，必须单 worker，勿加 --workers）
+EXPOSE 8102
+ENV HOST=0.0.0.0
+ENV PORT=8102
+
+ENTRYPOINT ["./entrypoint.sh"]
