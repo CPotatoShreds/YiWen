@@ -71,6 +71,9 @@ logger = get_logger("battle")
 # 持有后台任务引用，防止 asyncio 在任务完成前 GC 取消它
 _background_tasks: set[asyncio.Task] = set()
 
+# 在途猜词防重：同场对战后台判定期间再提交 → 409（防快速连点/网络重试双耗次数）
+_guess_inflight: set[int] = set()
+
 # 全链路自动重试耗尽后的面向用户解释文本（说书语系）
 FAIL_BATTLE_TEXT = "铺陈中途失联，行迹未能成卷，请稍后再启程。"
 FAIL_GUESS_TEXT = "奇术判定失联，请稍后重试猜奇术。"
@@ -461,6 +464,45 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
     user_a = await db.get(User, battle.user_a_id)
     user_b = await db.get(User, battle.user_b_id)
     _write_md(battle, user_a, user_b, story, revealed=battle.revealed)
+
+
+async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
+    """后台猜词：独立会话跑 submit_guess（LLM 配对/检定/落库），完成后经总线推 guess_done。
+
+    猜词彻底结束（全破逆转/次数耗尽，guess_state == "done"）时关闭总线，SSE 订阅端回落到立即 done。
+    """
+    stream = _get_stream(battle_id)
+    try:
+        async with async_session_factory() as db:
+            battle = await db.get(Battle, battle_id)
+            if battle is None:
+                return
+            guesser = await db.get(User, guesser_id)
+            if guesser is None:
+                return
+            await submit_guess(db, battle, guesser, text)
+            finished = battle.guess_state == "done"
+        await stream.publish({"type": "guess_done", "battle_id": battle_id})
+        if finished:
+            await stream.close()
+    except ValueError as e:
+        await stream.publish({"type": "guess_error", "message": str(e)})
+    except Exception as e:  # noqa: BLE001 - 后台猜词任何异常都落到事件，不让任务静默死亡
+        logger.error("guess_failed id=%d err=%r", battle_id, e)
+        await stream.publish({"type": "guess_error", "message": "猜测判定失败，请稍后重试"})
+    finally:
+        _guess_inflight.discard(battle_id)
+
+
+def try_start_guess(battle_id: int, guesser_id: int, text: str) -> bool:
+    """猜词后台任务入队（在途防重）。调用方已完成同步校验；返回 False 表示已有判定在途。"""
+    if battle_id in _guess_inflight:
+        return False
+    _guess_inflight.add(battle_id)
+    task = asyncio.create_task(_run_guess_task(battle_id, guesser_id, text))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return True
 
 
 async def _prepare_guess(

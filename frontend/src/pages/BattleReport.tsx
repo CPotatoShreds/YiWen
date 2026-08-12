@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { useAuth } from "../auth";
 import MatchCard from "../components/MatchCard";
 import { CheckIcon, ClockIcon, EyeIcon, LockIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
@@ -102,6 +102,28 @@ function GuessFeed({ guesses }: { guesses: string[] }) {
   );
 }
 
+// 连接中断横幅：SSE 重连耗尽时出现，点「续接」重置退避重新订阅（推演期与猜词期共用）
+function DisconnectBanner({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="banner banner--info" style={{ marginTop: 12 }}>
+      <span className="banner__icon">
+        <ClockIcon size={20} />
+      </span>
+      <div>
+        <h3>连接中断</h3>
+        <p>与书场的连音断了，已铺陈的行迹没有丢失。点「续接」重连。</p>
+      </div>
+      <button
+        className="btn btn-primary"
+        style={{ marginLeft: "auto", whiteSpace: "nowrap" }}
+        onClick={onRetry}
+      >
+        续接
+      </button>
+    </div>
+  );
+}
+
 export default function BattleReport() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -151,7 +173,16 @@ export default function BattleReport() {
   // 断点续连：重连后服务端重播快照/续推，本地按轮次去重（liveRoundRef），不重复不丢段；
   // 连接中断按指数退避重连，耗尽则显示「连接中断」横幅等手动续接。
   useEffect(() => {
-    if (!b || b.status !== "pending") return;
+    if (!b) return;
+    // 猜词阶段 = 已落定但有可猜的败方（guess_total>0 且未揭完）：与推演期共用总线，等 guess_done 回推
+    const guessActive = b.status === "done" && (b.guess_total ?? 0) > 0 && !b.guessed;
+    if (b.status !== "pending" && !guessActive) return;
+    // 从推演期进入猜词阶段：推演已收尾标记作废，重连保活让位给猜词流
+    if (guessActive && settledRef.current) {
+      settledRef.current = false;
+      setDisconnected(false);
+      setRetry(0);
+    }
     let alive = true;
     const ctrl = new AbortController();
     let timer: number | undefined;
@@ -191,6 +222,14 @@ export default function BattleReport() {
             if (round <= liveRoundRef.current) return; // 断点去重：快照重播/重复段跳过
             liveRoundRef.current = round;
             setLiveSegments((s) => [...s, ev.narration as string]);
+          } else if (ev.type === "guess_done") {
+            setGuessing(false); // 后台判定已落库：解锁输入，重拉含最新进度的行迹
+            refresh();
+            reload();
+          } else if (ev.type === "guess_error") {
+            setGuessing(false);
+            setErr((ev.message as string) || "猜测判定失败，请稍后重试");
+            reload();
           } else if (ev.type === "done" || ev.type === "error") {
             settledRef.current = true; // 已收尾 → 不再触发重连保活（避免 done 过渡期的重复订阅/快照重播）
             refresh(); // 结算后同步名望/见闻：导航栏数值即时浮出 ±N
@@ -206,40 +245,34 @@ export default function BattleReport() {
       ctrl.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [id, b?.status, retry, refresh]);
+  }, [id, b?.status, b?.guess_total, b?.guessed, retry, refresh]);
 
   // 当前查看者是否为败方（猜词者）：逆转后 winner 会翻转，不能拿 winner 判断，用 guess_by。
   const isGuesser = b?.guess_by === user?.username;
-
-  // 赢家视角实时看败方猜词：猜词进行中每 5s 轻量轮询刷新进度（败方每次提交后进度自动推进）。
-  // 与上方 pending 的 SSE 流按 status 互斥；猜词结束（guessed）后停止轮询，落定显示。
-  useEffect(() => {
-    if (!b || b.status !== "done") return;
-    if (isGuesser || b.guess_total <= 0 || b.guessed) return;
-    const t = window.setInterval(() => {
-      api<Battle>(`/battles/${id}`)
-        .then(setB)
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(t);
-  }, [id, b?.status, isGuesser, b?.guess_total, b?.guessed]);
 
   async function submitGuess() {
     if (!guessText.trim()) return;
     setGuessing(true);
     setErr("");
     try {
-      const data = await api<Battle>(`/battles/${id}/guess`, {
+      // 后端只做同步校验+受理（202），LLM 判定在后台任务跑，结果经 SSE guess_done 回推——
+      // 短超时只等受理，不再像旧版同步链路那样被长判定掐断。
+      await api<Battle>(`/battles/${id}/guess`, {
         method: "POST",
         body: JSON.stringify({ text: guessText.trim() }),
+        timeout: 10000,
       });
-      setB(data);
       setGuessText("");
     } catch (e: any) {
+      if (e instanceof ApiError && e.status === 409) {
+        // 上一轮仍在判定中：静默忽略，等 SSE 回推
+        return;
+      }
       setErr(e.message);
-    } finally {
       setGuessing(false);
     }
+    // 兜底：若流中断没收到 guess_done，120s 后解锁输入，用户可重试
+    window.setTimeout(() => setGuessing(false), 120000);
   }
 
   async function rematch() {
@@ -255,8 +288,8 @@ export default function BattleReport() {
     }
   }
 
-  if (err) return <p className="err">{err}</p>;
   if (!b) {
+    if (err) return <p className="err">{err}</p>;
     return (
       <>
         <div className="skeleton" style={{ height: 150, marginBottom: 16 }} />
@@ -296,25 +329,12 @@ export default function BattleReport() {
           </div>
         </div>
         {disconnected && (
-          <div className="banner banner--info" style={{ marginTop: 12 }}>
-            <span className="banner__icon">
-              <ClockIcon size={20} />
-            </span>
-            <div>
-              <h3>连接中断</h3>
-              <p>与书场的连音断了，已铺陈的行迹没有丢失。点「续接」重连。</p>
-            </div>
-            <button
-              className="btn btn-primary"
-              style={{ marginLeft: "auto", whiteSpace: "nowrap" }}
-              onClick={() => {
-                setDisconnected(false);
-                setRetry(0);
-              }}
-            >
-              续接
-            </button>
-          </div>
+          <DisconnectBanner
+            onRetry={() => {
+              setDisconnected(false);
+              setRetry(0);
+            }}
+          />
         )}
         {liveSegments.length > 0 && (
           <div className="panel narration" style={{ marginTop: 16 }}>
@@ -412,6 +432,16 @@ export default function BattleReport() {
           </div>
         )}
       </div>
+
+      {/* 猜词期连接中断横幅（推演期已有，done+未揭完时同样展示） */}
+      {!b.guessed && b.guess_total > 0 && disconnected && (
+        <DisconnectBanner
+          onRetry={() => {
+            setDisconnected(false);
+            setRetry(0);
+          }}
+        />
+      )}
 
       {/* 猜测结果（仅败方视角可见；赢家的收尾在下方赢家面板） */}
       {isGuesser && b.guessed && b.guess_total > 0 && (

@@ -27,16 +27,18 @@ function detailMessage(detail: unknown, status: number): string {
   return detail == null ? `HTTP ${status}` : String(detail);
 }
 
-export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const method = (opts.method || "GET").toUpperCase();
+export async function api<T>(path: string, opts: RequestInit & { timeout?: number } = {}): Promise<T> {
+  const { timeout, ...fetchOpts } = opts;
+  const connectTimeout = timeout ?? CONNECT_TIMEOUT_MS;
+  const method = (fetchOpts.method || "GET").toUpperCase();
   const maxAttempts = method === "GET" ? GET_RETRIES + 1 : 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), CONNECT_TIMEOUT_MS);
+    const timer = window.setTimeout(() => ctrl.abort(), connectTimeout);
     try {
-      const headers = new Headers(opts.headers);
-      if (opts.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-      const res = await fetch(`${API_BASE}${path}`, { ...opts, headers, credentials: "include", signal: ctrl.signal });
+      const headers = new Headers(fetchOpts.headers);
+      if (fetchOpts.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      const res = await fetch(`${API_BASE}${path}`, { ...fetchOpts, headers, credentials: "include", signal: ctrl.signal });
       if (!res.ok) {
         let detail: unknown;
         try {
@@ -53,6 +55,10 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
       if (retryable) {
         await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
         continue;
+      }
+      // 连接超时主动 abort：把浏览器原始 DOMException 换成可读文案，不把 "signal is aborted" 抛给界面
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new ApiError(0, "请求超时，请稍后重试");
       }
       throw error instanceof Error ? error : new Error(String(error));
     } finally {

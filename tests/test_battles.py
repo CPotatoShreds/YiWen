@@ -122,6 +122,21 @@ def _wait_done(client, battle_id, headers, timeout=12):
     return b
 
 
+def _wait_guess(client, battle_id, headers, attempts_before, timeout=12):
+    """轮询战报直到后台猜词任务落库（猜测次数推进）。
+
+    猜词 POST 只同步受理（202），LLM 判定在后台任务跑——须在此轮询等待（在 pair/verify
+    打桩作用域内），任务落库后读到的才是完整结算结果。
+    """
+    b = None
+    for _ in range(int(timeout / 0.2)):
+        b = client.get(f"/api/battles/{battle_id}", headers=headers).json()
+        if b["guess_attempts_used"] > attempts_before:
+            return b
+        time.sleep(0.2)
+    return b
+
+
 def _read_sse(client, url, headers, timeout=12):
     """读取 SSE 流直到 done/error 或超时，返回事件列表（字节级按 \\n\\n 切帧，兼容任意分块边界）。"""
     events = []
@@ -203,8 +218,8 @@ def test_battle_flow_and_guess_miss():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "控制重力"}, headers=h_a)
-        assert g.status_code == 200
-        gb = g.json()
+            assert g.status_code == 202  # 只受理：LLM 判定在后台任务，轮询等落库
+            gb = _wait_guess(client, b["id"], h_a, attempts_before=0)
         assert gb["guessed"] is True and gb["guess_hit"] is False
         assert gb["guess_score"] == 0.0
         assert gb["revealed"] is True  # 默认揭示
@@ -252,7 +267,8 @@ def test_guess_hit_flips_winner_and_rank():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
-        gb = g.json()
+            assert g.status_code == 202
+            gb = _wait_guess(client, b["id"], h_b, attempts_before=0)
         assert gb["guess_hit"] is True
         assert gb["guess_score"] == 1.0
         assert gb["guessed"] is True
@@ -298,7 +314,8 @@ def test_reveal_on_miss_toggle_hides_ability():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "不猜了"}, headers=h_a)
-        gb = g.json()
+            assert g.status_code == 202
+            gb = _wait_guess(client, b["id"], h_a, attempts_before=0)
         assert gb["guess_hit"] is False
         assert gb["guess_score"] == 0.0
         assert gb["revealed"] is False  # 保密未揭示
@@ -473,13 +490,20 @@ def test_battle_stream_filter_for_viewer_side():
 
 
 def test_battle_stream_done_battle_short_circuits():
-    """已完成对战开流：立即收到单个 done 事件（不挂起）。"""
+    """已完成对战开流：立即收到单个 done 事件（不挂起）。
+
+    平局战斗无猜词阶段 → done 后总线已关闭，开流立即短接；
+    带猜词阶段的 done 战斗会订阅总线（等待 guess_done），属预期新行为，由
+    test_battle_stream_delivers_guess_done 覆盖。
+    """
     with TestClient(app) as client:
         tok_a = _mk_user(client, "testsd")
         tok_b = _mk_user(client, "testsd")
         h_a = {"Authorization": f"Bearer {tok_a}"}
         h_b = {"Authorization": f"Bearer {tok_b}"}
-        deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)
+        deduce_llm, user_b_id = _mk_battle(
+            client, tok_a, tok_b, h_a, h_b, deduce="双方僵持周旋，谁也没有彻底失去作战能力。平局"
+        )
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
             patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
@@ -492,6 +516,48 @@ def test_battle_stream_done_battle_short_circuits():
 
             ev = _read_sse(client, f"/api/battles/{battle_id}/stream", headers=h_a)
         assert ev == [{"type": "done", "status": "done"}]
+
+
+def test_battle_stream_delivers_guess_done():
+    """猜词阶段开流：后台判定完成经总线推 guess_done；机会用尽后总线关闭，流随之收尾。
+
+    POST 只受理（202），SSE 流保持开放订阅总线；判定落库后收到 guess_done，总线关闭哨兵结束流。
+    pair mock 刻意慢于流订阅，保证流先订阅上总线（否则 done 短接路径不涉及总线）。
+    """
+    with TestClient(app) as client:
+        tok_a = _mk_user(client, "testgd")
+        tok_b = _mk_user(client, "testgd")
+        h_a = {"Authorization": f"Bearer {tok_a}"}
+        h_b = {"Authorization": f"Bearer {tok_b}"}
+        deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)  # 默认 A 胜 → B 可猜
+        transcribe_llm = _transcribe(NAR_A, NAR_B)
+        with (
+            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle._build_transcribe_chain", return_value=transcribe_llm),
+            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.GUESS_ATTEMPTS_MAX", 1),  # 一次未看破即结束 → 总线关闭
+        ):
+            r = client.post("/api/battles", headers=h_a)
+            battle_id = r.json()["id"]
+            _wait_done(client, battle_id, h_a)
+
+        pair_chain = MagicMock()
+
+        async def _pair_ainvoke(kwargs):
+            await asyncio.sleep(0.3)  # 慢于流订阅：留出 SSE 打开并订阅总线的窗口
+            return PairMatch(snippet="")
+
+        pair_chain.ainvoke = AsyncMock(side_effect=_pair_ainvoke)
+        verify_chain = MagicMock()
+        verify_chain.ainvoke = AsyncMock(return_value=Verification(guessed=False, reason="检定"))
+        with (
+            patch("app.services.battle._build_pair_llm", return_value=pair_chain),
+            patch("app.services.battle._build_verify_llm", return_value=verify_chain),
+        ):
+            g = client.post(f"/api/battles/{battle_id}/guess", json={"text": "控制重力"}, headers=h_b)
+            assert g.status_code == 202
+            ev = _read_sse(client, f"/api/battles/{battle_id}/stream", headers=h_b)
+        assert any(e["type"] == "guess_done" for e in ev)
 
 
 def test_battle_stream_requires_participant():
@@ -625,7 +691,8 @@ def test_usage_subset_limits_cards():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
-        gb = g.json()
+            assert g.status_code == 202
+            gb = _wait_guess(client, b["id"], h_b, attempts_before=0)
         assert gb["guess_cards"][0]["cracked"] is True
         assert gb["guess_cards"][0]["name"] in {"雷暴召来", "影刃"}
 
@@ -669,7 +736,8 @@ def test_guess_cracks_card_reveals_ability():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
-        gb = g.json()
+            assert g.status_code == 202
+            gb = _wait_guess(client, b["id"], h_b, attempts_before=0)
         assert gb["guessed"] is False  # 未全破，猜词继续
         assert gb["guess_hit"] is None
         assert gb["can_guess"] is True
@@ -735,8 +803,8 @@ def test_winner_sees_guesser_progress():
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
             g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
-        assert g.status_code == 200
-        b2 = client.get(f"/api/battles/{b['id']}", headers=h_a).json()
+            assert g.status_code == 202
+            b2 = _wait_guess(client, b["id"], h_a, attempts_before=0)  # 赢家视角轮询到进度落库
         assert b2["guess_attempts_used"] == 1
         assert b2["guess_history"] == ["掌控雷电轰击目标"]  # 正是败方提交的原文
         assert b2["guess_score"] == 0.5  # 1/2

@@ -14,9 +14,15 @@ from app.models.battle import Battle, BattleGuess
 from app.models.loadout import Loadout
 from app.models.user import User
 from app.schemas.battle import BattleOut, GuessIn
-from app.services.battle import GUESS_ATTEMPTS_MAX, disambiguate_fighters, submit_guess
+from app.services.battle import (
+    FAIL_GUESS_TEXT,
+    GUESS_ATTEMPTS_MAX,
+    disambiguate_fighters,
+    try_start_guess,
+)
 from app.services.battle import start_battle as start_battle_service
 from app.services.battle_stream import _get_stream
+from app.services.nodes.guess_matcher import split_atomic_guesses
 
 router = APIRouter(prefix="/battles", tags=["battles"])
 
@@ -88,6 +94,11 @@ async def _to_out(
     fighter_names: dict[int, str] | None = None,
     guesses: dict[int, BattleGuess] | None = None,
 ) -> BattleOut:
+    # 后台猜词与读取可能交错：READ COMMITTED 每语句独立快照，battle 可能读到提交前、guess 读到提交后。
+    # 先载 guess 再刷新 battle，让 story/winner/revealed/guess_* 全部与最新猜词进度对齐，避免半提交态响应。
+    guess = guesses.get(battle.id) if guesses is not None else await db.get(BattleGuess, battle.id)
+    if guess is not None and guesses is None:
+        await db.refresh(battle)
     names = names if names is not None else await _resolve_names(db, battle)
     if fighter_names is None:
         fighters = await _resolve_fighters(db, battle)
@@ -109,7 +120,6 @@ async def _to_out(
         winner_fighter = fighter_b
     story = json.loads(battle.story) if battle.story else None
     story = _filter_story(story, viewer_id, battle.revealed, battle.user_a_id, battle.user_b_id)
-    guess = guesses.get(battle.id) if guesses is not None else await db.get(BattleGuess, battle.id)
     is_guesser = viewer_id is not None and battle.guess_by == viewer_id
     guess_cards = None
     guess_total = 0
@@ -193,23 +203,39 @@ async def challenge(
     return await _to_out(db, battle, viewer_id=current.id)
 
 
-@router.post("/{battle_id}/guess", response_model=BattleOut)
+@router.post("/{battle_id}/guess", response_model=BattleOut, status_code=status.HTTP_202_ACCEPTED)
 async def guess_battle(
     battle_id: int,
     body: GuessIn,
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BattleOut:
-    """败方猜奇术（迭代式）：逐次道出猜测，命中内容上卡并解锁猜测条；全破逆转，次数耗尽按设置揭示。"""
+    """败方猜奇术（异步受理）：同步校验后 202 受理，LLM 判定在后台任务跑，结果经 SSE guess_done 回推。
+
+    校验镜像 submit_guess 顶部检查，失败同步 400；判定在途再提交 → 409。
+    """
     battle = await db.get(Battle, battle_id)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
     if current.id not in (battle.user_a_id, battle.user_b_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
-    try:
-        await submit_guess(db, battle, current, body.text)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if battle.status != "done":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="对决尚未完成")
+    if battle.guess_by != current.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有战败方可以猜奇术")
+    guess = await db.get(BattleGuess, battle.id)
+    if guess is None or not guess.used_abilities:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无奇术可猜")
+    if battle.guess_state == "done":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测已结束")
+    if guess.attempts_used >= guess.attempts_max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测次数已用完")
+    if not body.text.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测不能为空")
+    if not split_atomic_guesses(body.text):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FAIL_GUESS_TEXT)
+    if not try_start_guess(battle.id, current.id, body.text):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮猜测仍在判定中")
     return await _to_out(db, battle, viewer_id=current.id)
 
 
@@ -248,29 +274,33 @@ async def battle_stream(
     battle_id: int,
     current: Annotated[User, Depends(get_current_user)],
 ) -> StreamingResponse:
-    """推演实时流（SSE）：推送观看者自己视角的分段转写，结束后推 done/error。仅参战双方可订阅。
+    """推演/猜词实时流（SSE）：推送观看者自己视角的分段转写，结束后推 done/error。仅参战双方可订阅。
 
-    status 为 pending 时订阅事件总线，逐段推送；已结束则立即回一个 done/error 事件。
+    status 为 pending 或猜词阶段（done + 有可猜的败方未揭完）时订阅事件总线，逐段推送；
+    其余已结束状态立即回一个 done/error 事件。
     """
     async with async_session_factory() as db:
         battle = await db.get(Battle, battle_id)
         if battle is None or current.id not in (battle.user_a_id, battle.user_b_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
         a_id, b_id, status_ = battle.user_a_id, battle.user_b_id, battle.status
+        guess_by_, guess_state_ = battle.guess_by, battle.guess_state
         story_json = battle.story  # 已结束战斗的错误信息存于 story.error_message
 
     def _encode(ev: dict) -> str:
         return f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
     async def gen():
-        if status_ != "pending":
-            if status_ == "failed":
-                msg = "铺陈推演失败"
-                if story_json:
-                    msg = json.loads(story_json).get("error_message", msg)
-                yield _encode({"type": "error", "message": msg})
-            else:
-                yield _encode({"type": "done", "status": status_})
+        # 猜词阶段 = 已落定但有可猜的败方（guess_state 未 done）：流保持开放，猜词后台任务经总线推 guess_done
+        guess_phase = status_ == "done" and guess_by_ is not None and guess_state_ != "done"
+        if status_ == "failed":
+            msg = "铺陈推演失败"
+            if story_json:
+                msg = json.loads(story_json).get("error_message", msg)
+            yield _encode({"type": "error", "message": msg})
+            return
+        if status_ != "pending" and not guess_phase:
+            yield _encode({"type": "done", "status": status_})
             return
         stream = _get_stream(battle_id)
         q, snapshot = stream.subscribe()
