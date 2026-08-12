@@ -515,13 +515,26 @@ def test_test_arena_generate_loadout_persists_and_auto_account():
 # ---------- LLM 链路追踪 ----------
 
 
-def _wait_for_trace_count(con, n, timeout=3.0):
-    """追踪落库是异步 fire-and-forget 任务：轮询 sqlite 直连直到达到期望条数。"""
+def _wait_for_trace_count(con, n, *, kind=None, trace_id=None, timeout=3.0):
+    """追踪落库是异步 fire-and-forget 任务：轮询 sqlite 直连直到达到期望条数。
+
+    缺省统计全部记录；传 kind/trace_id 时只统计命中的记录——避免此前测试遗留的追踪记录
+    让等待提前返回，与本次追踪异步落库竞态。
+    """
     import time
 
+    where = ""
+    params = []
+    if kind is not None:
+        where += " AND kind=%s"
+        params.append(kind)
+    if trace_id is not None:
+        where += " AND trace_id=%s"
+        params.append(trace_id)
+    sql = f"SELECT COUNT(*) FROM llm_traces WHERE 1=1{where}"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        cnt = con.execute("SELECT COUNT(*) FROM llm_traces").fetchone()[0]
+        cnt = con.execute(sql, params).fetchone()[0]
         if cnt >= n:
             return cnt
         time.sleep(0.05)
@@ -555,9 +568,9 @@ def test_llm_trace_recorded_for_guess_flow():
         )
         assert g.status_code == 200, g.text
 
-        # 追踪落库是异步任务，轮询等待 guess_pair 记录出现
+        # 追踪落库是异步任务，轮询等待本场 guess_pair 记录出现
         con = _sqlite()
-        n = _wait_for_trace_count(con, 1)
+        n = _wait_for_trace_count(con, 1, kind="test_guess", trace_id=str(tb_id))
         con.close()
         assert n >= 1, "应至少有一条 llm_traces 记录"
 

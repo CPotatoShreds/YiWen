@@ -5,9 +5,10 @@
 落库 done。
 
 职责边界：battle.py 只管对决记录的生命周期（创建、加载、结算、猜奇术）；"把一场仗打
-出来"（随机场景 + 一次性上帝推演 + 双视角并发转写）在 deduction.py；各 LLM 角色
-（推演者/转写者/猜词判定者）的提示词与链构造在 nodes/ 下各自成文件。节点构造器在
-battle.py 以别名 _build_* 暴露，注入给推演链路（测试同样打桩于此）。
+出来"（随机场景 + 一次性上帝推演 + 双视角并发转写）在 deduction.py；猜词三环节
+（拆分→配对→检定）编排在 guess.py；各 LLM 角色（推演者/转写者/猜词判定者）的提示词与
+链构造在 nodes/ 下各自成文件。节点构造器在 battle.py 以别名 _build_* 暴露，注入给推演
+链路与猜词管道（测试同样打桩于此）。
 
 推演链路：推演 LLM 以开场白 + 三选一固定结尾句一次性推演完整对战（不再分轮、无独立
 判定节点），胜负从结尾句解析；随后对完整上帝叙述做一次并发转写，转写 LLM 扮演各侧
@@ -46,17 +47,16 @@ from app.models.user import User
 from app.services import economy
 from app.services.battle_stream import _get_stream
 from app.services.deduction import run_deduction
+from app.services.guess import (  # noqa: F401 - re-export FAIL_GUESS_TEXT：battles.py/admin.py 从此处取用
+    FAIL_GUESS_TEXT,
+    GUESS_ATTEMPTS_MAX,
+    run_guess_round,
+)
 from app.services.loadout_interpretation import ensure_loadout_interpretation
 from app.services.loadouts import loadout_abilities, pick_battle_loadout
 from app.services.matchmaking import pick_opponent
 from app.services.nodes.deducer import build_deduce_chain as _build_deduce_llm
 from app.services.nodes.discusser import build_discuss_llm as _build_discuss_llm
-from app.services.nodes.guess_matcher import (
-    GUESS_PAIR_TEMPLATE,
-    GUESS_VERIFY_TEMPLATE,
-    PairMatch,
-    split_atomic_guesses,
-)
 from app.services.nodes.guess_matcher import build_guess_pair_llm as _build_pair_llm
 from app.services.nodes.guess_matcher import build_guess_verify_llm as _build_verify_llm
 from app.services.nodes.transcribe_validator import build_repair_chain as _build_repair_chain
@@ -76,11 +76,7 @@ _guess_inflight: set[int] = set()
 
 # 全链路自动重试耗尽后的面向用户解释文本（说书语系）
 FAIL_BATTLE_TEXT = "铺陈中途失联，行迹未能成卷，请稍后再启程。"
-FAIL_GUESS_TEXT = "奇术判定失联，请稍后重试猜奇术。"
-
-# 猜奇术规则：有限次数内逐次道出猜测，匹配片段上卡、逐卡完整覆盖核心机制/效果/限制即看破（揭示真实奇术），全破逆转
-GUESS_ATTEMPTS_MAX = 5
-MAX_PAIRS = 24  # 单轮配对并发上限（原子猜测 × 未看破奇术），超出截断，未覆盖条目按不匹配处理
+# 猜奇术规则（GUESS_ATTEMPTS_MAX / MAX_PAIRS / FAIL_GUESS_TEXT）在 app.services.guess 统一维护
 
 
 def _ability_dict(a: Ability) -> dict:
@@ -375,64 +371,18 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
 
     # 环节一：拆分。用户以换行分隔对各奇术的猜测，后端按换行切原子条目（取消 LLM 拆分）。
     guess_trace = {"kind": "guess", "trace_id": str(battle.id)}
-    items = split_atomic_guesses(text)
-    if not items:
-        raise ValueError(FAIL_GUESS_TEXT)  # 无有效原子条目 → 可重试文案，不消耗次数
-
-    # 环节二：配对匹配。原子猜测 × 未看破奇术全组合，一次只拿一对进上下文、并发调用。
-    cards = [dict(c) for c in guess.cards]  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
-    pairs = [
-        (ai, ci)
-        for ai in range(len(items))
-        for ci, card in enumerate(cards)
-        if not card["cracked"]
-    ][:MAX_PAIRS]
-
-    async def _match_pair(ai: int, ci: int) -> tuple[int, PairMatch | None]:
-        try:
-            m = await ainvoke_with_reliability(
-                _build_pair_llm(),
-                GUESS_PAIR_TEMPLATE.format_messages(
-                    item_text=items[ai],
-                    ability=f"{abilities[ci]['name']}：{abilities[ci]['effect']}",
-                    existing="\n".join(f"- {s}" for s in cards[ci]["matched"]) or "（暂无）",
-                ),
-                operation="guess_pair",
-                trace_context=guess_trace,
-            )
-            return ci, m
-        except Exception:  # noqa: BLE001 - 单对失败静默跳过，不影响其它对
-            return ci, None
-
-    touched: set[int] = set()  # 本轮有新增片段的卡（环节三只检这些）
-    for ci, m in await asyncio.gather(*(_match_pair(ai, ci) for ai, ci in pairs)):
-        card = cards[ci]
-        if m is None or not m.snippet:
-            continue
-        card["matched"] = list(card["matched"]) + [m.snippet]
-        touched.add(ci)
-
-    # 环节三：检定。取消百分制，对本轮有新增片段的卡并发做布尔检定——核心机制/效果/限制全覆盖即看破。
-    async def _verify_card(ci: int) -> tuple[int, bool]:
-        try:
-            v = await ainvoke_with_reliability(
-                _build_verify_llm(),
-                GUESS_VERIFY_TEMPLATE.format_messages(
-                    matched="\n".join(f"- {s}" for s in cards[ci]["matched"]),
-                    ability=f"{abilities[ci]['name']}：{abilities[ci]['effect']}",
-                ),
-                operation="guess_verify",
-                trace_context=guess_trace,
-            )
-            return ci, v.guessed
-        except Exception:  # noqa: BLE001 - 单卡检定失败视为未猜出，不降级
-            return ci, False
-
-    for ci, guessed in await asyncio.gather(*(_verify_card(ci) for ci in touched)):
-        if guessed:
-            cards[ci]["cracked"] = True  # 看破：揭示真实奇术
-
-    guess.cards = cards
+    # 环节二/三（配对匹配 → 检定）在共享猜词管道 guess.py 内跑。真实对战只持久化最小字段：
+    # rounds/verifies/cracked_round 明细仅供试验场累计描述表展示，落库前裁剪掉。
+    cards = await run_guess_round(
+        text=text,
+        abilities=abilities,
+        cards=[dict(c) for c in guess.cards],  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
+        round_no=guess.attempts_used + 1,
+        trace_context=guess_trace,
+        build_pair=_build_pair_llm,
+        build_verify=_build_verify_llm,
+    )
+    guess.cards = [{"matched": c["matched"], "cracked": c["cracked"]} for c in cards]
     guess.attempts_used += 1
     battle.guess_text = text
     # 猜测原文按提交顺序落历史（新建 list 对象触发 JSON 变更检测，与 guess.cards 同套路）；
