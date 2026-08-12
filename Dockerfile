@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -e .
 COPY app/ ./app/
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
+COPY scripts/ ./scripts/
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 

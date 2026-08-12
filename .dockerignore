@@ -27,10 +27,9 @@ data/
 *.sqlite-wal
 *.sqlite-shm
 
-# 测试与文档不入镜像
+# 测试与文档不入镜像（scripts/ 为运行时依赖：试验台起名 namegen，须入镜像）
 tests/
 docs/
-scripts/
 *.tar
 
 # IDE / 其他
