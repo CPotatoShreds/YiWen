@@ -1,6 +1,6 @@
 [project]
 name = "ynfight"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI 异能大乱斗 - LLM 驱动的异能对战平台（FastAPI 后端 + React 前端）"
 readme = "README.md"
 requires-python = ">=3.12"

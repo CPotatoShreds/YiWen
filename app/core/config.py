@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # 应用
     APP_NAME: str = "异闻录"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.0"
     DEBUG: bool = False
 
     # 数据库（默认本地 Docker PostgreSQL，见 docker-compose.yml；测试用独立临时库）
