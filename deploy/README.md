@@ -18,10 +18,10 @@ Docker 部署到服务器：**2 个容器**（`postgres` + `app`），`app` 容�
 
 ## 首次部署
 
-前置：服务器安装 Docker 与 Compose plugin（`docker compose version` 可用）。
+前置：服务器安装 Docker 与 Compose plugin（`docker compose version` 可用），并配置 git 拉取凭据（deploy key / PAT，能让 `git pull` 免交互通过）。
 
 ```bash
-# 1. 同步代码并构建启动（从本地，Windows Git Bash / WSL / macOS 均可）
+# 1. 首次部署：服务器自动从本地 origin git clone 并构建启动（本地跑，Windows Git Bash / WSL / macOS 均可）
 SERVER=user@server-ip ./deploy/deploy.sh
 
 # 2. 编辑服务器上的生产环境变量（含真实密钥，勿提交到 git）
@@ -40,7 +40,7 @@ SERVER=user@server-ip ./deploy/deploy.sh
 ## 升级
 
 ```bash
-SERVER=user@server-ip ./deploy/deploy.sh   # 自动同步新代码 + --build 重建 + 迁移
+SERVER=user@server-ip ./deploy/deploy.sh   # 服务器 git pull 最新代码 + --build 重建 + 迁移
 ```
 
 ## 常用运维

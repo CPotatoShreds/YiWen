@@ -13,7 +13,8 @@ WORKDIR /app
 
 # Python deps（asyncpg/psycopg[binary]/bcrypt 均有 manylinux 轮子，无需编译工具）
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e .
+# 轮子缓存挂载在 buildkit builder 缓存（不占镜像）：版本号/依赖变更触发本层重跑时不再从 PyPI 重下载
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e .
 
 # Source
 COPY app/ ./app/
