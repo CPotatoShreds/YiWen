@@ -169,6 +169,96 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 }
 .nav__user .rp { font-family: var(--font-mono); color: var(--accent-strong); font-weight: 700; position: relative; }
 
+/* 通知铃铛：未读角标 + 下拉面板 */
+.notify { position: relative; margin-left: 4px; }
+.notify__bell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s var(--ease), background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.notify__bell:hover { color: var(--ink); background: var(--ground-2); }
+.notify__badge {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--ground);
+}
+.notify__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(480px, calc(100vh - 80px));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hover);
+  overflow: hidden;
+}
+.notify__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px dashed var(--line);
+}
+.notify__head b { font-size: 14px; }
+.notify__list { overflow-y: auto; }
+.notify__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px dashed var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+}
+.notify__item:last-child { border-bottom: 0; }
+.notify__item:hover { background: var(--ground-2); }
+.notify__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+.notify__item.is-unread .notify__dot { background: var(--accent); }
+.notify__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.notify__title { font-size: 13px; font-weight: 700; }
+.notify__text { font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.notify__time { font-size: 11px; color: var(--muted); }
+.notify__empty { padding: 28px 14px; color: var(--muted); font-size: 13px; text-align: center; }
+
 /* 数值变化动效：数字高亮 + 旁侧浮出 ±N 徽标 */
 .stat-flash { animation: stat-flash 1.1s var(--ease); }
 .stat-delta {

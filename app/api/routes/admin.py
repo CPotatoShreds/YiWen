@@ -27,6 +27,7 @@ from app.models.board import BoardGuessProgress
 from app.models.friendship import Friendship
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
+from app.models.notification import Notification
 from app.models.request_log import RequestLog
 from app.models.test_battle import (
     TestBattle,
@@ -332,6 +333,10 @@ async def admin_delete_user(
 
     # 4b. 其作为挑战者的点将看破进度（榜主侧进度随其榜单条目级联）
     await db.execute(delete(BoardGuessProgress).where(BoardGuessProgress.challenger_id == user_id))
+
+    # 4c. 通知：删其收件箱；其作为触发者的通知置空 actor（保留接收方通知）
+    await db.execute(delete(Notification).where(Notification.user_id == user_id))
+    await db.execute(update(Notification).where(Notification.actor_id == user_id).values(actor_id=None))
 
     # 5. 请求日志软引用置空（保留审计历史）
     await db.execute(update(RequestLog).where(RequestLog.user_id == user_id).values(user_id=None))

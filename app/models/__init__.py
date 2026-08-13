@@ -6,6 +6,7 @@ from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.friendship import Friendship
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
+from app.models.notification import Notification
 from app.models.request_log import RequestLog
 from app.models.test_battle import (
     TestBattle,
@@ -26,6 +27,7 @@ __all__ = [
     "LlmTrace",
     "Loadout",
     "LoadoutAbility",
+    "Notification",
     "RequestLog",
     "TestBattle",
     "TestBattleGuess",

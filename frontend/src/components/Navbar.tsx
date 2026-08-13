@@ -1,6 +1,7 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../auth";
 import StatNumber from "./StatNumber";
+import NotificationBell from "./NotificationBell";
 import { BookIcon, GearIcon, LogoutIcon, ScrollIcon, TrophyIcon } from "./icons";
 
 export default function Navbar() {
@@ -54,6 +55,7 @@ export default function Navbar() {
           >
             故人
           </NavLink>
+          <NotificationBell />
           {user.is_admin && (
             <NavLink
               to="/admin"

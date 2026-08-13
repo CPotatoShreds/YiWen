@@ -76,6 +76,7 @@ from app.services.nodes.transcribe_validator import build_validate_chain as _bui
 from app.services.nodes.transcriber import build_transcribe_chain as _build_transcribe_chain
 from app.services.nodes.usage_judge import USAGE_TEMPLATE
 from app.services.nodes.usage_judge import build_usage_llm as _build_usage_llm
+from app.services.notifications import create_notification
 from app.services.reliability import ainvoke_with_reliability
 
 logger = get_logger("battle")
@@ -389,6 +390,18 @@ async def start_board_challenge(
         return battle
     await db.refresh(battle)
 
+    # 通知榜主：有人点将挑战其刻印（榜主不可查看点将单场，跳奇人榜）
+    await create_notification(
+        db,
+        user_id=entry.user_id,
+        actor_id=challenger.id,
+        type="board_challenge",
+        title="你的奇人被点将挑战",
+        body=f"「{challenger.username}」递帖点将，挑战你刻印在奇人榜上的「{entry.name}」。",
+        ref_type="board",
+        ref_id=entry.id,
+    )
+
     task = asyncio.create_task(_resolve_battle(battle.id, True))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -613,6 +626,22 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
 
             # 行迹落盘为 md 文档（看破前隐藏对家奇术；点将局已全看破则含刻印表）
             _write_md(battle, user_a, user_b, json.loads(battle.story), revealed=battle.revealed)
+            # 通知参战双方战报落定；点将局榜主不可查看单场，仅通知挑战者
+            recipients = [(battle.user_a_id, user_b), (battle.user_b_id, user_a)]
+            if battle.board_entry_id is not None:
+                recipients = [(battle.user_a_id, user_b)]
+            for recipient_id, opponent in recipients:
+                with suppress(Exception):  # 通知失败只跳过，不打断 done 落定
+                    await create_notification(
+                        db,
+                        user_id=recipient_id,
+                        actor_id=opponent.id,
+                        type="battle_report",
+                        title="新的战报已送达",
+                        body=f"你与「{opponent.username}」的对决已落定，新的行迹战报待你检阅。",
+                        ref_type="battle",
+                        ref_id=battle.id,
+                    )
             await stream.publish({"type": "done", "status": "done", "battle_id": battle_id})
         except Exception as e:  # noqa: BLE001 - 推演 LLM 重试耗尽/其他异常：中断并降级为解释文本
             logger.error("battle_failed id=%d err=%r", battle_id, e)
@@ -652,10 +681,16 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
     guess_trace = {"kind": "guess", "trace_id": str(battle.id)}
     # 环节二/三（配对匹配 → 检定）在共享猜词管道 guess.py 内跑。真实对战只持久化最小字段：
     # rounds/verifies/cracked_round 明细仅供试验场累计描述表展示，落库前裁剪掉。
+    # 本轮前各卡状态（判断是否产生新进展）。注意：run_guess_round 就地更新入参并返回同一
+    # 列表，pre_cards 传给它会被污染；通知对比须另取深拷贝快照（浅拷贝的 matched 列表共享）。
+    pre_cards = [dict(c) for c in guess.cards]
+    pre_state = [
+        {"matched": list(c.get("matched", [])), "cracked": bool(c.get("cracked", False))} for c in pre_cards
+    ]
     cards = await run_guess_round(
         text=text,
         abilities=abilities,
-        cards=[dict(c) for c in guess.cards],  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
+        cards=pre_cards,  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
         round_no=guess.attempts_used + 1,
         trace_context=guess_trace,
         build_pair=_build_pair_llm,
@@ -703,6 +738,28 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
     user_a = await db.get(User, battle.user_a_id)
     user_b = await db.get(User, battle.user_b_id)
     _write_md(battle, user_a, user_b, story, revealed=battle.revealed)
+
+    # 通知被猜方有新的猜词进展：仅当本轮产生新片段或新看破（纯未命中不刷屏）；
+    # 点将局榜主不可查看单场，猜词进展归并到榜单，不逐场通知。
+    if battle.board_entry_id is None:
+        cracked_before = sum(1 for c in pre_state if c["cracked"])
+        has_new_match = any(
+            i < len(pre_state) and len(c["matched"]) > len(pre_state[i]["matched"])
+            for i, c in enumerate(cards)
+        )
+        if has_new_match or cracked > cracked_before:
+            opponent = user_b if guesser.id == battle.user_a_id else user_a
+            with suppress(Exception):
+                await create_notification(
+                    db,
+                    user_id=opponent.id,
+                    actor_id=guesser.id,
+                    type="guess_progress",
+                    title="你的奇术正被窥探",
+                    body=f"「{guesser.username}」正于行迹中道出猜测，窥探你的奇术（已看破 {cracked} 门）。",
+                    ref_type="battle",
+                    ref_id=battle.id,
+                )
 
 
 async def give_up_guess(db: AsyncSession, battle: Battle, guesser: User) -> None:

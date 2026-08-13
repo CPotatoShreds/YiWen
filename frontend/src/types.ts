@@ -96,3 +96,20 @@ export const LOADOUT_NUMBERS = ["壹", "贰", "叁", "肆", "伍", "陆", "柒",
 export function loadoutLabel(loadout: Loadout, index: number): string {
   return loadout.name || `奇人·${LOADOUT_NUMBERS[index] ?? index + 1}`;
 }
+
+// 站内通知（铃铛）：type 决定跳转语义
+export interface NotificationItem {
+  id: number;
+  type: string; // board_challenge / battle_report / guess_progress
+  title: string;
+  body: string;
+  ref_type: string | null; // battle / board
+  ref_id: number | null;
+  read: boolean;
+  created_at: string;
+}
+
+export interface NotificationList {
+  items: NotificationItem[];
+  unread: number;
+}
