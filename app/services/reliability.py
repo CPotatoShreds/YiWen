@@ -13,6 +13,8 @@ LLM 链路追踪：所有 LLM 调用统一收口在本层。调用方传入 `tra
 import asyncio
 import time
 
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.runnables import Runnable
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -70,6 +72,8 @@ async def _write_trace(
     response_json: object | None,
     error: str | None,
     latency_ms: int,
+    tokens_input: int = 0,
+    tokens_output: int = 0,
 ) -> None:
     """异步落库一条 LLM 追踪记录；失败静默（追踪不影响主流程）。"""
     try:
@@ -87,6 +91,8 @@ async def _write_trace(
                     response_json=response_json,
                     error=error,
                     latency_ms=latency_ms,
+                    tokens_input=tokens_input,
+                    tokens_output=tokens_output,
                 )
             )
             await db.commit()
@@ -110,6 +116,27 @@ class ChainFailure(RuntimeError):
         super().__init__(f"LLM 调用失败（{operation}，{attempts} 次尝试均失败）")
 
 
+class _UsageCaptureCallback(BaseCallbackHandler):
+    """捕获单次 LLM 调用的 token 用量。
+
+    挂在 `config={"callbacks": [...]}` 上，`on_llm_end` 同步执行：只读 usage、不 I/O、
+    不抛异常（异常吞掉保持 0）。结果存进捕获器自身，由调用方在落库时读取。
+    """
+
+    def __init__(self) -> None:
+        self.tokens_input: int = 0
+        self.tokens_output: int = 0
+
+    def on_llm_end(self, response, **kwargs) -> None:
+        try:
+            token_usage = (getattr(response, "llm_output", None) or {}).get("token_usage") or {}
+            self.tokens_input = int(token_usage.get("prompt_tokens", 0) or 0)
+            self.tokens_output = int(token_usage.get("completion_tokens", 0) or 0)
+        except Exception:  # noqa: BLE001 - 用量捕获失败保持 0，绝不外抛
+            self.tokens_input = 0
+            self.tokens_output = 0
+
+
 async def ainvoke_with_reliability(
     chain,
     kwargs: dict,
@@ -128,11 +155,20 @@ async def ainvoke_with_reliability(
     kind = (trace_context or {}).get("kind", "background")
     trace_id = (trace_context or {}).get("trace_id")
     request_json = _safe_serialize(kwargs)
+    capture = _UsageCaptureCallback()  # 每次调用一个；重试时后一次 on_llm_end 覆盖前一次
     for attempt in range(max_retries + 1):
         start = time.monotonic()
         try:
             async with llm_semaphore:  # 在途并发超限即排队等待，不额外占配额
-                result = await asyncio.wait_for(chain.ainvoke(kwargs), timeout=LLM_TIMEOUT_SECONDS)
+                if isinstance(chain, Runnable):
+                    # langchain 真链：挂 callback 捕获 token 用量
+                    result = await asyncio.wait_for(
+                        chain.ainvoke(kwargs, config={"callbacks": [capture]}),
+                        timeout=LLM_TIMEOUT_SECONDS,
+                    )
+                else:
+                    # 测试桩等非 langchain 对象：保持原签名调用，避免破坏严格 side_effect
+                    result = await asyncio.wait_for(chain.ainvoke(kwargs), timeout=LLM_TIMEOUT_SECONDS)
             latency = int((time.monotonic() - start) * 1000)
             logger.info("llm_ok op=%s attempt=%d dur=%.2fs", operation, attempt, latency / 1000)
             if trace_context:
@@ -145,6 +181,8 @@ async def ainvoke_with_reliability(
                     response_json=_safe_serialize(result),
                     error=None,
                     latency_ms=latency,
+                    tokens_input=capture.tokens_input,
+                    tokens_output=capture.tokens_output,
                 )
             return result
         except Exception as e:
