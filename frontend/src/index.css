@@ -288,6 +288,24 @@ select.input { appearance: auto; }
 .toggle__label { font-size: 14px; font-weight: 600; }
 .toggle__desc { font-size: 12px; color: var(--muted); }
 
+/* 复选行（启程「不匹配相同对决」等选项） */
+.checkline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+}
+.checkline input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.checkline:has(input:disabled) { opacity: 0.55; cursor: default; }
+
 /* ---------- 面板 / 卡片（纸笺面） ---------- */
 .panel, .card {
   background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 94%, var(--ground-2)));

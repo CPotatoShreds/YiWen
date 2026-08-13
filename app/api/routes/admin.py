@@ -523,8 +523,9 @@ async def admin_delete_battle(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
     if battle.status == "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="在途推演不可删除")
-    guess = await db.get(BattleGuess, battle_id)
-    if guess is not None:
+    # 复合主键 (battle_id, guesser_id)：删该场全部猜词行
+    guesses = await db.execute(select(BattleGuess).where(BattleGuess.battle_id == battle_id))
+    for guess in guesses.scalars().all():
         await db.delete(guess)
     await db.delete(battle)
     await db.commit()

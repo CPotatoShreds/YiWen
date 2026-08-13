@@ -2,6 +2,7 @@
 
 from app.models.ability import Ability
 from app.models.battle import Battle
+from app.models.board import BoardEntry
 from app.models.friendship import Friendship
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
@@ -19,6 +20,7 @@ from app.models.user_ability import UserAbility
 __all__ = [
     "Ability",
     "Battle",
+    "BoardEntry",
     "Friendship",
     "LlmTrace",
     "Loadout",

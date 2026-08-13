@@ -13,6 +13,7 @@ export default function Home() {
   const nav = useNavigate();
   const [loadouts, setLoadouts] = useState<Loadout[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [noRepeat, setNoRepeat] = useState(false);
   const [err, setErr] = useState("");
 
   async function reload() {
@@ -35,7 +36,10 @@ export default function Home() {
     setBusy(true);
     setErr("");
     try {
-      const r = await api<{ id: number }>("/battles", { method: "POST" });
+      const r = await api<{ id: number }>("/battles", {
+        method: "POST",
+        body: JSON.stringify({ no_repeat: noRepeat }),
+      });
       nav(`/battles/${r.id}`);
     } catch (e: any) {
       setErr(e.message);
@@ -100,12 +104,24 @@ export default function Home() {
             style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18 }}
           >
             <BattleBanner className={`battle-banner${busy ? " banner-sway" : ""}`} />
-            <button className="btn btn-primary btn-lg" onClick={fight} disabled={busy}>
-              <SwordIcon size={18} />
-              {busy ? "对决中…" : "启程"}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button className="btn btn-primary btn-lg" onClick={fight} disabled={busy}>
+                <SwordIcon size={18} />
+                {busy ? "对决中…" : "启程"}
+              </button>
+              <label className="checkline">
+                <input
+                  type="checkbox"
+                  checked={noRepeat}
+                  onChange={(e) => setNoRepeat(e.target.checked)}
+                  disabled={busy}
+                />
+                <span>不匹配相同对决</span>
+              </label>
+            </div>
             <p className="muted" style={{ flex: 1, minWidth: 220, margin: 0 }}>
               已解封 {armedCount} 位奇人，将从其中随机挑一位出战；开场约 10-30 秒。
+              {noRepeat && " 勾选后不会匹配到同一位对家奇人的重复对阵。"}
             </p>
           </div>
         ) : (

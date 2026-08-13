@@ -29,6 +29,7 @@ deploy/.env
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite3
+*.sql
 
 # Node / 前端
 node_modules/

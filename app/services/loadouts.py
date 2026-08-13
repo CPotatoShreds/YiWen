@@ -41,3 +41,39 @@ async def loadout_abilities(db: AsyncSession, loadout_id: int) -> list[Ability]:
         .order_by(LoadoutAbility.added_at)
     )
     return list(result.scalars().all())
+
+
+async def loadout_snapshot(db: AsyncSession, loadout: Loadout) -> dict:
+    """冻结奇人当前状态为快照 dict（含所装奇术完整字段），供对局/上榜刻印与再战复刻使用。"""
+    abilities = await loadout_abilities(db, loadout.id)
+    return {
+        "name": loadout.name,
+        "style": loadout.style,
+        "tactic": loadout.tactic,
+        "style_interpretation": loadout.style_interpretation,
+        "tactic_interpretation": loadout.tactic_interpretation,
+        "abilities": [
+            {
+                "name": a.name,
+                "effect": a.effect,
+                "detail": a.detail,
+                "tactic": a.tactic,
+                "understanding": a.understanding,
+            }
+            for a in abilities
+        ],
+    }
+
+
+def abilities_from_snapshot(snap_abilities: list[dict]) -> list[Ability]:
+    """把快照里的奇术 dict 重建为瞬时 Ability 对象（供推演/猜词读取，不落库）。"""
+    return [
+        Ability(
+            name=a["name"],
+            effect=a["effect"],
+            detail=a.get("detail", ""),
+            tactic=a.get("tactic", ""),
+            understanding=a.get("understanding", ""),
+        )
+        for a in snap_abilities
+    ]

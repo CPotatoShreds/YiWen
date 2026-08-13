@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useAuth } from "../auth";
 import MatchCard from "../components/MatchCard";
-import { CheckIcon, ClockIcon, EyeIcon, LockIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
+import { CheckIcon, ClockIcon, EyeIcon, LockIcon, RefreshIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
 import { Brush } from "../components/Ornaments";
 import { streamEvents } from "../sse";
 import type { Battle, GuessCard } from "../types";
@@ -137,6 +137,7 @@ export default function BattleReport() {
   const [retry, setRetry] = useState(0); // 第几次重连（指数退避：3s→6s→…→上限30s）
   const [disconnected, setDisconnected] = useState(false); // 重连耗尽 → 显示「连接中断」+ 手动续接
   const [rematchBusy, setRematchBusy] = useState(false);
+  const [confirmGiveUp, setConfirmGiveUp] = useState(false); // 收手二次确认：首次点击变「确认收手？」再点才提交
   const liveRoundRef = useRef(-1); // 已收最大分段轮次（断点去重：跨重连保留，服务端快照重播不重复）
   const stageRef = useRef<"unknown" | "dueling" | "recounting">("unknown"); // 进度单调游标：到「胜负已分」后不回退（重连快照会把 dueling 再重播一遍）
   const settledRef = useRef(false); // 已收 done/error → 不再重连保活，等 reload 拉完整话本
@@ -247,11 +248,9 @@ export default function BattleReport() {
     };
   }, [id, b?.status, b?.guess_total, b?.guessed, retry, refresh]);
 
-  // 当前查看者是否为败方（猜词者）：逆转后 winner 会翻转，不能拿 winner 判断，用 guess_by。
-  const isGuesser = b?.guess_by === user?.username;
-
   async function submitGuess() {
     if (!guessText.trim()) return;
+    setConfirmGiveUp(false);
     setGuessing(true);
     setErr("");
     try {
@@ -285,6 +284,36 @@ export default function BattleReport() {
       setErr(e.message);
     } finally {
       setRematchBusy(false);
+    }
+  }
+
+  // 再战：复刻本场（原快照 + 猜词进度）重新推演，一律切磋不计名望
+  async function replay() {
+    setRematchBusy(true);
+    setErr("");
+    try {
+      const r = await api<{ id: number }>(`/battles/${id}/rematch`, { method: "POST" });
+      nav(`/battles/${r.id}`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setRematchBusy(false);
+    }
+  }
+
+  // 收手：未看破即结束本轮猜词（是否揭示由被猜方 reveal_on_miss 决定）
+  async function giveUp() {
+    setConfirmGiveUp(false);
+    setGuessing(true);
+    setErr("");
+    try {
+      const d = await api<Battle>(`/battles/${id}/give-up`, { method: "POST" });
+      setB(d);
+      refresh(); // 和局恰一方全破时名望重算，同步导航栏数值
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setGuessing(false);
     }
   }
 
@@ -386,7 +415,10 @@ export default function BattleReport() {
   const myInsight = mySide ? b.story.insight_a : b.story.insight_b;
   const oppInsight = mySide ? b.story.insight_b : b.story.insight_a;
   const won = b.winner === me;
-  const crackedCount = (b.guess_cards ?? []).filter((c) => c.cracked).length;
+  const myGuess = b.my_guess ?? null;
+  const oppGuess = b.opp_guess ?? null;
+  const isGuesser = myGuess != null; // 我是猜词者：和局双方皆可猜，非和局仅败方
+  const oppCracked = (oppGuess?.cards ?? []).filter((c) => c.cracked).length;
 
   return (
     <>
@@ -444,7 +476,7 @@ export default function BattleReport() {
       )}
 
       {/* 猜测结果（仅败方视角可见；赢家的收尾在下方赢家面板） */}
-      {isGuesser && b.guessed && b.guess_total > 0 && (
+      {isGuesser && b.guessed && myGuess && myGuess.total > 0 && (
         <div className={`banner rise rise-1 ${b.guess_hit ? "banner--hit" : "banner--miss"}`}>
           <span className="banner__icon">
             {b.guess_hit ? <CheckIcon size={20} /> : <XIcon size={20} />}
@@ -479,31 +511,34 @@ export default function BattleReport() {
         )}
       </div>
 
-      {/* 猜奇术：空白卡片（仅败方视角；赢家观战面板见下方） */}
-      {isGuesser && b.guess_total > 0 && (
+      {/* 猜奇术：我自己的猜词面板（非和局败方 / 和局双方各一块） */}
+      {isGuesser && myGuess && myGuess.total > 0 && (
         <div className="panel rise rise-3">
           <div className="panel__head">
             <h3>猜奇术：对家实际用过的奇术是什么？</h3>
           </div>
           <p className="muted" style={{ marginBottom: 12 }}>
-            对家共动用 <b>{b.guess_total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
+            对家共动用 <b>{myGuess.total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
             命中内容会落到对应卡片上；卡片被完整看透即看破该门奇术，全部看破即可逆转胜负。
           </p>
 
-          <GuessFeed guesses={b.guess_history} />
-          <GuessBoard cards={b.guess_cards ?? []} />
+          <GuessFeed guesses={myGuess.history} />
+          <GuessBoard cards={myGuess.cards ?? []} />
 
           {b.can_guess ? (
             <>
               <p className="muted" style={{ marginBottom: 10 }}>
-                已用 <b>{b.guess_attempts_used}</b> / {b.guess_attempts_max} 次机会
-                {b.guess_attempts_max - b.guess_attempts_used === 1 ? "（最后一次）" : ""}
+                已用 <b>{myGuess.attempts_used}</b> / {myGuess.attempts_max} 次机会，已看破{" "}
+                {(myGuess.cards ?? []).filter((c) => c.cracked).length} / {myGuess.total} 门。
               </p>
               <div className="field">
                 <textarea
                   className="textarea"
                   value={guessText}
-                  onChange={(e) => setGuessText(e.target.value)}
+                  onChange={(e) => {
+                    setGuessText(e.target.value);
+                    setConfirmGiveUp(false);
+                  }}
                   rows={3}
                   placeholder="如：他似乎能操控火焰，还能在近身时冻结我的兵刃……"
                 />
@@ -511,33 +546,44 @@ export default function BattleReport() {
               <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
                 支持同时对多个奇术进行猜测，请通过换行来分隔你对不同奇术的猜测。
               </p>
-              <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
-                <TargetIcon size={16} />
-                {guessing ? "思量中…" : "道出猜测"}
-              </button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
+                  <TargetIcon size={16} />
+                  {guessing ? "思量中…" : "道出猜测"}
+                </button>
+                <button
+                  className={`btn ${confirmGiveUp ? "btn-danger" : "btn-ghost"}`}
+                  onClick={() => (confirmGiveUp ? giveUp() : setConfirmGiveUp(true))}
+                  disabled={guessing}
+                  title="未看破即结束本轮猜词，之后不可再猜"
+                >
+                  <XIcon size={15} />
+                  {confirmGiveUp ? "确认收手？" : "收手"}
+                </button>
+              </div>
             </>
           ) : (
             <p className="muted">
-              {b.guess_hit ? "你已看破全部奇术，胜负逆转。" : "猜测机会已用尽，未能尽数看破。"}
+              {myGuess.flipped ? "你已看破全部奇术，胜负逆转。" : "你已收手或机会用尽，未能尽数看破。"}
             </p>
           )}
           {err && <p className="err">{err}</p>}
         </div>
       )}
 
-      {/* 赢家观战：实时看败方猜词进度（卡片进度/片段/看破 + 每次猜测原文，5s 轮询刷新） */}
-      {!isGuesser && b.guess_total > 0 && (
+      {/* 观战：实时看对家猜词进度（非和局赢家看败方；和局双方互相观战） */}
+      {oppGuess && oppGuess.total > 0 && (
         <div className="panel rise rise-3">
           <div className="panel__head">
             <h3>{b.guessed ? "对家猜奇术 · 已了结" : "对家正在猜你的奇术"}</h3>
           </div>
           <p className="muted" style={{ marginBottom: 12 }}>
             {b.guessed
-              ? `对家道尽猜测：已用 ${b.guess_attempts_used} / ${b.guess_attempts_max} 次机会，看破 ${crackedCount} / ${b.guess_total} 门。${b.guess_hit ? "全破逆转，胜负改写！" : "未能全破。"}`
-              : `对家正逐次道出猜测，看破你的奇术即揭示该门。已用 ${b.guess_attempts_used} / ${b.guess_attempts_max} 次机会，已看破 ${crackedCount} / ${b.guess_total} 门。`}
+              ? `对家道尽猜测：已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
+              : `对家正逐次道出猜测，看破你的奇术即揭示该门。已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，已看破 ${oppCracked} / ${oppGuess.total} 门。`}
           </p>
-          <GuessFeed guesses={b.guess_history} />
-          <GuessBoard cards={b.guess_cards ?? []} />
+          <GuessFeed guesses={oppGuess.history} />
+          <GuessBoard cards={oppGuess.cards ?? []} />
         </div>
       )}
 
@@ -549,9 +595,13 @@ export default function BattleReport() {
         </a>
       </p>
 
-      {/* 再来一场 / 返回 */}
+      {/* 再战（复刻本场）/ 再来一场（随机新局）/ 返回 */}
       <div className="actions rise rise-4">
-        <button className="btn btn-primary btn-lg" onClick={rematch} disabled={rematchBusy}>
+        <button className="btn btn-primary btn-lg" onClick={replay} disabled={rematchBusy}>
+          <RefreshIcon size={17} />
+          {rematchBusy ? "复刻中…" : "再战"}
+        </button>
+        <button className="btn btn-ghost btn-lg" onClick={rematch} disabled={rematchBusy}>
           <SwordIcon size={17} />
           {rematchBusy ? "摇签中…" : "再来一场"}
         </button>

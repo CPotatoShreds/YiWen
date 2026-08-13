@@ -7,14 +7,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-# 奇人槽位：初始 3 位，每满 50 见闻解锁 +1 槽，上限 8
+# 奇人槽位：初始 3 位，每满 50 见闻解锁 +1 槽，上限 99
 LOADOUT_BASE = 3
 LOADOUT_PER_XJ = 50
-LOADOUT_CAP = 8
+LOADOUT_CAP = 99
 
 
 def loadout_capacity(exp: int) -> int:
-    """按见闻推导奇人槽位上限：3 + 见闻//50，封顶 8。"""
+    """按见闻推导奇人槽位上限：3 + 见闻//50，封顶 99。"""
     return min(LOADOUT_CAP, LOADOUT_BASE + exp // LOADOUT_PER_XJ)
 
 

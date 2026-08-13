@@ -25,6 +25,28 @@ export interface GuessCard {
   effect?: string;
 }
 
+// 单个猜词者视角的猜词面板（和局双方各一，my_guess/opp_guess）
+export interface GuessBlock {
+  total: number;
+  cards?: GuessCard[] | null;
+  history: string[];
+  attempts_used: number;
+  attempts_max: number;
+  done: boolean;
+  flipped: boolean;
+}
+
+// 奇人榜条目（冻结刻印）：奇术保密，仅展示数量
+export interface BoardEntry {
+  id: number;
+  user: string;
+  name: string;
+  style: string;
+  ability_count: number;
+  mine: boolean;
+  created_at: string;
+}
+
 export interface BattleStory {
   narration_a?: string;
   narration_b?: string;
@@ -61,6 +83,8 @@ export interface Battle {
   guess_attempts_max: number;
   revealed: boolean;
   friendly: boolean;
+  my_guess?: GuessBlock | null;
+  opp_guess?: GuessBlock | null;
 }
 
 export const LOADOUT_NUMBERS = ["壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾"];

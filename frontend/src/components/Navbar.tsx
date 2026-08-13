@@ -1,7 +1,7 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../auth";
 import StatNumber from "./StatNumber";
-import { BookIcon, GearIcon, LogoutIcon, TrophyIcon } from "./icons";
+import { BookIcon, GearIcon, LogoutIcon, ScrollIcon, TrophyIcon } from "./icons";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -40,6 +40,13 @@ export default function Navbar() {
           >
             <TrophyIcon size={14} />
             异闻榜
+          </NavLink>
+          <NavLink
+            to="/board"
+            className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
+          >
+            <ScrollIcon size={14} />
+            奇人榜
           </NavLink>
           <NavLink
             to="/friends"

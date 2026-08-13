@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import type { Ability, Loadout } from "../types";
 import { LOADOUT_NUMBERS, loadoutLabel } from "../types";
-import { CheckIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
+import { CheckIcon, PencilIcon, PlusIcon, ScrollIcon, TrashIcon, XIcon } from "../components/icons";
 
 const MAX_SLOTS = 4; // 每位奇人最多装配 4 个奇术
 
@@ -410,6 +410,25 @@ export default function MyAbilities() {
   const [confirm, setConfirm] = useState<{ kind: "ability" | "loadout"; id: string | number; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // 上榜（冻结刻印）
+  const [boardBusy, setBoardBusy] = useState<number | null>(null);
+  const [notice, setNotice] = useState("");
+
+  async function putOnBoard(l: Loadout) {
+    setBoardBusy(l.id);
+    setErr("");
+    setNotice("");
+    try {
+      await api("/board", { method: "POST", body: JSON.stringify({ loadout_id: l.id }) });
+      setNotice(`「${l.name}」已刻印上榜，奇人榜可被点将挑战。`);
+      window.setTimeout(() => setNotice(""), 4000);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBoardBusy(null);
+    }
+  }
+
   async function load() {
     try {
       const [abilList, lds, me] = await Promise.all([
@@ -637,6 +656,7 @@ export default function MyAbilities() {
         </p>
       </div>
       {err && <p className="err">{err}</p>}
+      {notice && <div className="banner banner--hit" style={{ marginTop: 12 }}><span className="banner__icon"><CheckIcon size={18} /></span><div><p>{notice}</p></div></div>}
 
       {/* 奇人篇：横向滚动列表 + 拖动条 */}
       <div className="section-head" style={{ marginTop: 20 }}>
@@ -729,6 +749,15 @@ export default function MyAbilities() {
                 <button className="btn btn-primary btn-sm" onClick={() => openPicker(l)}>
                   <PlusIcon size={14} />
                   装入
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => putOnBoard(l)}
+                  disabled={l.abilities.length === 0 || boardBusy === l.id}
+                  title={l.abilities.length === 0 ? "先装入至少一个奇术才能上榜" : "上榜 = 冻结当前状态为刻印，供他人点将"}
+                >
+                  <ScrollIcon size={14} />
+                  {boardBusy === l.id ? "刻印中…" : "上榜"}
                 </button>
                 <button
                   className="btn btn-danger btn-sm btn-icon"

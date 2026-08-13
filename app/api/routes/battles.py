@@ -1,4 +1,4 @@
-"""启程路由：启程 / 猜奇术 / 查看行迹 / 历史。"""
+"""启程路由：启程 / 猜奇术 / 收手 / 再战 / 查看行迹 / 历史。"""
 
 import json
 from typing import Annotated
@@ -13,13 +13,15 @@ from app.db.base import async_session_factory, get_db
 from app.models.battle import Battle, BattleGuess
 from app.models.loadout import Loadout
 from app.models.user import User
-from app.schemas.battle import BattleOut, GuessIn
+from app.schemas.battle import BattleOut, BattleStartIn, GuessBlock, GuessIn
 from app.services.battle import (
     FAIL_GUESS_TEXT,
     GUESS_ATTEMPTS_MAX,
     disambiguate_fighters,
     try_start_guess,
 )
+from app.services.battle import give_up_guess as give_up_guess_service
+from app.services.battle import rematch_battle as rematch_battle_service
 from app.services.battle import start_battle as start_battle_service
 from app.services.battle_stream import _get_stream
 from app.services.nodes.guess_matcher import split_atomic_guesses
@@ -30,11 +32,12 @@ router = APIRouter(prefix="/battles", tags=["battles"])
 def _filter_story(
     story: dict | None,
     viewer_id: int | None,
-    revealed: bool,
+    revealed_a: bool,
+    revealed_b: bool,
     a_id: int,
     b_id: int,
 ) -> dict | None:
-    """按查看者身份过滤：上帝视角恒不展示；叙述各看各的；奇术表/解读揭示前自己可见、对家隐藏。
+    """按查看者身份过滤：上帝视角恒不展示；叙述各看各的；奇术表/解读自己一侧可见、对家揭示后才可见。
 
     传阅页 viewer_id 即传阅者一侧（share token 决定），天然只看到传阅者自己的视角。
     """
@@ -50,19 +53,15 @@ def _filter_story(
     else:
         out.pop("narration_a", None)
         out.pop("narration_b", None)
-    # 奇术表与解读：自己一侧始终可见，对家一侧揭示后才可见
-    if not revealed:
-        if viewer_id == a_id:
-            out.pop("abilities_b", None)
-            out.pop("insight_b", None)
-        elif viewer_id == b_id:
-            out.pop("abilities_a", None)
-            out.pop("insight_a", None)
-        else:  # 未登录/公开：揭示前奇术表与解读全部隐藏
-            out.pop("abilities_a", None)
-            out.pop("abilities_b", None)
-            out.pop("insight_a", None)
-            out.pop("insight_b", None)
+    # 奇术表与解读：自己一侧始终可见，对家一侧（被猜破/reveal_on_miss 揭示）后才可见
+    show_a = revealed_a or viewer_id == a_id
+    show_b = revealed_b or viewer_id == b_id
+    if not show_b:
+        out.pop("abilities_b", None)
+        out.pop("insight_b", None)
+    if not show_a:
+        out.pop("abilities_a", None)
+        out.pop("insight_a", None)
     return out
 
 
@@ -85,6 +84,42 @@ async def _resolve_fighters(db: AsyncSession, battle: Battle) -> dict[str, str]:
     return {"a": by_id.get(battle.loadout_a_id, ""), "b": by_id.get(battle.loadout_b_id, "")}
 
 
+async def _load_guess_rows(db: AsyncSession, battle_id: int) -> list[BattleGuess]:
+    """某场全部猜词行（一行一猜测者）。"""
+    rows = await db.execute(
+        select(BattleGuess).where(BattleGuess.battle_id == battle_id).order_by(BattleGuess.guesser_id)
+    )
+    return list(rows.scalars().all())
+
+
+def _row_for(rows: list[BattleGuess], guesser_id: int) -> BattleGuess | None:
+    return next((r for r in rows if r.guesser_id == guesser_id), None)
+
+
+def _guess_block(row: BattleGuess | None) -> GuessBlock | None:
+    """猜词行 → 前端面板块（未看破卡不带真实奇术，保密）。"""
+    if row is None or not row.used_abilities:
+        return None
+    cards = [
+        {
+            "index": i + 1,
+            "matched": c["matched"],
+            "cracked": c["cracked"],
+            **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+        }
+        for i, (c, used) in enumerate(zip(row.cards, row.used_abilities))
+    ]
+    return GuessBlock(
+        total=len(row.used_abilities),
+        cards=cards,
+        history=list(row.guess_history or []),
+        attempts_used=row.attempts_used,
+        attempts_max=row.attempts_max,
+        done=row.done,
+        flipped=row.flipped,
+    )
+
+
 async def _to_out(
     db: AsyncSession,
     battle: Battle,
@@ -92,12 +127,15 @@ async def _to_out(
     *,
     names: dict[int, str] | None = None,
     fighter_names: dict[int, str] | None = None,
-    guesses: dict[int, BattleGuess] | None = None,
+    guesses: dict[int, list[BattleGuess]] | None = None,
 ) -> BattleOut:
     # 后台猜词与读取可能交错：READ COMMITTED 每语句独立快照，battle 可能读到提交前、guess 读到提交后。
-    # 先载 guess 再刷新 battle，让 story/winner/revealed/guess_* 全部与最新猜词进度对齐，避免半提交态响应。
-    guess = guesses.get(battle.id) if guesses is not None else await db.get(BattleGuess, battle.id)
-    if guess is not None and guesses is None:
+    # 先载 guess 行再刷新 battle，让 story/winner/revealed/guess_* 全部与最新猜词进度对齐，避免半提交态响应。
+    if guesses is not None:
+        rows = guesses.get(battle.id, [])
+    else:
+        rows = await _load_guess_rows(db, battle.id)
+    if rows and guesses is None:
         await db.refresh(battle)
     names = names if names is not None else await _resolve_names(db, battle)
     if fighter_names is None:
@@ -119,25 +157,22 @@ async def _to_out(
     elif battle.winner_id == battle.user_b_id:
         winner_fighter = fighter_b
     story = json.loads(battle.story) if battle.story else None
-    story = _filter_story(story, viewer_id, battle.revealed, battle.user_a_id, battle.user_b_id)
-    is_guesser = viewer_id is not None and battle.guess_by == viewer_id
-    guess_cards = None
-    guess_total = 0
-    guess_history: list[str] = []
-    if guess is not None and guess.used_abilities:
-        # 猜词数据对双方可见：赢家据此实时看到败方猜词进度（卡片片段/看破 + 每次猜测原文）。
-        # 未看破卡不带真实奇术（保密）；看破卡揭示该门名称/效果。
-        guess_total = len(guess.used_abilities)
-        guess_cards = [
-            {
-                "index": i + 1,
-                "matched": c["matched"],
-                "cracked": c["cracked"],
-                **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
-            }
-            for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
-        ]
-        guess_history = list(guess.guess_history or [])
+    story = _filter_story(
+        story, viewer_id, battle.revealed_a, battle.revealed_b, battle.user_a_id, battle.user_b_id
+    )
+    # 平铺字段兼容：非和局单行（败方行）为主；和局以查看者自己的行为主（my_guess 兜底）
+    if battle.guess_by is not None:
+        primary = rows[0] if rows else None
+        my_row = primary if (viewer_id and primary and primary.guesser_id == viewer_id) else None
+        opp_row = primary if (viewer_id and primary and primary.guesser_id != viewer_id) else None
+    else:
+        my_row = _row_for(rows, viewer_id) if viewer_id else None
+        opp_row = next((r for r in rows if viewer_id and r.guesser_id != viewer_id), None)
+        primary = my_row or opp_row
+    is_guesser = my_row is not None
+    guess_total = len(primary.used_abilities) if primary and primary.used_abilities else 0
+    guess_cards = _guess_block(primary).cards if primary and primary.used_abilities else None
+    guess_history = list(primary.guess_history or []) if primary else []
     return BattleOut(
         id=battle.id,
         user_a=names.get(battle.user_a_id, "?"),
@@ -156,10 +191,10 @@ async def _to_out(
         can_guess=(
             is_guesser
             and battle.status == "done"
-            and guess is not None
-            and bool(guess.used_abilities)
-            and battle.guess_state != "done"
-            and guess.attempts_used < guess.attempts_max
+            and my_row is not None
+            and bool(my_row.used_abilities)
+            and not my_row.done
+            and my_row.attempts_used < my_row.attempts_max
         ),
         guessed=battle.guess_state == "done",
         guess_hit=battle.guess_hit,
@@ -169,10 +204,12 @@ async def _to_out(
         guess_text=battle.guess_text if is_guesser else "",
         guess_total=guess_total,
         guess_cards=guess_cards,
-        guess_attempts_used=guess.attempts_used if guess else 0,
-        guess_attempts_max=guess.attempts_max if guess else GUESS_ATTEMPTS_MAX,
+        guess_attempts_used=primary.attempts_used if primary else 0,
+        guess_attempts_max=primary.attempts_max if primary else GUESS_ATTEMPTS_MAX,
         revealed=battle.revealed,
         friendly=battle.friendly,
+        my_guess=_guess_block(my_row),
+        opp_guess=_guess_block(opp_row),
     )
 
 
@@ -180,9 +217,13 @@ async def _to_out(
 async def create_battle(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    body: BattleStartIn | None = None,
 ) -> BattleOut:
-    """启程：创建 pending 记录，后台异步推演（返回即知对决已开始，稍后检阅行迹）。"""
-    battle = await start_battle_service(db, current)
+    """启程：创建 pending 记录，后台异步推演（返回即知对决已开始，稍后检阅行迹）。
+
+    body.no_repeat=True 时避免与「我方奇人 × 对家奇人」同场过的具体配对。
+    """
+    battle = await start_battle_service(db, current, no_repeat=body.no_repeat if body else False)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="暂无可匹配的对手（需先让已解封的奇人装入奇术）")
     return await _to_out(db, battle, viewer_id=current.id)
@@ -210,9 +251,10 @@ async def guess_battle(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BattleOut:
-    """败方猜奇术（异步受理）：同步校验后 202 受理，LLM 判定在后台任务跑，结果经 SSE guess_done 回推。
+    """猜奇术（异步受理）：同步校验后 202 受理，LLM 判定在后台任务跑，结果经 SSE guess_done 回推。
 
-    校验镜像 submit_guess 顶部检查，失败同步 400；判定在途再提交 → 409。
+    非和局仅败方可猜；和局双方各自并行独立猜。校验镜像 submit_guess 顶部检查，失败同步 400；
+    判定在途再提交 → 409。
     """
     battle = await db.get(Battle, battle_id)
     if battle is None:
@@ -221,12 +263,13 @@ async def guess_battle(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
     if battle.status != "done":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="对决尚未完成")
-    if battle.guess_by != current.id:
+    if battle.guess_by is not None and battle.guess_by != current.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有战败方可以猜奇术")
-    guess = await db.get(BattleGuess, battle.id)
+    rows = await _load_guess_rows(db, battle.id)
+    guess = _row_for(rows, current.id)
     if guess is None or not guess.used_abilities:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无奇术可猜")
-    if battle.guess_state == "done":
+    if guess.done or guess.flipped:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测已结束")
     if guess.attempts_used >= guess.attempts_max:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测次数已用完")
@@ -237,6 +280,46 @@ async def guess_battle(
     if not try_start_guess(battle.id, current.id, body.text):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮猜测仍在判定中")
     return await _to_out(db, battle, viewer_id=current.id)
+
+
+@router.post("/{battle_id}/give-up", response_model=BattleOut)
+async def give_up(
+    battle_id: int,
+    current: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BattleOut:
+    """收手：猜词者未全破即结束本轮猜词（是否揭示由被猜方 reveal_on_miss 决定）。
+
+    和局双方都收手后结算：恰一方全破则其胜并重算名望，否则保持和局。
+    """
+    battle = await db.get(Battle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+    if current.id not in (battle.user_a_id, battle.user_b_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
+    try:
+        await give_up_guess_service(db, battle, current)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return await _to_out(db, battle, viewer_id=current.id)
+
+
+@router.post("/{battle_id}/rematch", response_model=BattleOut)
+async def rematch(
+    battle_id: int,
+    current: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BattleOut:
+    """行迹再战：以原局快照 + 猜词状态复刻一场新对决（一律切磋不计名望），后台重推演。"""
+    battle = await db.get(Battle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+    if current.id not in (battle.user_a_id, battle.user_b_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
+    if battle.status != "done":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="对决尚未完成，暂不可再战")
+    new_battle = await rematch_battle_service(db, battle)
+    return await _to_out(db, new_battle, viewer_id=current.id)
 
 
 @router.get("/{battle_id}", response_model=BattleOut)
@@ -276,7 +359,7 @@ async def battle_stream(
 ) -> StreamingResponse:
     """推演/猜词实时流（SSE）：推送观看者自己视角的分段转写，结束后推 done/error。仅参战双方可订阅。
 
-    status 为 pending 或猜词阶段（done + 有可猜的败方未揭完）时订阅事件总线，逐段推送；
+    status 为 pending 或猜词阶段（done + 有猜词行未结束）时订阅事件总线，逐段推送；
     其余已结束状态立即回一个 done/error 事件。
     """
     async with async_session_factory() as db:
@@ -284,15 +367,16 @@ async def battle_stream(
         if battle is None or current.id not in (battle.user_a_id, battle.user_b_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
         a_id, b_id, status_ = battle.user_a_id, battle.user_b_id, battle.status
-        guess_by_, guess_state_ = battle.guess_by, battle.guess_state
+        guess_state_ = battle.guess_state
         story_json = battle.story  # 已结束战斗的错误信息存于 story.error_message
 
     def _encode(ev: dict) -> str:
         return f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
     async def gen():
-        # 猜词阶段 = 已落定但有可猜的败方（guess_state 未 done）：流保持开放，猜词后台任务经总线推 guess_done
-        guess_phase = status_ == "done" and guess_by_ is not None and guess_state_ != "done"
+        # 猜词阶段 = 已落定且有未结束的猜词行（guess_state "guessing"）：流保持开放，
+        # 猜词后台任务/收手经总线推 guess_done。无猜词行（"none"）或已全结束（"done"）→ 短接。
+        guess_phase = status_ == "done" and guess_state_ == "guessing"
         if status_ == "failed":
             msg = "铺陈推演失败"
             if story_json:
@@ -351,10 +435,16 @@ async def my_battles(
         loadout.id: (loadout.name or "").strip()
         for loadout in (await db.execute(select(Loadout).where(Loadout.id.in_(loadout_ids)))).scalars().all()
     }
-    guesses = {
-        guess.battle_id: guess
-        for guess in (await db.execute(select(BattleGuess).where(BattleGuess.battle_id.in_(b.id for b in battles)))).scalars().all()
-    }
+    guess_rows = (
+        await db.execute(
+            select(BattleGuess).where(BattleGuess.battle_id.in_(b.id for b in battles))
+        )
+    ).scalars().all()
+    guesses: dict[int, list[BattleGuess]] = {}
+    for g in guess_rows:
+        guesses.setdefault(g.battle_id, []).append(g)
+    for gs in guesses.values():
+        gs.sort(key=lambda r: r.guesser_id)
     return [
         await _to_out(db, battle, viewer_id=current.id, names=names, fighter_names=fighter_names, guesses=guesses)
         for battle in battles

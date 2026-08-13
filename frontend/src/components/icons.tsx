@@ -196,3 +196,23 @@ export function TestTubeIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ScrollIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M5 3h12a3 3 0 0 1 3 3v1H5V3a2 2 0 0 1 2-2h8" />
+      <path d="M5 3v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+      <path d="M5 18H4a2 2 0 0 0 0 4h14" />
+      <path d="M8 8h8M8 12h5" />
+    </svg>
+  );
+}
+
+export function RefreshIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}

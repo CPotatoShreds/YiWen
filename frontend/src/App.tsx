@@ -9,6 +9,7 @@ import BattleReport from "./pages/BattleReport";
 import Books from "./pages/Books";
 import Friends from "./pages/Friends";
 import Leaderboard from "./pages/Leaderboard";
+import Board from "./pages/Board";
 import Share from "./pages/Share";
 import Settings from "./pages/Settings";
 import AdminLayout from "./components/AdminLayout";
@@ -19,6 +20,7 @@ import AdminBattles from "./pages/admin/AdminBattles";
 import AdminRelations from "./pages/admin/AdminRelations";
 import AdminTraffic from "./pages/admin/AdminTraffic";
 import TestArena from "./pages/admin/TestArena";
+import CoreGuessLab from "./pages/admin/CoreGuessLab";
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
@@ -49,6 +51,7 @@ export default function App() {
             <Route path="/books" element={<RequireAuth><Books /></RequireAuth>} />
             <Route path="/battles/:id" element={<RequireAuth><BattleReport /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
+            <Route path="/board" element={<RequireAuth><Board /></RequireAuth>} />
             <Route path="/friends" element={<RequireAuth><Friends /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/admin" element={<RequireAuth><RequireAdmin><AdminLayout /></RequireAdmin></RequireAuth>}>
@@ -59,6 +62,7 @@ export default function App() {
               <Route path="relations" element={<AdminRelations />} />
               <Route path="traffic" element={<AdminTraffic />} />
               <Route path="test" element={<TestArena />} />
+              <Route path="test/core-guess" element={<CoreGuessLab />} />
             </Route>
           </Routes>
         </main>

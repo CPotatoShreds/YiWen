@@ -24,8 +24,9 @@ from app.services.nodes.guess_matcher import (
 )
 from app.services.reliability import ainvoke_with_reliability
 
-# 猜奇术规则：有限次数内逐次道出猜测，匹配片段上卡、逐卡完整覆盖核心机制/效果/限制即看破（揭示真实奇术），全破逆转
-GUESS_ATTEMPTS_MAX = 5
+# 猜奇术规则：有限次数内逐次道出猜测，匹配片段上卡、逐卡完整覆盖核心机制/效果/限制即看破（揭示真实奇术），全破逆转。
+# 上限 99 次（形同不限）——真正的结束靠「收手」：次数仅作兜底与试验场打桩（测试常 patch 为 1 模拟耗尽）。
+GUESS_ATTEMPTS_MAX = 99
 MAX_PAIRS = 24  # 单轮配对并发上限（原子猜测 × 未看破奇术），超出截断，未覆盖条目按不匹配处理
 
 # 全链路自动重试耗尽后的面向用户解释文本（说书语系）

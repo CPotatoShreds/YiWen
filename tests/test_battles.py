@@ -323,7 +323,7 @@ def test_reveal_on_miss_toggle_hides_ability():
 
 
 def test_battle_draw_from_ending():
-    """推演结尾句为「平局」→ 和局：无输家、不可猜奇术、名望不变、推演只调 1 次。"""
+    """推演结尾句为「平局」→ 和局：无输家、双方皆可猜奇术、名望不变、推演只调 1 次。"""
     with TestClient(app) as client:
         tok_a = _mk_user(client, "testdraw")
         tok_b = _mk_user(client, "testdraw")
@@ -347,7 +347,9 @@ def test_battle_draw_from_ending():
         assert b["status"] == "done"
         assert b["winner"] is None
         assert b["story"]["result"] == "和局"
-        assert b["can_guess"] is False  # 和局无输家，不可猜奇术
+        assert b["guess_by"] is None  # 和局无输家：双方皆可猜
+        assert b["can_guess"] is True  # 和局双方解锁猜奇术
+        assert b["my_guess"] is not None and b["my_guess"]["total"] == 1  # 我方猜对方实际用过的 1 门奇术
         assert b["rank_delta_a"] == 0 and b["rank_delta_b"] == 0  # 和局 a_score=0.5 → Elo 不变
         assert deduce.ainvoke.call_count == 1  # 一次性推演：结尾句即定胜负
 
@@ -492,9 +494,8 @@ def test_battle_stream_filter_for_viewer_side():
 def test_battle_stream_done_battle_short_circuits():
     """已完成对战开流：立即收到单个 done 事件（不挂起）。
 
-    平局战斗无猜词阶段 → done 后总线已关闭，开流立即短接；
-    带猜词阶段的 done 战斗会订阅总线（等待 guess_done），属预期新行为，由
-    test_battle_stream_delivers_guess_done 覆盖。
+    和局双方各收手后猜词全结束（guess_state "done"）→ 总线已关闭，开流立即短接；
+    （和局且仍可猜时流保持开放，由 test_battle_stream_delivers_guess_done 覆盖。）
     """
     with TestClient(app) as client:
         tok_a = _mk_user(client, "testsd")
@@ -513,6 +514,10 @@ def test_battle_stream_done_battle_short_circuits():
             r = client.post("/api/battles", headers=h_a)
             battle_id = r.json()["id"]
             _wait_done(client, battle_id, h_a)
+
+            # 和局双方各收手 → 猜词全结束（guess_state "done"）
+            assert client.post(f"/api/battles/{battle_id}/give-up", headers=h_a).status_code == 200
+            assert client.post(f"/api/battles/{battle_id}/give-up", headers=h_b).status_code == 200
 
             ev = _read_sse(client, f"/api/battles/{battle_id}/stream", headers=h_a)
         assert ev == [{"type": "done", "status": "done"}]

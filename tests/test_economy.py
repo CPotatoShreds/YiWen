@@ -31,8 +31,8 @@ def test_loadout_capacity():
     assert loadout_capacity(49) == 3
     assert loadout_capacity(50) == 4  # 满 50 见闻解锁 +1 槽
     assert loadout_capacity(150) == 6
-    assert loadout_capacity(250) == 8  # 3 + 250//50 = 8，满档
-    assert loadout_capacity(99999) == 8  # 封顶 8
+    assert loadout_capacity(250) == 8
+    assert loadout_capacity(99999) == 99  # 封顶 99
 
 
 def test_settings_reveal_on_miss():

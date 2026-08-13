@@ -48,8 +48,8 @@ def _insert_battle(user_a_id: int, user_b_id: int, status: str = "done") -> int:
     con = _sqlite()
     cur = con.execute(
         "INSERT INTO battles (user_a_id, user_b_id, story, status, rank_delta_a, rank_delta_b,"
-        " friendly, guess_text, guess_state, revealed)"
-        " VALUES (%s, %s, '', %s, 0, 0, FALSE, '', 'none', FALSE)"
+        " friendly, guess_text, guess_state, revealed, revealed_a, revealed_b)"
+        " VALUES (%s, %s, '', %s, 0, 0, FALSE, '', 'none', FALSE, FALSE, FALSE)"
         " RETURNING id",
         (user_a_id, user_b_id, status),
     )
@@ -59,12 +59,13 @@ def _insert_battle(user_a_id: int, user_b_id: int, status: str = "done") -> int:
     return new_id
 
 
-def _insert_battle_guess(battle_id: int) -> None:
+def _insert_battle_guess(battle_id: int, guesser_id: int) -> None:
     con = _sqlite()
     con.execute(
-        "INSERT INTO battle_guesses (battle_id, used_abilities, cards, guess_history, attempts_used, attempts_max, flipped)"
-        " VALUES (%s, '[]', '[]', '[]', 0, 5, FALSE)",
-        (battle_id,),
+        "INSERT INTO battle_guesses (battle_id, guesser_id, used_abilities, cards, guess_history,"
+        " attempts_used, attempts_max, flipped, done)"
+        " VALUES (%s, %s, '[]', '[]', '[]', 0, 5, FALSE, TRUE)",
+        (battle_id, guesser_id),
     )
     con.commit()
     con.close()
@@ -174,7 +175,7 @@ def test_user_delete_cascade():
 
         # C 参与一场 done 对战 + 猜词状态
         bid = _insert_battle(c_id, b_id, "done")
-        _insert_battle_guess(bid)
+        _insert_battle_guess(bid, c_id)
 
         # C 有几条请求日志（软引用）
         _insert_request_log(c_id)
@@ -238,7 +239,7 @@ def test_battle_read_and_delete():
         _promote(a_name)
 
         done_id = _insert_battle(_user_id(client, h_a), b_id, "done")
-        _insert_battle_guess(done_id)
+        _insert_battle_guess(done_id, b_id)
         pending_id = _insert_battle(_user_id(client, h_a), b_id, "pending")
 
         # 列表

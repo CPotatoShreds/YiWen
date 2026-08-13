@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3Icon, BookIcon, GearIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
+import { BarChart3Icon, BookIcon, GearIcon, SwordIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
@@ -9,6 +9,7 @@ const links = [
   { to: "/admin/relations", label: "关系", icon: UsersIcon },
   { to: "/admin/traffic", label: "流量", icon: BarChart3Icon },
   { to: "/admin/test", label: "试验场", icon: TestTubeIcon },
+  { to: "/admin/test/core-guess", label: "核心一句话", icon: SwordIcon }, // 临时试验：删除时连同页面一并移除
 ];
 
 export default function AdminLayout() {
