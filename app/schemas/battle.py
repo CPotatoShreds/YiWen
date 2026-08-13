@@ -40,7 +40,7 @@ class BattleOut(BaseModel):
     status: str  # pending / done / failed
     winner: str | None  # 胜者异闻师名字
     winner_fighter: str | None = None  # 胜者奇人名字（展示主字）
-    story: dict | None  # {narration(上帝,恒过滤), narration_a, narration_b, result, abilities_a, abilities_b, insight_a, insight_b}；pending 时 None，叙述/奇术表/解读按查看者过滤
+    story: dict | None  # {narration(上帝,恒过滤), narration_a, narration_b, result, abilities_a, abilities_b}；pending 时 None，叙述/奇术表按查看者过滤
     rank_delta_a: int  # 名望变化（Elo）
     rank_delta_b: int
     share_token: str  # 发起方 A 的传阅令牌（share_token；A 传阅出去即 A 视角）

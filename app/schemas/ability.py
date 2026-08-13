@@ -20,6 +20,6 @@ class AbilityOut(BaseModel):
     effect: str
     detail: str = ""
     tactic: str = ""
-    understanding: str = ""  # AI 生成的奇术理解（保存后异步生成，供行迹解读复用）
+    understanding: str = ""  # 奇术理解（已停用：不再生成/使用，字段保留）
 
     model_config = {"from_attributes": True}

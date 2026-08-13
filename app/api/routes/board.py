@@ -10,13 +10,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.battles import (
+    _to_out as battle_to_out,  # 复用单场序列化（无环：battles 不 import board 路由）
+)
 from app.core.security import get_current_user
 from app.db.base import get_db
 from app.models.battle import Battle
-from app.models.board import BoardEntry
+from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.loadout import Loadout
 from app.models.user import User
-from app.schemas.board import BoardChallengeIn, BoardEntryIn, BoardEntryOut
+from app.schemas.board import (
+    BoardAbilityOut,
+    BoardChallengeIn,
+    BoardDetailOut,
+    BoardEntryIn,
+    BoardEntryOut,
+)
 from app.services.battle import start_board_challenge
 from app.services.loadouts import loadout_abilities
 
@@ -57,6 +66,71 @@ async def list_board(
             await _to_out(db, entry, user.username, mine=(user.id == current.id), challenge_count=challenge_count)
         )
     return out
+
+
+@router.get("/{entry_id}", response_model=BoardDetailOut)
+async def board_detail(
+    entry_id: int,
+    current: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BoardDetailOut:
+    """榜单条目详情：查看者视角的看破进度 + 与该刻印的对战记录。
+
+    榜主看刻印全貌、无任何挑战者行迹（发帖语义）；第三方未点将 → 全保密 + 空记录。
+    只读进度，绝不因看详情而创建进度行。
+    """
+    entry = await db.get(BoardEntry, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="榜单条目不存在")
+    mine = entry.user_id == current.id
+    owner = await db.get(User, entry.user_id)
+    challenge_count = (
+        await db.execute(select(func.count(Battle.id)).where(Battle.board_entry_id == entry_id))
+    ).scalar_one()
+    abilities = entry.abilities or []
+
+    progress: list[BoardAbilityOut] = []
+    if mine:
+        for i, a in enumerate(abilities):
+            progress.append(BoardAbilityOut(index=i + 1, cracked=True, name=a["name"], effect=a["effect"]))
+    else:
+        prog = await db.get(BoardGuessProgress, (current.id, entry_id))
+        cards = prog.cards if prog else [{"cracked": False} for _ in abilities]
+        for i, (card, a) in enumerate(zip(cards, abilities)):
+            cracked = bool(card.get("cracked"))
+            progress.append(
+                BoardAbilityOut(
+                    index=i + 1,
+                    cracked=cracked,
+                    matched=list(card.get("matched") or []),
+                    name=a["name"] if cracked else None,
+                    effect=a["effect"] if cracked else None,
+                )
+            )
+
+    battles = []
+    if not mine:
+        rows = (
+            await db.execute(
+                select(Battle)
+                .where(Battle.board_entry_id == entry_id, Battle.user_a_id == current.id)
+                .order_by(Battle.created_at.desc())
+            )
+        ).scalars().all()
+        battles = [await battle_to_out(db, b, viewer_id=current.id) for b in rows]
+
+    return BoardDetailOut(
+        id=entry.id,
+        user=owner.username if owner else "?",
+        name=entry.name,
+        style=entry.style,
+        ability_count=len(abilities),
+        challenge_count=challenge_count,
+        mine=mine,
+        created_at=entry.created_at,
+        progress=progress,
+        battles=battles,
+    )
 
 
 @router.post("", response_model=BoardEntryOut, status_code=status.HTTP_201_CREATED)

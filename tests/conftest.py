@@ -1,4 +1,4 @@
-"""pytest 全局夹具：隔离后台 LLM 任务（异能理解生成），防止测试触发真实 API 调用。"""
+"""pytest 全局夹具：隔离后台 LLM 任务（风格/战术解读等），防止测试触发真实 API 调用。"""
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,20 +20,6 @@ except psycopg.Error as exc:
     raise RuntimeError(
         "测试需要本地 Docker PostgreSQL：先运行 `docker compose up -d` 再跑 pytest。"
     ) from exc
-
-
-@pytest.fixture(autouse=True)
-def _no_real_understanding_llm():
-    """异能理解后台任务打桩：返回固定理解文本（瞬时完成），全测试生效。"""
-    chain = MagicMock()
-
-    async def fake_ainvoke(inputs):
-        name = inputs.get("name", "")
-        return f"AI 理解：对「{name}」的客观分析，涵盖核心机制、触发条件与限制。"
-
-    chain.ainvoke = AsyncMock(side_effect=fake_ainvoke)
-    with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain):
-        yield
 
 
 @pytest.fixture(autouse=True)

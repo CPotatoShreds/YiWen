@@ -1156,6 +1156,9 @@ body::after {
 .admin-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 11px; background: var(--ground-2); }
 .admin-tabs button { padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
 .admin-tabs button.is-active { background: var(--surface); color: var(--accent-strong); box-shadow: var(--shadow-soft); }
+.tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 11px; background: var(--ground-2); width: fit-content; }
+.tabs button { padding: 6px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.tabs button.is-active { background: var(--surface); color: var(--accent-strong); box-shadow: var(--shadow-soft); }
 .admin-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .modal--wide { max-width: 760px; max-height: calc(100vh - 40px); overflow-y: auto; }

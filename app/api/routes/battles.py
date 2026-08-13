@@ -38,17 +38,19 @@ def _filter_story(
     a_id: int,
     b_id: int,
     unlock_all: bool = False,
+    revealed: bool = False,
 ) -> dict | None:
-    """按查看者身份过滤：上帝视角恒不展示；叙述各看各的；奇术表/解读自己一侧可见、对家揭示后才可见。
+    """按查看者身份过滤：看破前叙述各看各的、上帝视角与对方视角不展示、奇术表自己一侧可见对家揭示后可见。
 
-    点将局挑战者对该刻印全部看破（unlock_all）→ 保留完整三视角（上帝 + 双方叙述 + 双方奇术表）。
+    看破后（revealed，任一侧被看破/揭示）或点将局全部看破（unlock_all）→ 解锁完整三视角
+    （上帝 + 双方叙述 + 双方奇术表），对应前端"看破前上帝视角和对方视角不展示"。
     传阅页 viewer_id 即传阅者一侧（share token 决定），天然只看到传阅者自己的视角。
     """
     if story is None:
         return None
     out = dict(story)
-    if unlock_all:
-        return out  # 已全部看破：挑战者解锁完整三视角，不再过滤
+    if unlock_all or revealed:
+        return out  # 看破后：完整三视角，不再过滤
     out.pop("narration", None)  # 上帝视角（直述双方奇术与真相）：存储但不展示
     # 叙述各看各的：A 看 narration_a，B 看 narration_b，其余全隐藏（揭示也不交换视角）
     if viewer_id == a_id:
@@ -58,15 +60,13 @@ def _filter_story(
     else:
         out.pop("narration_a", None)
         out.pop("narration_b", None)
-    # 奇术表与解读：自己一侧始终可见，对家一侧（被猜破/reveal_on_miss 揭示）后才可见
+    # 奇术表：自己一侧始终可见，对家一侧（被猜破/reveal_on_miss 揭示）后才可见
     show_a = revealed_a or viewer_id == a_id
     show_b = revealed_b or viewer_id == b_id
     if not show_b:
         out.pop("abilities_b", None)
-        out.pop("insight_b", None)
     if not show_a:
         out.pop("abilities_a", None)
-        out.pop("insight_a", None)
     return out
 
 
@@ -184,6 +184,7 @@ async def _to_out(
         battle.user_a_id,
         battle.user_b_id,
         unlock_all=unlocked,
+        revealed=battle.revealed,
     )
     # 平铺字段兼容：非和局单行（败方行）为主；和局以查看者自己的行为主（my_guess 兜底）
     if battle.guess_by is not None:

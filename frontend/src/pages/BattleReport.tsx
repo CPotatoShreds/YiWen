@@ -18,18 +18,13 @@ interface AbilityLite {
   effect: string;
 }
 
-function AbilityList({ title, list, me, insight }: { title: string; list?: AbilityLite[]; me?: boolean; insight?: string }) {
+function AbilityList({ title, list, me }: { title: string; list?: AbilityLite[]; me?: boolean }) {
   return (
     <div className="panel">
       <div className="panel__head">
         <h3>{me ? "我的奇术" : title}</h3>
         {!me && !list && <span className="muted" style={{ textAlign: "right" }}>尚未看破</span>}
       </div>
-      {insight && (
-        <p className="muted" style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.6 }}>
-          <b>解读：</b>{insight}
-        </p>
-      )}
       {!list ? (
         <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)", fontSize: 13 }}>
           <LockIcon size={16} />
@@ -138,6 +133,8 @@ export default function BattleReport() {
   const [disconnected, setDisconnected] = useState(false); // 重连耗尽 → 显示「连接中断」+ 手动续接
   const [rematchBusy, setRematchBusy] = useState(false);
   const [confirmGiveUp, setConfirmGiveUp] = useState(false); // 收手二次确认：首次点击变「确认收手？」再点才提交
+  const [viewTab, setViewTab] = useState<"own" | "god" | "opp">("own"); // 行迹视角标签：己方 / 上帝 / 对方
+  const [contentTab, setContentTab] = useState<"abilities" | "guess">("abilities"); // 奇术与猜词标签
   const liveRoundRef = useRef(-1); // 已收最大分段轮次（断点去重：跨重连保留，服务端快照重播不重复）
   const stageRef = useRef<"unknown" | "dueling" | "recounting">("unknown"); // 进度单调游标：到「胜负已分」后不回退（重连快照会把 dueling 再重播一遍）
   const settledRef = useRef(false); // 已收 done/error → 不再重连保活，等 reload 拉完整话本
@@ -247,6 +244,19 @@ export default function BattleReport() {
       if (timer) clearTimeout(timer);
     };
   }, [id, b?.status, b?.guess_total, b?.guessed, retry, refresh]);
+
+  // 标签页默认值：战场首次落定为 done 时设一次——我方可猜 → 落在「猜词」方便连续道出，否则「双方奇术」；
+  // 同场重载（SSE 快照/guess_done 重拉）不重置用户手选；切换战场再按新场设默认。
+  const tabInitKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!b || b.status !== "done") return;
+    const key = `${b.id}:${b.status}`;
+    if (tabInitKeyRef.current === key) return;
+    tabInitKeyRef.current = key;
+    const guessing = b.can_guess && (b.my_guess?.total ?? 0) > 0;
+    setContentTab(guessing ? "guess" : "abilities");
+    setViewTab("own");
+  }, [b?.id, b?.status, b?.can_guess, b?.my_guess?.total]);
 
   async function submitGuess() {
     if (!guessText.trim()) return;
@@ -412,13 +422,15 @@ export default function BattleReport() {
   const myShareToken = mySide ? b.share_token : (b.share_token_b ?? b.share_token);
   const myAbilities = mySide ? b.story.abilities_a : b.story.abilities_b;
   const oppAbilities = mySide ? b.story.abilities_b : b.story.abilities_a;
-  const myInsight = mySide ? b.story.insight_a : b.story.insight_b;
-  const oppInsight = mySide ? b.story.insight_b : b.story.insight_a;
   const won = b.winner === me;
   const myGuess = b.my_guess ?? null;
   const oppGuess = b.opp_guess ?? null;
   const isGuesser = myGuess != null; // 我是猜词者：和局双方皆可猜，非和局仅败方
   const oppCracked = (oppGuess?.cards ?? []).filter((c) => c.cracked).length;
+  const godView = b.story.narration; // 上帝视角：看破后才下发（点将局全破 / 双方看破揭示）
+  const oppView = mySide ? b.story.narration_b : b.story.narration_a; // 对方视角：看破后才下发
+  const ownView = mySide ? b.story.narration_a : b.story.narration_b;
+  const hasGuess = (myGuess?.total ?? 0) > 0 || (oppGuess?.total ?? 0) > 0;
 
   return (
     <>
@@ -501,128 +513,144 @@ export default function BattleReport() {
         </div>
       )}
 
-      {/* 点将局全部看破：完整三视角解锁（上帝 + 刻印视角；挑战者自己的叙述仍走下方主叙述） */}
+      {/* 点将局全部看破：无需猜词，完整三视角直接铺陈 */}
       {b.unlocked && (
-        <div className="rise rise-1" style={{ display: "grid", gap: 14 }}>
-          <div className="banner banner--hit">
-            <span className="banner__icon">
-              <EyeIcon size={20} />
-            </span>
-            <div>
-              <h3>已全部看破，无需猜词</h3>
-              <p>
-                你已识破「{b.fighter_b}」刻印的全部奇术。此后点将这位奇人，行迹将直接以完整三视角铺陈——含上帝视角与刻印视角。
-              </p>
-            </div>
+        <div className="banner banner--hit rise rise-1">
+          <span className="banner__icon">
+            <EyeIcon size={20} />
+          </span>
+          <div>
+            <h3>已全部看破，无需猜词</h3>
+            <p>
+              你已识破「{b.fighter_b}」刻印的全部奇术。此后点将这位奇人，行迹将直接以完整三视角铺陈——含上帝视角与刻印视角。
+            </p>
           </div>
-          {b.story.narration && (
-            <div className="panel narration">
-              <p className="muted" style={{ marginBottom: 8 }}>
-                <b>上帝视角（全局真相）：</b>
-              </p>
-              {b.story.narration}
-            </div>
-          )}
-          {b.story.narration_b && (
-            <div className="panel narration">
-              <p className="muted" style={{ marginBottom: 8 }}>
-                <b>{b.fighter_b} 视角（刻印眼中此行迹）：</b>
-              </p>
-              {b.story.narration_b}
-            </div>
-          )}
         </div>
       )}
 
-      {/* 战斗叙述：各看各的，服务端只回自己的视角叙述 */}
-      <div className="panel narration rise rise-1">{b.story.narration_a ?? b.story.narration_b ?? "（无行迹内容）"}</div>
-
-      {/* 奇术表 */}
-      <div className="rise rise-2" style={{ display: "grid", gap: 14 }}>
-        <AbilityList title={`${b.fighter_a} 的奇术`} list={myAbilities} me insight={myInsight} />
-        <AbilityList title={`${b.fighter_b} 的奇术`} list={oppAbilities} insight={oppInsight} />
-        {b.revealed && (
-          <p className="muted" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <EyeIcon size={14} /> 双方奇术已被看破
-          </p>
-        )}
+      {/* 行迹视角：己方恒可见；上帝/对方视角看破后才解锁（看破前服务端不下发内容，标签也不渲染） */}
+      <div className="rise rise-1" style={{ display: "grid", gap: 10 }}>
+        <div className="tabs" role="tablist" aria-label="行迹视角">
+          <button className={viewTab === "own" ? "is-active" : ""} onClick={() => setViewTab("own")}>
+            己方视角
+          </button>
+          {godView && (
+            <button className={viewTab === "god" ? "is-active" : ""} onClick={() => setViewTab("god")}>
+              上帝视角
+            </button>
+          )}
+          {oppView && (
+            <button className={viewTab === "opp" ? "is-active" : ""} onClick={() => setViewTab("opp")}>
+              对方视角
+            </button>
+          )}
+        </div>
+        <div className="panel narration" style={{ marginTop: 0, marginBottom: 0 }}>
+          {viewTab === "god" ? godView : viewTab === "opp" ? oppView : (ownView ?? "（无行迹内容）")}
+        </div>
       </div>
 
-      {/* 猜奇术：我自己的猜词面板（非和局败方 / 和局双方各一块） */}
-      {isGuesser && myGuess && myGuess.total > 0 && (
-        <div className="panel rise rise-3">
-          <div className="panel__head">
-            <h3>猜奇术：对家实际用过的奇术是什么？</h3>
-          </div>
-          <p className="muted" style={{ marginBottom: 12 }}>
-            对家共动用 <b>{myGuess.total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
-            命中内容会落到对应卡片上；卡片被完整看透即看破该门奇术，全部看破即可逆转胜负。
-          </p>
-
-          <GuessFeed guesses={myGuess.history} />
-          <GuessBoard cards={myGuess.cards ?? []} />
-
-          {b.can_guess ? (
-            <>
-              <p className="muted" style={{ marginBottom: 10 }}>
-                已用 <b>{myGuess.attempts_used}</b> / {myGuess.attempts_max} 次机会，已看破{" "}
-                {(myGuess.cards ?? []).filter((c) => c.cracked).length} / {myGuess.total} 门。
-              </p>
-              <div className="field">
-                <textarea
-                  className="textarea"
-                  value={guessText}
-                  onChange={(e) => {
-                    setGuessText(e.target.value);
-                    setConfirmGiveUp(false);
-                  }}
-                  rows={3}
-                  placeholder="如：他似乎能操控火焰，还能在近身时冻结我的兵刃……"
-                />
-              </div>
-              <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-                支持同时对多个奇术进行猜测，请通过换行来分隔你对不同奇术的猜测。
-              </p>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
-                  <TargetIcon size={16} />
-                  {guessing ? "思量中…" : "道出猜测"}
-                </button>
-                <button
-                  className={`btn ${confirmGiveUp ? "btn-danger" : "btn-ghost"}`}
-                  onClick={() => (confirmGiveUp ? giveUp() : setConfirmGiveUp(true))}
-                  disabled={guessing}
-                  title="未看破即结束本轮猜词，之后不可再猜"
-                >
-                  <XIcon size={15} />
-                  {confirmGiveUp ? "确认收手？" : "收手"}
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="muted">
-              {myGuess.flipped ? "你已看破全部奇术，胜负逆转。" : "你已收手或机会用尽，未能尽数看破。"}
-            </p>
+      {/* 奇术与猜词：标签页分开（猜词标签仅在有内容时出现；双方奇术看破前按各自视角保密） */}
+      <div className="rise rise-2" style={{ display: "grid", gap: 12 }}>
+        <div className="tabs" role="tablist" aria-label="奇术与猜词">
+          <button className={contentTab === "abilities" ? "is-active" : ""} onClick={() => setContentTab("abilities")}>
+            双方奇术
+          </button>
+          {hasGuess && (
+            <button className={contentTab === "guess" ? "is-active" : ""} onClick={() => setContentTab("guess")}>
+              猜词
+            </button>
           )}
-          {err && <p className="err">{err}</p>}
         </div>
-      )}
 
-      {/* 观战：实时看对家猜词进度（非和局赢家看败方；和局双方互相观战） */}
-      {oppGuess && oppGuess.total > 0 && (
-        <div className="panel rise rise-3">
-          <div className="panel__head">
-            <h3>{b.guessed ? "对家猜奇术 · 已了结" : "对家正在猜你的奇术"}</h3>
+        {contentTab === "guess" && hasGuess ? (
+          <div style={{ display: "grid", gap: 14 }}>
+            {isGuesser && myGuess && myGuess.total > 0 && (
+              <div className="panel" style={{ marginBottom: 0 }}>
+                <div className="panel__head">
+                  <h3>猜奇术：对家实际用过的奇术是什么？</h3>
+                </div>
+                <p className="muted" style={{ marginBottom: 12 }}>
+                  对家共动用 <b>{myGuess.total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
+                  命中内容会落到对应卡片上；卡片被完整看透即看破该门奇术，全部看破即可逆转胜负。
+                </p>
+
+                <GuessFeed guesses={myGuess.history} />
+                <GuessBoard cards={myGuess.cards ?? []} />
+
+                {b.can_guess ? (
+                  <>
+                    <p className="muted" style={{ marginBottom: 10 }}>
+                      已用 <b>{myGuess.attempts_used}</b> / {myGuess.attempts_max} 次机会，已看破{" "}
+                      {(myGuess.cards ?? []).filter((c) => c.cracked).length} / {myGuess.total} 门。
+                    </p>
+                    <div className="field">
+                      <textarea
+                        className="textarea"
+                        value={guessText}
+                        onChange={(e) => {
+                          setGuessText(e.target.value);
+                          setConfirmGiveUp(false);
+                        }}
+                        rows={3}
+                        placeholder="如：他似乎能操控火焰，还能在近身时冻结我的兵刃……"
+                      />
+                    </div>
+                    <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                      支持同时对多个奇术进行猜测，请通过换行来分隔你对不同奇术的猜测。
+                    </p>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
+                        <TargetIcon size={16} />
+                        {guessing ? "思量中…" : "道出猜测"}
+                      </button>
+                      <button
+                        className={`btn ${confirmGiveUp ? "btn-danger" : "btn-ghost"}`}
+                        onClick={() => (confirmGiveUp ? giveUp() : setConfirmGiveUp(true))}
+                        disabled={guessing}
+                        title="未看破即结束本轮猜词，之后不可再猜"
+                      >
+                        <XIcon size={15} />
+                        {confirmGiveUp ? "确认收手？" : "收手"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">
+                    {myGuess.flipped ? "你已看破全部奇术，胜负逆转。" : "你已收手或机会用尽，未能尽数看破。"}
+                  </p>
+                )}
+                {err && <p className="err">{err}</p>}
+              </div>
+            )}
+
+            {oppGuess && oppGuess.total > 0 && (
+              <div className="panel" style={{ marginBottom: 0 }}>
+                <div className="panel__head">
+                  <h3>{b.guessed ? "对家猜奇术 · 已了结" : "对家正在猜你的奇术"}</h3>
+                </div>
+                <p className="muted" style={{ marginBottom: 12 }}>
+                  {b.guessed
+                    ? `对家道尽猜测：已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
+                    : `对家正逐次道出猜测，看破你的奇术即揭示该门。已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，已看破 ${oppCracked} / ${oppGuess.total} 门。`}
+                </p>
+                <GuessFeed guesses={oppGuess.history} />
+                <GuessBoard cards={oppGuess.cards ?? []} />
+              </div>
+            )}
           </div>
-          <p className="muted" style={{ marginBottom: 12 }}>
-            {b.guessed
-              ? `对家道尽猜测：已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
-              : `对家正逐次道出猜测，看破你的奇术即揭示该门。已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，已看破 ${oppCracked} / ${oppGuess.total} 门。`}
-          </p>
-          <GuessFeed guesses={oppGuess.history} />
-          <GuessBoard cards={oppGuess.cards ?? []} />
-        </div>
-      )}
+        ) : (
+          <div style={{ display: "grid", gap: 14 }}>
+            <AbilityList title={`${b.fighter_a} 的奇术`} list={myAbilities} me />
+            <AbilityList title={`${b.fighter_b} 的奇术`} list={oppAbilities} />
+            {b.revealed && (
+              <p className="muted" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <EyeIcon size={14} /> 双方奇术已被看破
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 传阅：分享的是自己的视角（A 分享 = A 视角，B 分享 = B 视角） */}
       <p className="muted" style={{ marginTop: 20 }}>

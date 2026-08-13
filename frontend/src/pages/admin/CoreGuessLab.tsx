@@ -114,7 +114,6 @@ export default function CoreGuessLab() {
             <div><span className="muted">效果：</span>{ability.effect}</div>
             <div><span className="muted">补充说明：</span>{ability.detail || "（空）"}</div>
             <div><span className="muted">战术用法：</span>{ability.tactic || "（空）"}</div>
-            <div><span className="muted">AI 理解：</span>{ability.understanding || "（未生成）"}</div>
           </div>
         )}
         <div className="admin-toolbar__actions" style={{ marginTop: 4 }}>

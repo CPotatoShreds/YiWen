@@ -102,15 +102,6 @@ def _arm(client, tok):
     return _arm_named(client, tok, uname)
 
 
-def _wait_understanding(client, headers, timeout=5):
-    """等待异能理解后台生成落库（conftest 已打桩，瞬时完成）。"""
-    for _ in range(int(timeout / 0.1)):
-        mine = client.get("/api/abilities/mine", headers=headers).json()
-        if mine and all(a["understanding"] for a in mine):
-            return
-        time.sleep(0.1)
-
-
 def _wait_done(client, battle_id, headers, timeout=12):
     """轮询战报直到非 pending。"""
     b = None
@@ -173,7 +164,6 @@ def test_battle_flow_and_guess_miss():
         _give_ability(client, tok_b, "血咒", "以自身鲜血为引发动诅咒，反噬攻击者")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
@@ -194,11 +184,9 @@ def test_battle_flow_and_guess_miss():
         assert b["story"]["narration_a"] == NAR_A
         assert "narration_b" not in b["story"]
         assert "narration" not in b["story"]  # 上帝视角存储但不展示
-        # 揭示前：对手（B）异能表与解读隐藏，自己（A）的可见
+        # 揭示前：对手（B）异能表隐藏，自己（A）的可见
         assert b["story"]["abilities_a"]
-        assert b["story"]["insight_a"]  # 解读来自已存的 AI 异能理解
         assert "abilities_b" not in b["story"]
-        assert "insight_b" not in b["story"]
         # 空白卡片：使用子集=全部装配（conftest 桩空子集 → 降级全用），B 一门 → 1 张未看破卡
         assert b["guess_total"] == 1
         assert b["guess_cards"] and b["guess_cards"][0]["cracked"] is False
@@ -225,6 +213,9 @@ def test_battle_flow_and_guess_miss():
         assert gb["revealed"] is True  # 默认揭示
         assert gb["can_guess"] is False
         assert gb["story"]["abilities_b"]  # 已揭示
+        # 看破后：解锁完整三视角——上帝视角与对方视角一并可见（A 看 B 的视角）
+        assert GOD in gb["story"]["narration"]
+        assert gb["story"]["narration_b"] == NAR_B
         assert gb["winner"] == name_b  # 未翻转
 
         # 猜词已结束 → 400
@@ -244,7 +235,6 @@ def test_guess_hit_flips_winner_and_rank():
         _give_ability(client, tok_b, "镜面反射", "将对手的攻击原样反射回去")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
@@ -442,7 +432,6 @@ def _mk_battle(client, tok_a, tok_b, h_a, h_b, deduce=None):
     _give_ability(client, tok_b, "血咒", "以自身鲜血为引发动诅咒")
     _arm(client, tok_a)
     _arm(client, tok_b)
-    _wait_understanding(client, h_a)
     name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
     user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
     deduce_llm = _deduce(deduce if deduce is not None else f"{GOD} 胜者：{name_a}")
@@ -600,7 +589,6 @@ def test_battle_deduce_failure_marks_failed_with_message():
         _give_ability(client, tok_b, "血咒", "以自身鲜血为引发动诅咒")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         deduce = MagicMock()
@@ -671,7 +659,6 @@ def test_usage_subset_limits_cards():
         _give_ability(client, tok_b, "镜面反射", "将对手的攻击原样反射回去")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
@@ -714,7 +701,6 @@ def test_guess_cracks_card_reveals_ability():
         _give_ability(client, tok_b, "镜面反射", "将对手的攻击原样反射回去")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
@@ -773,7 +759,6 @@ def test_winner_sees_guesser_progress():
         _give_ability(client, tok_b, "镜面反射", "将对手的攻击原样反射回去")
         _arm(client, tok_a)
         _arm(client, tok_b)
-        _wait_understanding(client, h_a)
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (

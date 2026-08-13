@@ -497,3 +497,91 @@ def test_take_off_board_cascades_progress():
         )
         assert cur.fetchone() is None
         con.close()
+
+
+# ---------------------------------------------------------------------------
+# 条目详情页
+# ---------------------------------------------------------------------------
+
+
+def test_board_detail_progress_and_battles():
+    """详情页：挑战者视角看破进度（已看破亮出名/效果，未看破保密）+ 自己的对局记录倒序。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbdt")
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_a, "血咒", "以自身鲜血为引发动诅咒")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        _guess(client, b1, h_b, "影刃化形，遁入暗影", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        b2 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+
+        d = client.get(f"/api/board/{eid}", headers=h_b).json()
+        assert d["mine"] is False
+        assert d["ability_count"] == 2
+        assert d["challenge_count"] == 2
+        # 已看破卡亮出真实名/效果，未看破保密
+        assert d["progress"][0]["cracked"] is True
+        assert d["progress"][0]["name"] == "影刃"
+        assert d["progress"][0]["effect"] == "以暗影凝聚利刃斩杀敌人"
+        assert d["progress"][0]["matched"]  # 线索片段保留
+        assert d["progress"][1]["cracked"] is False
+        assert d["progress"][1]["name"] is None
+        assert d["progress"][1]["effect"] is None
+        # 对局记录：自己的点将局，倒序
+        assert [x["id"] for x in d["battles"]] == [b2["id"], b1["id"]]
+        assert all(x["board_entry_id"] == eid for x in d["battles"])
+
+
+def test_board_detail_fresh_viewer_all_hidden():
+    """未点将过的第三方：进度全保密、无对局记录（不泄漏挑战者的看破进度）。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbdf")
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        h_c = {"Authorization": f"Bearer {_mk_user(client, 'tbdf_c')}"}
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_a, "血咒", "以自身鲜血为引发动诅咒")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+
+        d = client.get(f"/api/board/{eid}", headers=h_c).json()
+        assert d["mine"] is False
+        assert all(not c["cracked"] and c["name"] is None for c in d["progress"])
+        assert d["battles"] == []
+
+
+def test_board_detail_poster_reveals_all_no_battles():
+    """榜主视角：刻印全貌可见、无任何挑战者对局记录（发帖语义）。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbdp")
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+
+        d = client.get(f"/api/board/{eid}", headers=h_a).json()
+        assert d["mine"] is True
+        assert d["challenge_count"] == 1
+        assert all(c["cracked"] for c in d["progress"])  # 榜主看全貌
+        assert d["progress"][0]["name"] == "影刃"
+        assert d["battles"] == []  # 无挑战者行迹
+
+
+def test_board_detail_404():
+    """不存在的条目 → 404。"""
+    with TestClient(app) as client:
+        h_a, _ = _mk_two_users(client, "tbd404")
+        assert client.get("/api/board/999999", headers=h_a).status_code == 404

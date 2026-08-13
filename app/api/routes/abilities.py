@@ -2,12 +2,8 @@
 
 奇术不再由系统生成：异闻师写什么就是什么（名称 + 效果自由文本），
 全部可启程。同名同效果在系统内共享一条记录（内容哈希去重）。
-
-奇术保存后，后台异步生成「对奇术的理解」缓存到 Ability.understanding，
-推演时直接复用（见 app/services/ability_understanding.py）。
 """
 
-import asyncio
 from hashlib import sha256
 from typing import Annotated
 
@@ -22,19 +18,8 @@ from app.models.loadout import Loadout, LoadoutAbility
 from app.models.user import User
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut, AbilitySetIn
-from app.services.ability_understanding import ensure_ability_understanding
 
 router = APIRouter(prefix="/abilities", tags=["abilities"])
-
-# 持有后台任务引用，防止 asyncio 在任务完成前 GC 取消它
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _schedule_understanding(ability_id: str) -> None:
-    """后台异步生成奇术理解（失败静默，不阻塞奇术保存）。"""
-    task = asyncio.create_task(ensure_ability_understanding(ability_id))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 def _ability_id(user_id: int, name: str, effect: str) -> str:
@@ -75,9 +60,6 @@ async def create_ability(
         db.add(UserAbility(user_id=current.id, ability_id=aid))
     await db.commit()
     await db.refresh(ability)
-    # 异步生成奇术理解（共享奇术行已有理解则复用，不重生成）
-    if not ability.understanding:
-        _schedule_understanding(aid)
     return ability
 
 
@@ -118,10 +100,8 @@ async def update_ability(
         ability.detail = body.detail.strip()
     if body.tactic is not None:
         ability.tactic = body.tactic.strip()
-    ability.understanding = ""  # 内容已变，旧理解失效，重新生成
     await db.commit()
     await db.refresh(ability)
-    _schedule_understanding(ability_id)
     return ability
 
 

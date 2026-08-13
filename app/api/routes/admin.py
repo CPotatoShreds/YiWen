@@ -399,7 +399,7 @@ async def admin_update_ability(
     admin: Annotated[User, Depends(get_current_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Ability:
-    """编辑奇术：内容变更后旧理解失效（清空，不调度 LLM 重新生成）。"""
+    """编辑奇术。"""
     ability = await db.get(Ability, ability_id)
     if ability is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="奇术不存在")
@@ -411,7 +411,6 @@ async def admin_update_ability(
         ability.detail = body.detail.strip()
     if body.tactic is not None:
         ability.tactic = body.tactic.strip()
-    ability.understanding = ""
     await db.commit()
     await db.refresh(ability)
     return ability

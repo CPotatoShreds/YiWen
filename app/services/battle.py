@@ -111,7 +111,7 @@ def disambiguate_fighters(
 
 
 def _write_md(battle: Battle, user_a: User, user_b: User, story: dict, revealed: bool) -> None:
-    """行迹落盘为 md 文档。看破前不含对家奇术表与解读（保密）。"""
+    """行迹落盘为 md 文档。看破前不含对家奇术表（保密）。"""
     os.makedirs("data/battles", exist_ok=True)
     winner_name = story.get("result", "和局")
     lines = [
@@ -125,15 +125,7 @@ def _write_md(battle: Battle, user_a: User, user_b: User, story: dict, revealed:
         "",
         story.get("narration_a", story.get("narration", "")),
         "",
-        "## 奇术解读",
-        "",
-        f"**{user_a.username}**：{story.get('insight_a', '')}",
-        "",
     ]
-    if revealed:
-        lines.append(f"**{user_b.username}**：{story.get('insight_b', '')}")
-    else:
-        lines.append(f"**{user_b.username}**：（未看破——等待败方猜奇术，猜中可逆转胜负）")
     lines += ["", "## 发起方奇术", ""]
     for ab in story.get("abilities_a", []):
         lines.append(f"- **{ab['name']}**：{ab['effect']}")
@@ -559,15 +551,11 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
             a_score = 1.0 if r.winner_side == "A" else (0.0 if r.winner_side == "B" else 0.5)
             abs_a = [_ability_dict(a) for a in abilities_a]
             abs_b = [_ability_dict(a) for a in abilities_b]
-            insight_a = "\n\n".join(a.understanding for a in abilities_a if a.understanding)
-            insight_b = "\n\n".join(a.understanding for a in abilities_b if a.understanding)
             battle.story = json.dumps(
                 {
                     "narration": r.god,  # 上帝视角：存储但不展示（API 恒过滤）
                     "narration_a": r.narration_a,
                     "narration_b": r.narration_b,
-                    "insight_a": insight_a,
-                    "insight_b": insight_b,
                     "result": r.result,
                     "abilities_a": abs_a,
                     "abilities_b": abs_b,

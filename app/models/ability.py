@@ -16,5 +16,5 @@ class Ability(Base):
     effect: Mapped[str] = mapped_column(Text)
     detail: Mapped[str] = mapped_column(Text, server_default="")  # 补充说明：限制/CD/触发条件（供 LLM 准确理解）
     tactic: Mapped[str] = mapped_column(Text, server_default="")  # 我会怎么使用它（推演时指导行动风格）
-    understanding: Mapped[str] = mapped_column(Text, server_default="")  # AI 生成的奇术理解（保存后可复用，推演时直接喂 LLM）
+    understanding: Mapped[str] = mapped_column(Text, server_default="")  # 奇术理解（已停用：不再生成/使用，字段保留）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

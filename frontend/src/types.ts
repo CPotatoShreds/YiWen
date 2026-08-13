@@ -48,18 +48,32 @@ export interface BoardEntry {
   created_at: string;
 }
 
+// 刻印单门奇术的进度卡：已看破亮出真实名/效果，未看破仅线索片段
+export interface BoardAbility {
+  index: number;
+  cracked: boolean;
+  matched: string[];
+  name?: string | null;
+  effect?: string | null;
+}
+
+// 条目详情：查看者（挑战者）视角的看破进度 + 与该刻印的对战记录
+export interface BoardDetail extends BoardEntry {
+  progress: BoardAbility[];
+  battles: Battle[];
+}
+
 export interface BattleStory {
   narration?: string;
   narration_a?: string;
   narration_b?: string;
   abilities_a?: Ability[];
   abilities_b?: Ability[];
-  insight_a?: string;
-  insight_b?: string;
 }
 
 export interface Battle {
   id: number;
+  created_at: string;
   user_a: string;
   user_b: string;
   fighter_a: string;
