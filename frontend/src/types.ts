@@ -43,11 +43,13 @@ export interface BoardEntry {
   name: string;
   style: string;
   ability_count: number;
+  challenge_count: number;
   mine: boolean;
   created_at: string;
 }
 
 export interface BattleStory {
+  narration?: string;
   narration_a?: string;
   narration_b?: string;
   abilities_a?: Ability[];
@@ -70,6 +72,8 @@ export interface Battle {
   share_token: string;
   share_token_b?: string;
   story: BattleStory | null;
+  board_entry_id?: number | null;
+  unlocked?: boolean;
   can_guess: boolean;
   guessed: boolean;
   guess_hit: boolean | null;

@@ -46,6 +46,8 @@ class BattleOut(BaseModel):
     share_token: str  # 发起方 A 的传阅令牌（share_token；A 传阅出去即 A 视角）
     share_token_b: str | None = None  # 对家 B 的传阅令牌（share_token_b；B 传阅出去即 B 视角）
     created_at: datetime
+    board_entry_id: int | None = None  # 点将局所挑战的榜单刻印（None = 普通对决）
+    unlocked: bool = False  # 点将局挑战者已看破该刻印全部奇术（解锁完整三视角）
     can_guess: bool = False  # 当前查看者是否有未结束的猜词行可继续道出猜测
     guessed: bool = False  # 猜词是否已结束（全部猜词行 done）
     guess_hit: bool | None = None  # 是否全破逆转（guessed 后有效）

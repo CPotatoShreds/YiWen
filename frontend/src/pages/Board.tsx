@@ -129,7 +129,7 @@ export default function Board() {
                   )}
                 </div>
                 <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
-                  {e.style || "（未写风格）"} · {e.ability_count} 门奇术
+                  {e.style || "（未写风格）"} · {e.ability_count} 门奇术 · 被挑战 {e.challenge_count} 次
                 </p>
               </div>
               <span className="muted" style={{ fontSize: 12, flex: "none" }}>

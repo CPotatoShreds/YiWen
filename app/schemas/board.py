@@ -11,6 +11,7 @@ class BoardEntryOut(BaseModel):
     name: str  # 奇人姓名（刻印）
     style: str  # 战斗风格（刻印）
     ability_count: int = 0  # 奇术数（保密，仅展示数量）
+    challenge_count: int = 0  # 被点将次数（浏览量，榜主只看得到聚合数）
     mine: bool = False  # 是否自己的榜单条目（他人条目可发起挑战）
     created_at: datetime
 

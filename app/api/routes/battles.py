@@ -5,12 +5,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.db.base import async_session_factory, get_db
 from app.models.battle import Battle, BattleGuess
+from app.models.board import BoardGuessProgress
 from app.models.loadout import Loadout
 from app.models.user import User
 from app.schemas.battle import BattleOut, BattleStartIn, GuessBlock, GuessIn
@@ -36,14 +37,18 @@ def _filter_story(
     revealed_b: bool,
     a_id: int,
     b_id: int,
+    unlock_all: bool = False,
 ) -> dict | None:
     """按查看者身份过滤：上帝视角恒不展示；叙述各看各的；奇术表/解读自己一侧可见、对家揭示后才可见。
 
+    点将局挑战者对该刻印全部看破（unlock_all）→ 保留完整三视角（上帝 + 双方叙述 + 双方奇术表）。
     传阅页 viewer_id 即传阅者一侧（share token 决定），天然只看到传阅者自己的视角。
     """
     if story is None:
         return None
     out = dict(story)
+    if unlock_all:
+        return out  # 已全部看破：挑战者解锁完整三视角，不再过滤
     out.pop("narration", None)  # 上帝视角（直述双方奇术与真相）：存储但不展示
     # 叙述各看各的：A 看 narration_a，B 看 narration_b，其余全隐藏（揭示也不交换视角）
     if viewer_id == a_id:
@@ -120,6 +125,14 @@ def _guess_block(row: BattleGuess | None) -> GuessBlock | None:
     )
 
 
+async def _board_unlocked(db: AsyncSession, battle: Battle, viewer_id: int | None) -> bool:
+    """点将局且查看者==挑战者：该挑战者对该刻印是否已全部看破（解锁完整三视角）。"""
+    if battle.board_entry_id is None or viewer_id != battle.user_a_id:
+        return False
+    progress = await db.get(BoardGuessProgress, (viewer_id, battle.board_entry_id))
+    return bool(progress and progress.flipped)
+
+
 async def _to_out(
     db: AsyncSession,
     battle: Battle,
@@ -128,6 +141,7 @@ async def _to_out(
     names: dict[int, str] | None = None,
     fighter_names: dict[int, str] | None = None,
     guesses: dict[int, list[BattleGuess]] | None = None,
+    entry_flipped: dict[int, bool] | None = None,
 ) -> BattleOut:
     # 后台猜词与读取可能交错：READ COMMITTED 每语句独立快照，battle 可能读到提交前、guess 读到提交后。
     # 先载 guess 行再刷新 battle，让 story/winner/revealed/guess_* 全部与最新猜词进度对齐，避免半提交态响应。
@@ -137,6 +151,11 @@ async def _to_out(
         rows = await _load_guess_rows(db, battle.id)
     if rows and guesses is None:
         await db.refresh(battle)
+    # 点将局挑战者全看破解锁：entry_flipped 由列表页预加载避免 N+1，单查时现算
+    if entry_flipped is not None:
+        unlocked = bool(battle.board_entry_id and entry_flipped.get(battle.board_entry_id))
+    else:
+        unlocked = await _board_unlocked(db, battle, viewer_id)
     names = names if names is not None else await _resolve_names(db, battle)
     if fighter_names is None:
         fighters = await _resolve_fighters(db, battle)
@@ -158,7 +177,13 @@ async def _to_out(
         winner_fighter = fighter_b
     story = json.loads(battle.story) if battle.story else None
     story = _filter_story(
-        story, viewer_id, battle.revealed_a, battle.revealed_b, battle.user_a_id, battle.user_b_id
+        story,
+        viewer_id,
+        battle.revealed_a,
+        battle.revealed_b,
+        battle.user_a_id,
+        battle.user_b_id,
+        unlock_all=unlocked,
     )
     # 平铺字段兼容：非和局单行（败方行）为主；和局以查看者自己的行为主（my_guess 兜底）
     if battle.guess_by is not None:
@@ -188,6 +213,8 @@ async def _to_out(
         share_token=battle.share_token,
         share_token_b=battle.share_token_b,
         created_at=battle.created_at,
+        board_entry_id=battle.board_entry_id,
+        unlocked=unlocked,
         can_guess=(
             is_guesser
             and battle.status == "done"
@@ -314,6 +341,8 @@ async def rematch(
     battle = await db.get(Battle, battle_id)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+    if battle.board_entry_id is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="点将局不可再战，进度自会跨场累积")
     if current.id not in (battle.user_a_id, battle.user_b_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
     if battle.status != "done":
@@ -328,12 +357,14 @@ async def get_battle(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BattleOut:
-    """查看行迹（仅参战双方可见）。"""
+    """查看行迹（仅参战双方可见；点将局榜主不可看单场）。"""
     battle = await db.get(Battle, battle_id)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
     if current.id not in (battle.user_a_id, battle.user_b_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权查看")
+    if battle.board_entry_id is not None and current.id == battle.user_b_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="榜主不查看点将单场")
     return await _to_out(db, battle, viewer_id=current.id)
 
 
@@ -365,6 +396,8 @@ async def battle_stream(
     async with async_session_factory() as db:
         battle = await db.get(Battle, battle_id)
         if battle is None or current.id not in (battle.user_a_id, battle.user_b_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+        if battle.board_entry_id is not None and current.id == battle.user_b_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
         a_id, b_id, status_ = battle.user_a_id, battle.user_b_id, battle.status
         guess_state_ = battle.guess_state
@@ -415,16 +448,34 @@ async def my_battles(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[BattleOut]:
-    """我的行迹（历次对决记录）。"""
+    """我的行迹（历次对决记录）。点将局不记榜主行迹：榜主只看得到榜单聚合的被挑战次数。"""
     result = await db.execute(
         select(Battle)
-        .where(or_(Battle.user_a_id == current.id, Battle.user_b_id == current.id))
+        .where(
+            or_(Battle.user_a_id == current.id, Battle.user_b_id == current.id),
+            ~and_(Battle.board_entry_id.isnot(None), Battle.user_b_id == current.id),
+        )
         .order_by(Battle.created_at.desc())
         .limit(50)
     )
     battles = result.scalars().all()
     if not battles:
         return []
+    # 预加载当前用户作为挑战者的点将局看破进度（entry_id → flipped），避免 _to_out N+1
+    entry_flipped: dict[int, bool] = {}
+    entry_ids = {
+        b.board_entry_id for b in battles if b.board_entry_id is not None and b.user_a_id == current.id
+    }
+    if entry_ids:
+        prog_rows = (
+            await db.execute(
+                select(BoardGuessProgress).where(
+                    BoardGuessProgress.challenger_id == current.id,
+                    BoardGuessProgress.board_entry_id.in_(entry_ids),
+                )
+            )
+        ).scalars().all()
+        entry_flipped = {p.board_entry_id: p.flipped for p in prog_rows}
     user_ids = {user_id for battle in battles for user_id in (battle.user_a_id, battle.user_b_id, battle.winner_id) if user_id}
     loadout_ids = {loadout_id for battle in battles for loadout_id in (battle.loadout_a_id, battle.loadout_b_id) if loadout_id}
     names = {
@@ -446,7 +497,15 @@ async def my_battles(
     for gs in guesses.values():
         gs.sort(key=lambda r: r.guesser_id)
     return [
-        await _to_out(db, battle, viewer_id=current.id, names=names, fighter_names=fighter_names, guesses=guesses)
+        await _to_out(
+            db,
+            battle,
+            viewer_id=current.id,
+            names=names,
+            fighter_names=fighter_names,
+            guesses=guesses,
+            entry_flipped=entry_flipped,
+        )
         for battle in battles
     ]
 
@@ -464,6 +523,8 @@ async def share_battle(token: str, db: Annotated[AsyncSession, Depends(get_db)])
     battle = result.scalar_one_or_none()
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="传阅不存在")
+    if battle.board_entry_id is not None and battle.share_token_b == token:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="传阅不存在")  # 榜主侧不开放传阅
     # viewer_id 取传阅者一侧，_filter_story 只留该侧视角叙述与（揭示前）该侧奇术
     viewer_id = battle.user_a_id if battle.share_token == token else battle.user_b_id
     return await _to_out(db, battle, viewer_id=viewer_id)

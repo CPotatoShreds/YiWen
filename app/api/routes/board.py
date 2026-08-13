@@ -7,11 +7,12 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.db.base import get_db
+from app.models.battle import Battle
 from app.models.board import BoardEntry
 from app.models.loadout import Loadout
 from app.models.user import User
@@ -22,13 +23,16 @@ from app.services.loadouts import loadout_abilities
 router = APIRouter(prefix="/board", tags=["board"])
 
 
-async def _to_out(db: AsyncSession, entry: BoardEntry, user_name: str, mine: bool) -> BoardEntryOut:
+async def _to_out(
+    db: AsyncSession, entry: BoardEntry, user_name: str, mine: bool, challenge_count: int = 0
+) -> BoardEntryOut:
     return BoardEntryOut(
         id=entry.id,
         user=user_name,
         name=entry.name,
         style=entry.style,
         ability_count=len(entry.abilities or []),
+        challenge_count=challenge_count,
         mine=mine,
         created_at=entry.created_at,
     )
@@ -39,15 +43,19 @@ async def list_board(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[BoardEntryOut]:
-    """奇人榜：按刻印时间倒序全量（奇术保密，仅展示数量）。"""
+    """奇人榜：按刻印时间倒序全量（奇术保密，仅展示数量；被点将次数一次 outerjoin 算好）。"""
     rows = await db.execute(
-        select(BoardEntry, User)
+        select(BoardEntry, User, func.count(Battle.id).label("challenge_count"))
         .join(User, User.id == BoardEntry.user_id)
+        .outerjoin(Battle, Battle.board_entry_id == BoardEntry.id)
+        .group_by(BoardEntry.id, User.id)
         .order_by(BoardEntry.created_at.desc())
     )
     out = []
-    for entry, user in rows.all():
-        out.append(await _to_out(db, entry, user.username, mine=(user.id == current.id)))
+    for entry, user, challenge_count in rows.all():
+        out.append(
+            await _to_out(db, entry, user.username, mine=(user.id == current.id), challenge_count=challenge_count)
+        )
     return out
 
 

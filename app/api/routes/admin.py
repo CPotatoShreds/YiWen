@@ -23,6 +23,7 @@ from app.core.security import get_current_admin, hash_password
 from app.db.base import get_db
 from app.models.ability import Ability
 from app.models.battle import Battle, BattleGuess
+from app.models.board import BoardGuessProgress
 from app.models.friendship import Friendship
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
@@ -328,6 +329,9 @@ async def admin_delete_user(
     await db.execute(
         delete(Friendship).where(or_(Friendship.user_id == user_id, Friendship.friend_id == user_id))
     )
+
+    # 4b. 其作为挑战者的点将看破进度（榜主侧进度随其榜单条目级联）
+    await db.execute(delete(BoardGuessProgress).where(BoardGuessProgress.challenger_id == user_id))
 
     # 5. 请求日志软引用置空（保留审计历史）
     await db.execute(update(RequestLog).where(RequestLog.user_id == user_id).values(user_id=None))

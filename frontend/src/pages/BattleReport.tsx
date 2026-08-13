@@ -434,7 +434,11 @@ export default function BattleReport() {
           variant="hero"
           footer={
             <span>
-              {b.friendly ? "切磋 · 不计名望" : `名望 ${b.user_a} ${fmt(b.rank_delta_a)} / ${b.user_b} ${fmt(b.rank_delta_b)}`}
+              {b.board_entry_id
+                ? "点将局 · 奇人榜刻印 · 不计名望"
+                : b.friendly
+                  ? "切磋 · 不计名望"
+                  : `名望 ${b.user_a} ${fmt(b.rank_delta_a)} / ${b.user_b} ${fmt(b.rank_delta_b)}`}
             </span>
           }
         />
@@ -494,6 +498,39 @@ export default function BattleReport() {
               {b.revealed ? " 双方奇术已尽数揭示。" : " 对家奇术仍未揭示。"}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* 点将局全部看破：完整三视角解锁（上帝 + 刻印视角；挑战者自己的叙述仍走下方主叙述） */}
+      {b.unlocked && (
+        <div className="rise rise-1" style={{ display: "grid", gap: 14 }}>
+          <div className="banner banner--hit">
+            <span className="banner__icon">
+              <EyeIcon size={20} />
+            </span>
+            <div>
+              <h3>已全部看破，无需猜词</h3>
+              <p>
+                你已识破「{b.fighter_b}」刻印的全部奇术。此后点将这位奇人，行迹将直接以完整三视角铺陈——含上帝视角与刻印视角。
+              </p>
+            </div>
+          </div>
+          {b.story.narration && (
+            <div className="panel narration">
+              <p className="muted" style={{ marginBottom: 8 }}>
+                <b>上帝视角（全局真相）：</b>
+              </p>
+              {b.story.narration}
+            </div>
+          )}
+          {b.story.narration_b && (
+            <div className="panel narration">
+              <p className="muted" style={{ marginBottom: 8 }}>
+                <b>{b.fighter_b} 视角（刻印眼中此行迹）：</b>
+              </p>
+              {b.story.narration_b}
+            </div>
+          )}
         </div>
       )}
 
@@ -595,12 +632,14 @@ export default function BattleReport() {
         </a>
       </p>
 
-      {/* 再战（复刻本场）/ 再来一场（随机新局）/ 返回 */}
+      {/* 再战（复刻本场）/ 再来一场（随机新局）/ 返回；点将局不可再战，进度自会跨场累积 */}
       <div className="actions rise rise-4">
-        <button className="btn btn-primary btn-lg" onClick={replay} disabled={rematchBusy}>
-          <RefreshIcon size={17} />
-          {rematchBusy ? "复刻中…" : "再战"}
-        </button>
+        {!b.board_entry_id && (
+          <button className="btn btn-primary btn-lg" onClick={replay} disabled={rematchBusy}>
+            <RefreshIcon size={17} />
+            {rematchBusy ? "复刻中…" : "再战"}
+          </button>
+        )}
         <button className="btn btn-ghost btn-lg" onClick={rematch} disabled={rematchBusy}>
           <SwordIcon size={17} />
           {rematchBusy ? "摇签中…" : "再来一场"}

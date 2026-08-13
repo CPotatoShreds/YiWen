@@ -48,7 +48,7 @@ from app.core.logger import get_logger
 from app.db.base import async_session_factory
 from app.models.ability import Ability
 from app.models.battle import Battle, BattleGuess
-from app.models.board import BoardEntry
+from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.loadout import Loadout
 from app.models.user import User
 from app.services import economy
@@ -566,7 +566,22 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
             # 猜词行：结算时预生成（非和局败方猜胜者；和局双方并行猜对方）。
             # 再战局已带入猜词行（existing_rows 非空）→ 不再重建，guess_by/guess_state 沿用带入值。
             existing_rows = await _guess_rows(db, battle.id)
-            if not existing_rows:
+            if not existing_rows and battle.board_entry_id is not None:
+                # 点将局：挑战者恒猜刻印侧（无论本场胜负），进度跨场累积；
+                # 已全部看破 → 不再启动猜词，刻印全揭示（完整三视角由序列化按进度解锁）。
+                progress = await _board_progress(db, user_a.id, battle.board_entry_id)
+                battle.guess_by = user_a.id
+                if progress.flipped:
+                    battle.guess_state = "none"
+                    battle.revealed_b = True
+                    battle.revealed = True
+                else:
+                    with suppress(Exception):  # 建猜词行失败只记日志，不打断 done 落定
+                        await _prepare_guess(
+                            db, battle, user_a.id, fighter_b, abilities_b, r.god, prefill=progress
+                        )
+                    battle.guess_state = _agg_guess_state(await _guess_rows(db, battle.id))
+            elif not existing_rows:
                 if r.winner_side == "A":
                     battle.guess_by = user_b.id
                     with suppress(Exception):  # 建猜词行失败只记日志，不打断 done 落定
@@ -596,8 +611,8 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
             battle.status = "done"
             await db.commit()
 
-            # 行迹落盘为 md 文档（看破前隐藏对家奇术）
-            _write_md(battle, user_a, user_b, json.loads(battle.story), revealed=False)
+            # 行迹落盘为 md 文档（看破前隐藏对家奇术；点将局已全看破则含刻印表）
+            _write_md(battle, user_a, user_b, json.loads(battle.story), revealed=battle.revealed)
             await stream.publish({"type": "done", "status": "done", "battle_id": battle_id})
         except Exception as e:  # noqa: BLE001 - 推演 LLM 重试耗尽/其他异常：中断并降级为解释文本
             logger.error("battle_failed id=%d err=%r", battle_id, e)
@@ -656,17 +671,18 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
     cracked = sum(1 for c in cards if c["cracked"])
     battle.guess_score = cracked / len(cards) if cards else 0.0
     if cracked == len(cards):
-        # 全破：本行结束。非和局立即逆转（回滚名望重算）；和局等双方都收手再结算
+        # 全破：本行结束。非和局立即逆转（回滚名望重算）；和局等双方都收手再结算；
+        # 点将局全破不翻转胜负（猜词是研究刻印，非反杀），guess_hit 保持 None。
         guess.flipped = True
         guess.done = True
         battle.guess_score = 1.0
-        if battle.guess_by is not None:
+        if battle.guess_by is not None and battle.board_entry_id is None:
             battle.guess_hit = True
             await _apply_flip(db, battle, guesser, story)
     elif guess.attempts_used >= guess.attempts_max:
         # 次数耗尽未全破：是否揭示由被猜方（当前胜者）的设置决定
         guess.done = True
-        if battle.guess_by is not None:
+        if battle.guess_by is not None and battle.board_entry_id is None:
             battle.guess_hit = False
     else:
         if battle.guess_by is not None:
@@ -674,7 +690,10 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
 
     rows = await _guess_rows(db, battle.id)
     battle.guess_state = _agg_guess_state(rows)
-    await _recalc_reveal(db, battle, rows)
+    if battle.board_entry_id is not None:
+        await _sync_board_progress(db, battle, guess)  # 点将局：回写跨场进度，揭示以进度全破为准
+    else:
+        await _recalc_reveal(db, battle, rows)
     if battle.guess_by is None and battle.guess_state == "done":
         await _settle_draw_outcome(db, battle, rows)
 
@@ -699,11 +718,14 @@ async def give_up_guess(db: AsyncSession, battle: Battle, guesser: User) -> None
     if guess.done or guess.flipped:
         raise ValueError("猜测已结束")
     guess.done = True
-    if battle.guess_by is not None:
+    if battle.guess_by is not None and battle.board_entry_id is None:
         battle.guess_hit = False
     rows = await _guess_rows(db, battle.id)
     battle.guess_state = _agg_guess_state(rows)
-    await _recalc_reveal(db, battle, rows)
+    if battle.board_entry_id is not None:
+        await _sync_board_progress(db, battle, guess)  # 点将局：收手回写进度但不动揭示、不置 done
+    else:
+        await _recalc_reveal(db, battle, rows)
     if battle.guess_by is None and battle.guess_state == "done":
         await _settle_draw_outcome(db, battle, rows)
     story = json.loads(battle.story) if battle.story else {}
@@ -767,12 +789,14 @@ async def _prepare_guess(
     target_name: str,
     target_abilities: list[Ability],
     god_narration: str,
+    prefill: BoardGuessProgress | None = None,
 ) -> None:
     """结算时预生成一行猜词：判定被猜侧实际使用的奇术子集（装配的子集），建 BattleGuess 行。
 
-    非和局：败方猜胜者；和局：A 行猜 B、B 行猜 A。节点失败/编号非法/空结果 → 降级为全部装配
-    （可猜性不归零）。不单独 commit：与 battle.status="done" 同事务落库，避免「done 已可见但
-    猜词行未建」的竞态。
+    非和局：败方猜胜者；和局：A 行猜 B、B 行猜 A；点将局：挑战者恒猜刻印侧，prefill 传入
+    跨场进度（cards 按快照下标预填、history/attempts 带入；本场用术子集全部已认识 → 行即结束）。
+    节点失败/编号非法/空结果 → 降级为全部装配（可猜性不归零）。不单独 commit：与
+    battle.status="done" 同事务落库，避免「done 已可见但猜词行未建」的竞态。
     """
     abilities_txt = "\n".join(f"{i + 1}. {a.name}：{a.effect}" for i, a in enumerate(target_abilities))
     try:
@@ -793,15 +817,83 @@ async def _prepare_guess(
     if not indices:  # 空结果同样按全部装配处理
         indices = list(range(1, len(target_abilities) + 1))
     used = [{"name": target_abilities[i - 1].name, "effect": target_abilities[i - 1].effect} for i in indices]
+    if prefill is not None:
+        # 点将局：usage 下标即刻印快照下标，跨场进度按位预填；子集全已认识 → 行即结束（不翻转）
+        cards = [dict(prefill.cards[i - 1]) for i in indices]
+        history = list(prefill.guess_history or [])
+        attempts = prefill.attempts_used
+        done = bool(cards) and all(c["cracked"] for c in cards)
+    else:
+        cards = [{"matched": [], "cracked": False} for _ in used]
+        history = []
+        attempts = 0
+        done = False
     db.add(
         BattleGuess(
             battle_id=battle.id,
             guesser_id=guesser_id,
             used_abilities=used,
-            cards=[{"matched": [], "cracked": False} for _ in used],
+            cards=cards,
+            guess_history=history,
+            attempts_used=attempts,
             attempts_max=GUESS_ATTEMPTS_MAX,
+            flipped=done,  # 点将局 flipped 仅表示「本场用术子集已全认识」（不驱动翻转/揭示）
+            done=done,
         )
     )
+
+
+async def _board_progress(db: AsyncSession, challenger_id: int, entry_id: int) -> BoardGuessProgress:
+    """加载（不存在则建）挑战者 × 刻印 的跨场看破进度行。cards 初始按刻印全量奇术对齐。"""
+    row = await db.get(BoardGuessProgress, (challenger_id, entry_id))
+    if row is None:
+        entry = await db.get(BoardEntry, entry_id)
+        row = BoardGuessProgress(
+            challenger_id=challenger_id,
+            board_entry_id=entry_id,
+            cards=[{"matched": [], "cracked": False} for _ in (entry.abilities if entry else [])],
+        )
+        db.add(row)
+        await db.flush()
+    return row
+
+
+def _progress_index(abilities: list[dict], used: dict) -> int | None:
+    """把猜词行 used（{name, effect}）映射回刻印快照下标（同刻印内 name+effect 唯一）。"""
+    for i, a in enumerate(abilities):
+        if a.get("name") == used.get("name") and a.get("effect") == used.get("effect"):
+            return i
+    return None
+
+
+async def _sync_board_progress(
+    db: AsyncSession, battle: Battle, guess: BattleGuess
+) -> None:
+    """点将局：把本场猜词行状态合并回跨场进度（并集语义：已看破的卡不回退）。
+
+    跨场进度与本场猜词行可能基于不同快照预填（新场结算读到的进度可能先于上一场猜词
+    提交），故只上卷不回卷。揭示以「刻印全量奇术全破」为准（不翻转胜负）；收手未全破
+    只回写进度、不置 done：下一场仍可猜。重建 JSON 对象触发变更检测。
+    """
+    entry = await db.get(BoardEntry, battle.board_entry_id)
+    if entry is None:
+        return
+    abilities = entry.abilities or []
+    progress = await _board_progress(db, battle.user_a_id, battle.board_entry_id)
+    new_cards = [dict(p) for p in progress.cards]  # 重建触发 JSON 变更检测
+    for used, card in zip(guess.used_abilities, guess.cards):
+        idx = _progress_index(abilities, used)
+        if idx is None or idx >= len(new_cards) or not card["cracked"]:
+            continue
+        new_cards[idx] = dict(card)
+    progress.cards = new_cards
+    progress.guess_history = list(guess.guess_history or [])
+    progress.attempts_used = max(progress.attempts_used or 0, guess.attempts_used or 0)
+    if new_cards and all(c["cracked"] for c in new_cards):
+        progress.flipped = True
+        progress.done = True
+        battle.revealed_b = True
+        battle.revealed = True
 
 
 async def _settle_draw_outcome(
