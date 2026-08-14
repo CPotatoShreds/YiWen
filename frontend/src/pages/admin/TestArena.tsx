@@ -373,6 +373,30 @@ export default function TestArena() {
     [testLoadouts]
   );
 
+  // 推演是后台任务：modal 打开且 pending 时轮询详情，落成后自动展示叙述并同步列表
+  const selectedId = selected?.id;
+  const selectedStatus = selected?.status;
+  useEffect(() => {
+    if (selectedStatus !== "pending" || selectedId == null) return;
+    let alive = true;
+    const timer = setInterval(async () => {
+      try {
+        const r = await api<TestBattle>(`/admin/test/battles/${selectedId}`);
+        if (!alive) return;
+        setSelected(r);
+        if (r.status !== "pending") {
+          setBattles((prev) => prev.map((b) => (b.id === r.id ? r : b)));
+        }
+      } catch {
+        // 单次轮询失败静默，下轮重试
+      }
+    }, 2000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [selectedId, selectedStatus]);
+
   const asFighter = (id: number | null) => {
     if (id == null) return null;
     return { test_loadout_id: id };

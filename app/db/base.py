@@ -12,11 +12,18 @@ from app.core.config import settings
 if settings.DATABASE_URL.startswith("sqlite"):
     _engine_kwargs: dict = {"connect_args": {"timeout": 30}}
 elif settings.DATABASE_URL.startswith("postgresql"):
-    # asyncpg 连接绑定创建它的事件循环；测试用 TestClient 每用一次就关一个 loop，
-    # 池化连接会变成孤儿（Event loop is closed / _proactor is None）。用 NullPool：
-    # 每个会话新建连接，彻底规避跨 loop 复用。PG 建连 ~ms 级，对低流量对战应用开销可忽略
-    # （与 migrations/env.py 的 NullPool 一致）。
-    _engine_kwargs = {"poolclass": NullPool}
+    # 连接池：asyncpg 连接绑定创建它的事件循环，单 worker 单 loop 下池化安全，能复用连接、
+    # 免去每请求一次建连握手（建连 ~26ms 含协议处理，是接口吞吐的瓶颈，见 conftest 注释）。
+    # 测试环境（pytest + TestClient）每个测试函数独立事件循环，池化连接会孤儿化
+    # （Event loop is closed），由 conftest 设 DB_POOL_ENABLED=false 回退每会话新建连接。
+    if settings.DB_POOL_ENABLED:
+        _engine_kwargs = {
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_pre_ping": True,
+        }
+    else:
+        _engine_kwargs = {"poolclass": NullPool}
 else:
     _engine_kwargs = {}
 

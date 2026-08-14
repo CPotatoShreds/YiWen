@@ -20,6 +20,12 @@ class Settings(BaseSettings):
 
     # 数据库（默认本地 Docker PostgreSQL，见 docker-compose.yml；测试用独立临时库）
     DATABASE_URL: str = "postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight"
+    # 连接池：生产默认开启（asyncpg 连接绑定事件循环，单 worker 单 loop 下池化安全）。
+    # 测试用 TestClient 每个测试函数独立事件循环，池化连接会孤儿化，conftest 设 false 回退
+    # 每会话新建连接（NullPool）。
+    DB_POOL_ENABLED: bool = True
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 60  # 池满后可临时超出到 pool_size + max_overflow（受 PG max_connections 约束）
 
     # 安全 / JWT
     SECRET_KEY: str = "dev-secret-change-me"

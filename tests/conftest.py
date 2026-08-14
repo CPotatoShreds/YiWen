@@ -12,6 +12,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 # 每个 pytest 会话重建一次，避免共享开发库数据互相污染。必须在导入 app
 # （app.db.base 建全局 engine）之前设置环境变量。
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight_test"
+# 测试禁用连接池：TestClient 每个测试函数独立事件循环，池化连接会孤儿化（Event loop is closed）。
+# 回退每会话新建连接（NullPool），生产默认开启池不受影响。
+os.environ["DB_POOL_ENABLED"] = "false"
 
 # LLM 方案密钥：测试进程内生成一组全新密钥，避免写 data/ 目录或用真实部署密钥。
 # profile_crypto 惰性读 env 并缓存于进程 _state，故同样须在导入 app 之前设置。
