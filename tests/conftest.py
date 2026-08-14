@@ -4,11 +4,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 # 测试库隔离：使用独立 PG 测试库（同一 postgres 实例上的 ynfight_test）。
 # 每个 pytest 会话重建一次，避免共享开发库数据互相污染。必须在导入 app
 # （app.db.base 建全局 engine）之前设置环境变量。
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight_test"
+
+# LLM 方案密钥：测试进程内生成一组全新密钥，避免写 data/ 目录或用真实部署密钥。
+# profile_crypto 惰性读 env 并缓存于进程 _state，故同样须在导入 app 之前设置。
+_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+os.environ["LLM_PROFILE_PRIVATE_KEY"] = _private.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+).decode()
+os.environ["LLM_PROFILE_STORAGE_KEY"] = Fernet.generate_key().decode()
 
 # 重建测试库（DROP + CREATE）：psycopg 直连维护库，autocommit 下执行 DDL。
 try:

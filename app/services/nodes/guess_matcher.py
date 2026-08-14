@@ -143,11 +143,11 @@ class Verification(BaseModel):
     reason: str = Field(description="简短判定理由")
 
 
-def build_guess_pair_llm() -> Runnable:
+def build_guess_pair_llm(llm_config: dict | None = None) -> Runnable:
     """配对 LLM：结构化输出 PairMatch。"""
-    return build_chat_model(thinking=False).with_structured_output(PairMatch, method="function_calling")
+    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(PairMatch, method="function_calling")
 
 
-def build_guess_verify_llm() -> Runnable:
+def build_guess_verify_llm(llm_config: dict | None = None) -> Runnable:
     """检定 LLM：结构化输出 Verification。"""
-    return build_chat_model(thinking=False).with_structured_output(Verification, method="function_calling")
+    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(Verification, method="function_calling")

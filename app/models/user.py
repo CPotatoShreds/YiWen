@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func, text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -29,6 +29,10 @@ class User(Base):
     last_login_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD 开张日
     last_battle_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # 当日首次启程
     reveal_on_miss: Mapped[bool] = mapped_column(Boolean, default=False)  # 对家猜奇术未中时是否看破我的奇术
+    active_profile_id: Mapped[int | None] = mapped_column(  # 当前激活的自配 LLM 方案（未配则 None，用服务器默认）
+        ForeignKey("llm_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    active_profile: Mapped["LlmProfile | None"] = relationship(foreign_keys=[active_profile_id])
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))  # 管理员：可登录后台
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

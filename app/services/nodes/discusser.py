@@ -57,7 +57,7 @@ DISCUSS_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_discuss_llm() -> Runnable:
+def build_discuss_llm(llm_config: dict | None = None) -> Runnable:
     """讨论节点链：DISCUSS_TEMPLATE 格式化双方信息 → 低温 LLM → 纯文本报告。
 
     与 deducer 同一约定（模板 | 模型 | 解析器）：调用方直接传 {"info": ...} 给 chain.ainvoke。
@@ -65,6 +65,6 @@ def build_discuss_llm() -> Runnable:
     """
     return (
         DISCUSS_TEMPLATE
-        | build_chat_model(thinking=False, max_tokens=8192, temperature=0.2)
+        | build_chat_model(thinking=False, max_tokens=8192, temperature=0.2, llm_config=llm_config)
         | StrOutputParser()
     )

@@ -13,7 +13,7 @@ from app.services.reliability import ChainFailure, ainvoke_with_reliability
 def _pass_validate_builder():
     """转写校验打桩：恒返回合格判定（原样保留叙述）。每次调用返回全新 chain，无共享状态。"""
 
-    def build():
+    def build(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=TranscribeVerdict(passes=True))
         return chain
@@ -24,7 +24,7 @@ def _pass_validate_builder():
 def _repair_builder(text: str):
     """转写修复打桩：返回固定重写文本。"""
 
-    def build():
+    def build(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=text)
         return chain
@@ -35,7 +35,7 @@ def _repair_builder(text: str):
 def _discuss_builder(report: str):
     """讨论节点打桩：返回固定讨论报告文本。"""
 
-    def build():
+    def build(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=report)
         return chain
@@ -46,7 +46,7 @@ def _discuss_builder(report: str):
 def _empty_transcribe_builder():
     """转写打桩：返回空 dict → 两侧回退上帝正文（校验短路原样保留），只测推演链路。"""
 
-    def build():
+    def build(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value={})
         return chain
@@ -96,7 +96,7 @@ def test_run_deduction_one_shot():
 
     captured = {}
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
 
         async def _ainvoke(kwargs):
@@ -107,7 +107,7 @@ def test_run_deduction_one_shot():
         llm.ainvoke = AsyncMock(side_effect=_ainvoke)
         return llm
 
-    def _transcribe_chain():
+    def _transcribe_chain(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
@@ -185,12 +185,12 @@ def test_run_deduction_transcribe_failure_degrades():
         async def publish(self, ev):
             self.events.append(ev)
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")
         return llm
 
-    def _transcribe_chain():
+    def _transcribe_chain(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(side_effect=TimeoutError("转写僵死"))
         return chain
@@ -237,12 +237,12 @@ def test_run_deduction_repairs_leaked_ability():
         async def publish(self, ev):
             pass
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")  # 上帝视角：无影刃表现
         return llm
 
-    def _transcribe_chain():
+    def _transcribe_chain(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
@@ -257,7 +257,7 @@ def test_run_deduction_repairs_leaked_ability():
     repair_calls = []
 
     def _content_validate_builder():
-        def build():
+        def build(llm_config=None):
             chain = MagicMock()
 
             async def _ainvoke(kwargs):
@@ -274,7 +274,7 @@ def test_run_deduction_repairs_leaked_ability():
         return build
 
     def _repair_builder():
-        def build():
+        def build(llm_config=None):
             chain = MagicMock()
 
             async def _ainvoke(kwargs):
@@ -325,18 +325,18 @@ def test_run_deduction_validation_fail_keeps_original():
         async def publish(self, ev):
             pass
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")
         return llm
 
-    def _transcribe_chain():
+    def _transcribe_chain(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value={"narration_a": "A叙述", "narration_b": "B叙述"})
         return chain
 
     def _always_fail_builder():
-        def build():
+        def build(llm_config=None):
             chain = MagicMock()
             chain.ainvoke = AsyncMock(return_value=TranscribeVerdict(passes=False, violations=["叙述不合规"]))
             return chain
@@ -344,7 +344,7 @@ def test_run_deduction_validation_fail_keeps_original():
         return build
 
     def _repair_builder():
-        def build():
+        def build(llm_config=None):
             chain = MagicMock()
             chain.ainvoke = AsyncMock(return_value="重写后的叙述仍不含规")
             return chain
@@ -390,7 +390,7 @@ def test_run_discussion_node_before_deduce():
 
     discuss_inputs = []
 
-    def _discuss_llm():
+    def _discuss_llm(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
@@ -402,7 +402,7 @@ def test_run_discussion_node_before_deduce():
 
     captured = {}
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
 
         async def _ainvoke(kwargs):
@@ -456,14 +456,14 @@ def test_discuss_failure_degrades_to_direct_deduce():
         async def publish(self, ev):
             pass
 
-    def _discuss_llm():
+    def _discuss_llm(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(side_effect=TimeoutError("讨论僵死"))
         return chain
 
     captured = {}
 
-    def _deduce_llm():
+    def _deduce_llm(llm_config=None):
         llm = MagicMock()
 
         async def _ainvoke(kwargs):

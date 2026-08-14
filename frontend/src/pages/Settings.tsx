@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { GearIcon } from "../components/icons";
+import ModelProfiles from "../components/ModelProfiles";
 
 export default function Settings() {
   const { user, refresh } = useAuth();
@@ -34,7 +35,7 @@ export default function Settings() {
     <>
       <div className="section-head">
         <h1 className="section-title">设置</h1>
-        <p className="muted">你的奇术隐私偏好</p>
+        <p className="muted">你的偏好与模型配置</p>
       </div>
       <div className="panel rise">
         <div className="panel__head">
@@ -55,6 +56,7 @@ export default function Settings() {
         </button>
         {msg && <p className="summary">{msg}</p>}
       </div>
+      <ModelProfiles />
     </>
   );
 }

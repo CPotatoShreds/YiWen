@@ -134,17 +134,18 @@ def _parse_winner(out: str, endings: dict[str, str], name_a: str, name_b: str) -
 
 
 async def _safe_validate(
-    build_validate: Callable[[], Runnable],
+    build_validate: Callable[..., Runnable],
     info: str,
     god: str,
     viewer_name: str,
     narration: str,
+    llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> object | None:
     """调用单侧校验链；可靠性层重试耗尽（或结构化输出失败）→ None，视为"无法判定"。"""
     try:
         return await ainvoke_with_reliability(
-            build_validate(),
+            build_validate(llm_config=llm_config),
             {"info": info, "god": god, "viewer_name": viewer_name, "narration": narration},
             operation="validate",
             trace_context=trace_context,
@@ -155,18 +156,19 @@ async def _safe_validate(
 
 
 async def _safe_repair(
-    build_repair: Callable[[], Runnable],
+    build_repair: Callable[..., Runnable],
     info: str,
     god: str,
     viewer_name: str,
     narration: str,
     violations: list[str],
+    llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> str | None:
     """调用单侧修复链按质检违规点重写；失败 → None（调用方兜底上帝正文）。"""
     try:
         return await ainvoke_with_reliability(
-            build_repair(),
+            build_repair(llm_config=llm_config),
             {
                 "info": info,
                 "god": god,
@@ -184,12 +186,13 @@ async def _safe_repair(
 
 async def _settle_side(
     *,
-    build_validate: Callable[[], Runnable],
-    build_repair: Callable[[], Runnable],
+    build_validate: Callable[..., Runnable],
+    build_repair: Callable[..., Runnable],
     info: str,
     god: str,
     viewer_name: str,
     narration: str,
+    llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> str:
     """单侧视角定稿：校验 → 合格直接用；不合格 → 修复一次再校验；仍不合格/修复失败 → 原文稿件兜底。
@@ -200,18 +203,23 @@ async def _settle_side(
     """
     if narration == god:
         return narration  # 转写失败已降级为上帝正文，无可修的原文稿件，原样返回
-    verdict = await _safe_validate(build_validate, info, god, viewer_name, narration, trace_context=trace_context)
+    verdict = await _safe_validate(
+        build_validate, info, god, viewer_name, narration, llm_config=llm_config, trace_context=trace_context
+    )
     if verdict is None:
         return narration  # 无法判定：保留原文
     if verdict.passes:
         return narration
     repaired = await _safe_repair(
-        build_repair, info, god, viewer_name, narration, list(verdict.violations), trace_context=trace_context
+        build_repair, info, god, viewer_name, narration, list(verdict.violations),
+        llm_config=llm_config, trace_context=trace_context,
     )
     if repaired is None or not repaired.strip():
         logger.warning("repair_unavailable viewer=%s -> keep original", viewer_name)
         return narration
-    re_verdict = await _safe_validate(build_validate, info, god, viewer_name, repaired, trace_context=trace_context)
+    re_verdict = await _safe_validate(
+        build_validate, info, god, viewer_name, repaired, llm_config=llm_config, trace_context=trace_context
+    )
     if re_verdict is not None and re_verdict.passes:
         return repaired
     logger.warning("narration_failed_validation viewer=%s -> keep original", viewer_name)
@@ -231,13 +239,14 @@ async def run_deduction(
     tactic_b: str,
     style_a: str = "",
     style_b: str = "",
-    build_discuss: Callable[[], Runnable] = build_discuss_llm,
-    build_deduce: Callable[[], Runnable] = build_deduce_chain,
-    build_transcribe: Callable[[], Runnable] = build_transcribe_chain,
-    build_validate: Callable[[], Runnable] = build_validate_chain,
-    build_repair: Callable[[], Runnable] = build_repair_chain,
+    build_discuss: Callable[..., Runnable] = build_discuss_llm,
+    build_deduce: Callable[..., Runnable] = build_deduce_chain,
+    build_transcribe: Callable[..., Runnable] = build_transcribe_chain,
+    build_validate: Callable[..., Runnable] = build_validate_chain,
+    build_repair: Callable[..., Runnable] = build_repair_chain,
     opening: str | None = None,
     discuss_report: str = "",
+    llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> DeductionResult:
     """一次性推演一场对战并转写双视角，转写经校验节点定稿。
@@ -260,8 +269,8 @@ async def run_deduction(
     )
     endings = build_endings(map_name, fighter_a, fighter_b)
 
-    deduce_llm = build_deduce()
-    transcribe_chain = build_transcribe()
+    deduce_llm = build_deduce(llm_config=llm_config)
+    transcribe_chain = build_transcribe(llm_config=llm_config)
 
     # 讨论节点：推演前先产出双方异能/战术分析报告（能力理论模拟 + 实战拉片），作为推演输入。
     # 报告由外部传入（discuss_report）时直接复用；否则调讨论 LLM 生成。失败降级为仅用 info
@@ -270,7 +279,7 @@ async def run_deduction(
         try:
             discuss_report = str(
                 await ainvoke_with_reliability(
-                    build_discuss(),
+                    build_discuss(llm_config=llm_config),
                     {"info": info},
                     operation="discuss",
                     trace_context=trace_context,
@@ -345,6 +354,7 @@ async def run_deduction(
             god=god,
             viewer_name=fighter_a,
             narration=raw_a,
+            llm_config=llm_config,
             trace_context=trace_context,
         ),
         _settle_side(
@@ -354,6 +364,7 @@ async def run_deduction(
             god=god,
             viewer_name=fighter_b,
             narration=raw_b,
+            llm_config=llm_config,
             trace_context=trace_context,
         ),
     )

@@ -50,6 +50,7 @@ from app.models.ability import Ability
 from app.models.battle import Battle, BattleGuess
 from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.loadout import Loadout
+from app.models.llm_profile import LlmProfile
 from app.models.user import User
 from app.services import economy
 from app.services.battle_stream import _get_stream
@@ -59,6 +60,7 @@ from app.services.guess import (  # noqa: F401 - re-export FAIL_GUESS_TEXT：bat
     GUESS_ATTEMPTS_MAX,
     run_guess_round,
 )
+from app.services.llm import profile_to_llm_config
 from app.services.loadout_interpretation import ensure_loadout_interpretation
 from app.services.loadouts import (
     abilities_from_snapshot,
@@ -527,6 +529,10 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
                 return
             abilities_a, abilities_b, fighter_a, fighter_b, tactic_a, tactic_b, style_a, style_b = inputs
 
+            # 推演 LLM 配置：发起方（user_a）的激活方案，未配回退服务器默认
+            profile = await db.get(LlmProfile, user_a.active_profile_id) if user_a.active_profile_id else None
+            llm_config = profile_to_llm_config(profile)
+
             # 推演链路模块：随机场景 + 信息组装 + 一次性推演 + 并发转写，产出全文与胜负
             r = await run_deduction(
                 stream=stream,
@@ -545,6 +551,7 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
                 build_transcribe=_build_transcribe_chain,
                 build_validate=_build_validate_chain,
                 build_repair=_build_repair_chain,
+                llm_config=llm_config,
                 trace_context={"kind": "battle", "trace_id": str(battle_id)},
             )
 
@@ -579,24 +586,25 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
                 else:
                     with suppress(Exception):  # 建猜词行失败只记日志，不打断 done 落定
                         await _prepare_guess(
-                            db, battle, user_a.id, fighter_b, abilities_b, r.god, prefill=progress
+                            db, battle, user_a.id, fighter_b, abilities_b, r.god,
+                            llm_config=llm_config, prefill=progress,
                         )
                     battle.guess_state = _agg_guess_state(await _guess_rows(db, battle.id))
             elif not existing_rows:
                 if r.winner_side == "A":
                     battle.guess_by = user_b.id
                     with suppress(Exception):  # 建猜词行失败只记日志，不打断 done 落定
-                        await _prepare_guess(db, battle, user_b.id, fighter_a, abilities_a, r.god)
+                        await _prepare_guess(db, battle, user_b.id, fighter_a, abilities_a, r.god, llm_config=llm_config)
                 elif r.winner_side == "B":
                     battle.guess_by = user_a.id
                     with suppress(Exception):
-                        await _prepare_guess(db, battle, user_a.id, fighter_b, abilities_b, r.god)
+                        await _prepare_guess(db, battle, user_a.id, fighter_b, abilities_b, r.god, llm_config=llm_config)
                 else:
                     battle.guess_by = None  # 和局：双方皆可猜，各自一行
                     with suppress(Exception):
-                        await _prepare_guess(db, battle, user_a.id, fighter_b, abilities_b, r.god)
+                        await _prepare_guess(db, battle, user_a.id, fighter_b, abilities_b, r.god, llm_config=llm_config)
                     with suppress(Exception):
-                        await _prepare_guess(db, battle, user_b.id, fighter_a, abilities_a, r.god)
+                        await _prepare_guess(db, battle, user_b.id, fighter_a, abilities_a, r.god, llm_config=llm_config)
                 battle.guess_state = _agg_guess_state(await _guess_rows(db, battle.id))
 
             # 经济结算：双方 +5 见闻；当日首次对决额外 +5 见闻
@@ -675,6 +683,8 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
     pre_state = [
         {"matched": list(c.get("matched", [])), "cracked": bool(c.get("cracked", False))} for c in pre_cards
     ]
+    profile = await db.get(LlmProfile, guesser.active_profile_id) if guesser.active_profile_id else None
+    llm_config = profile_to_llm_config(profile)
     cards = await run_guess_round(
         text=text,
         abilities=abilities,
@@ -683,6 +693,7 @@ async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: st
         trace_context=guess_trace,
         build_pair=_build_pair_llm,
         build_verify=_build_verify_llm,
+        llm_config=llm_config,
     )
     guess.cards = [{"matched": c["matched"], "cracked": c["cracked"]} for c in cards]
     guess.attempts_used += 1
@@ -835,6 +846,7 @@ async def _prepare_guess(
     target_abilities: list[Ability],
     god_narration: str,
     prefill: BoardGuessProgress | None = None,
+    llm_config: dict | None = None,
 ) -> None:
     """结算时预生成一行猜词：判定被猜侧实际使用的奇术子集（装配的子集），建 BattleGuess 行。
 
@@ -846,7 +858,7 @@ async def _prepare_guess(
     abilities_txt = "\n".join(f"{i + 1}. {a.name}：{a.effect}" for i, a in enumerate(target_abilities))
     try:
         out = await ainvoke_with_reliability(
-            _build_usage_llm(),
+            _build_usage_llm(llm_config=llm_config),
             USAGE_TEMPLATE.format_messages(
                 winner_name=target_name,
                 abilities=abilities_txt,

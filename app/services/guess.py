@@ -40,8 +40,9 @@ async def run_guess_round(
     cards: list[dict],
     round_no: int,
     trace_context: dict | None = None,
-    build_pair: Callable[[], Runnable] = build_guess_pair_llm,
-    build_verify: Callable[[], Runnable] = build_guess_verify_llm,
+    build_pair: Callable[..., Runnable] = build_guess_pair_llm,
+    build_verify: Callable[..., Runnable] = build_guess_verify_llm,
+    llm_config: dict | None = None,
 ) -> list[dict]:
     """对一次猜测跑「拆分→配对→检定」三环节，就地更新传入的 cards 并返回同一列表。
 
@@ -66,7 +67,7 @@ async def run_guess_round(
     async def _match_pair(ai: int, ci: int) -> tuple[int, int, PairMatch | None]:
         try:
             m = await ainvoke_with_reliability(
-                build_pair(),
+                build_pair(llm_config=llm_config),
                 GUESS_PAIR_TEMPLATE.format_messages(
                     item_text=items[ai],
                     ability=f"{abilities[ci]['name']}：{abilities[ci]['effect']}",
@@ -100,7 +101,7 @@ async def run_guess_round(
     async def _verify_card(ci: int) -> tuple[int, dict]:
         try:
             v = await ainvoke_with_reliability(
-                build_verify(),
+                build_verify(llm_config=llm_config),
                 GUESS_VERIFY_TEMPLATE.format_messages(
                     matched="\n".join(f"- {s}" for s in cards[ci]["matched"]),
                     ability=f"{abilities[ci]['name']}：{abilities[ci]['effect']}",

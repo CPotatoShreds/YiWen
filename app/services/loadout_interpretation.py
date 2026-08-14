@@ -18,8 +18,10 @@ from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 from app.db.base import async_session_factory
+from app.models.llm_profile import LlmProfile
 from app.models.loadout import Loadout
-from app.services.llm import build_chat_model
+from app.models.user import User
+from app.services.llm import build_chat_model, profile_to_llm_config
 from app.services.loadouts import loadout_abilities
 from app.services.reliability import ainvoke_with_reliability
 
@@ -53,13 +55,15 @@ INTERPRETATION_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_interpretation_chain() -> Runnable:
+def build_interpretation_chain(llm_config: dict | None = None) -> Runnable:
     """奇人风格/战术解读链：结构化输出 LoadoutInterpretation（method="function_calling"——DeepSeek 唯一可用方式）。
 
     不把 INTERPRETATION_TEMPLATE 用 `|` 拼进链：调用方用 INTERPRETATION_TEMPLATE.format_messages(...) 生成消息后
     ainvoke，保留对 build_chat_model 的桩兼容（`|` 组合会把 mock runnable 包成 RunnableLambda，破坏测试桩）。
     """
-    return build_chat_model(thinking=False).with_structured_output(LoadoutInterpretation, method="function_calling")
+    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
+        LoadoutInterpretation, method="function_calling"
+    )
 
 
 async def ensure_loadout_interpretation(loadout_id: int) -> None:
@@ -73,11 +77,14 @@ async def ensure_loadout_interpretation(loadout_id: int) -> None:
             loadout.tactic_interpretation = ""
             await db.commit()
             return
+        owner = await db.get(User, loadout.user_id)
+        profile = await db.get(LlmProfile, owner.active_profile_id) if owner and owner.active_profile_id else None
+        llm_config = profile_to_llm_config(profile)
         abilities = await loadout_abilities(db, loadout_id)
         abilities_txt = "\n".join(f"{i + 1}. {a.name}：{a.effect}" for i, a in enumerate(abilities))
         with suppress(Exception):  # 解读失败静默（可靠性层已记日志），推演时回退原文
             out = await ainvoke_with_reliability(
-                build_interpretation_chain(),
+                build_interpretation_chain(llm_config=llm_config),
                 INTERPRETATION_TEMPLATE.format_messages(
                     style=loadout.style,
                     tactic=loadout.tactic,

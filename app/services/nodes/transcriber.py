@@ -43,9 +43,9 @@ TRANSCRIBE_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_transcribe_chain() -> Runnable:
+def build_transcribe_chain(llm_config: dict | None = None) -> Runnable:
     """双视角转写链：对完整上帝叙述做一次性转写，A/B 各一个视角分支并发。"""
-    llm = build_chat_model(thinking=False)
+    llm = build_chat_model(thinking=False, llm_config=llm_config)
 
     def _branch(name_key: str) -> Runnable:
         return (

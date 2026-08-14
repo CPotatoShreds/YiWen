@@ -107,9 +107,9 @@ DEDUCE_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_deduce_chain() -> Runnable:
+def build_deduce_chain(llm_config: dict | None = None) -> Runnable:
     """上帝视角推演链：一次性输出完整对战（纯文本，无结构化），以结尾句声明胜负/平局。
 
     max_tokens 调大：一次性长文，输出被截断会导致结尾句缺失、胜负无法解析。
     """
-    return DEDUCE_TEMPLATE | build_chat_model(thinking=False, max_tokens=8192) | StrOutputParser()
+    return DEDUCE_TEMPLATE | build_chat_model(thinking=False, max_tokens=8192, llm_config=llm_config) | StrOutputParser()

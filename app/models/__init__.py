@@ -4,6 +4,7 @@ from app.models.ability import Ability
 from app.models.battle import Battle
 from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.friendship import Friendship
+from app.models.llm_profile import LlmProfile
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
 from app.models.notification import Notification
@@ -24,6 +25,7 @@ __all__ = [
     "BoardEntry",
     "BoardGuessProgress",
     "Friendship",
+    "LlmProfile",
     "LlmTrace",
     "Loadout",
     "LoadoutAbility",

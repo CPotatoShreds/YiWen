@@ -127,3 +127,15 @@ export interface NotificationList {
   items: NotificationItem[];
   unread: number;
 }
+
+// 自配 LLM 方案：api_key 明文永不回传，只给 has_api_key
+export interface LlmProfile {
+  id: number;
+  label: string;
+  provider: string;
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+  is_active: boolean;
+  created_at: string;
+}

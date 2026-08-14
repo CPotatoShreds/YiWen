@@ -45,9 +45,9 @@ class TranscribeVerdict(BaseModel):
     )
 
 
-def build_validate_chain() -> Runnable:
+def build_validate_chain(llm_config: dict | None = None) -> Runnable:
     """单侧转写校验链：结构化输出 TranscribeVerdict（method="function_calling"——DeepSeek 唯一可用方式）。"""
-    return VALIDATE_TEMPLATE | build_chat_model(thinking=False).with_structured_output(
+    return VALIDATE_TEMPLATE | build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
         TranscribeVerdict, method="function_calling"
     )
 
@@ -79,6 +79,6 @@ REPAIR_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_repair_chain() -> Runnable:
+def build_repair_chain(llm_config: dict | None = None) -> Runnable:
     """单侧修复链：按质检违规点重写视角叙述，纯文本输出。"""
-    return REPAIR_TEMPLATE | build_chat_model(thinking=False) | StrOutputParser()
+    return REPAIR_TEMPLATE | build_chat_model(thinking=False, llm_config=llm_config) | StrOutputParser()

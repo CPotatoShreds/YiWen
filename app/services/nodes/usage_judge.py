@@ -38,10 +38,10 @@ class UsedAbilities(BaseModel):
     indices: list[int] = Field(description="实际使用过的奇术编号（装配清单中的 1 起编号；未施展/未产生影响的不在列）")
 
 
-def build_usage_llm() -> Runnable:
+def build_usage_llm(llm_config: dict | None = None) -> Runnable:
     """使用子集判定 LLM：结构化输出 UsedAbilities（method="function_calling"——DeepSeek 唯一可用方式）。
 
     不把 USAGE_TEMPLATE 用 `|` 拼进链：调用方用 USAGE_TEMPLATE.format_messages(...) 生成消息后 ainvoke，
     保留对 build_chat_model 的桩兼容。
     """
-    return build_chat_model(thinking=False).with_structured_output(UsedAbilities, method="function_calling")
+    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(UsedAbilities, method="function_calling")
