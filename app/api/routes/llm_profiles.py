@@ -141,17 +141,39 @@ async def test_profile(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    """调 {base_url}/models 验证连通性（不消耗 token），返回 ok/detail。"""
+    """真实调一次 {base_url}/chat/completions（max_tokens=5）验证可用性，返回 ok/detail。
+
+    只 GET /models 会假阳性：中转站常放行列表、但真推理被拒（403），故必须走真实推理路径。
+    请求头 UA 与 build_chat_model 一致（ynfight/0.2）：个别中转站 WAF 拦 openai SDK 官方 UA，
+    用 python-httpx 默认 UA 会得出与实战不一致的结果。200 响应还会校验是否为有效 JSON 补全
+    （返回网页 HTML 的 200 不算数，常见于 base_url 缺 /v1）。
+    """
     profile = await _get_owned(db, current.id, profile_id)
     api_key = profile_crypto.decrypt_storage(profile.api_key) if profile.api_key else ""
+    if not profile.model:
+        return {"ok": False, "detail": "未配置默认模型"}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            res = await client.get(
-                f"{profile.base_url.rstrip('/')}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{profile.base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "ynfight/0.2",
+                },
+                json={
+                    "model": profile.model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 5,
+                },
             )
         if res.status_code == 200:
-            return {"ok": True, "detail": "连接成功"}
+            try:
+                if res.json().get("choices"):
+                    return {"ok": True, "detail": "连接成功"}
+            except ValueError:
+                pass
+            return {"ok": False, "detail": "HTTP 200 但返回的不是有效聊天补全（可能 base_url 缺 /v1，命中网页）"}
         return {"ok": False, "detail": f"HTTP {res.status_code}: {res.text[:200]}"}
     except Exception as e:  # noqa: BLE001 - 网络/超时/连接错误统一按失败返回
         return {"ok": False, "detail": str(e)[:200]}

@@ -49,6 +49,9 @@ def build_chat_model(
         "base_url": s.LLM_BASE_URL or None,
         "model": s.LLM_MODEL,
         "timeout": LLM_TIMEOUT_SECONDS,
+        # openai SDK 默认 UA（OpenAI/Python x.x）会被部分中转站 WAF 拦截（403 "Your request was blocked"），
+        # 统一换成中立 UA 规避；OpenAI 兼容 API 不校验 UA，对 DeepSeek 官方等无影响。
+        "default_headers": {"User-Agent": "ynfight/0.2"},
     }
     if llm_config and llm_config.get("api_key"):
         kwargs["api_key"] = llm_config["api_key"]

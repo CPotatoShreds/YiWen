@@ -118,6 +118,76 @@ def test_test_endpoint_unreachable():
         assert r.json()["ok"] is False  # 连接失败 → 明确返回失败而非 500
 
 
+def test_test_endpoint_hits_real_inference():
+    """/test 走真实推理：POST /chat/completions（带配置的 model），中转站仅放行 GET /models 时能查出 403。"""
+    from app.api.routes import llm_profiles as routes
+
+    captured = {}
+
+    class _Resp:
+        def __init__(self, status_code, text, payload=None):
+            self.status_code = status_code
+            self.text = text
+            self._payload = payload
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("not json")
+            return self._payload
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            captured["headers"] = kwargs["headers"]
+            return _Resp(403, "Your request was blocked.")
+
+    with TestClient(app) as client:
+        _make_user(client)
+        p = _create_profile(client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m").json()
+        with patch.object(routes.httpx, "AsyncClient", _Client):
+            r = client.post(f"/api/llm-profiles/{p['id']}/test")
+        assert captured["url"] == "https://relay.example/v1/chat/completions"
+        assert captured["json"] == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5,
+        }
+        assert captured["headers"]["User-Agent"] == "ynfight/0.2"  # 与实战链路 UA 一致，防 WAF 差异
+        assert r.status_code == 200
+        assert r.json() == {"ok": False, "detail": "HTTP 403: Your request was blocked."}
+
+    with TestClient(app) as client:
+        _make_user(client)
+        p = _create_profile(client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m").json()
+
+        class _OkClient(_Client):
+            async def post(self, url, **kwargs):
+                return _Resp(200, "ok", payload={"choices": [{"message": {"role": "assistant", "content": "pong"}}]})
+
+        with patch.object(routes.httpx, "AsyncClient", _OkClient):
+            r = client.post(f"/api/llm-profiles/{p['id']}/test")
+        assert r.json() == {"ok": True, "detail": "连接成功"}
+
+        # 200 但返回网页 HTML（常见于 base_url 缺 /v1）→ 必须报失败，不能假"连接成功"
+        class _HtmlClient(_Client):
+            async def post(self, url, **kwargs):
+                return _Resp(200, "<!doctype html>...", payload=None)
+
+        with patch.object(routes.httpx, "AsyncClient", _HtmlClient):
+            r = client.post(f"/api/llm-profiles/{p['id']}/test")
+        assert r.json() == {"ok": False, "detail": "HTTP 200 但返回的不是有效聊天补全（可能 base_url 缺 /v1，命中网页）"}
+
+
 def test_build_chat_model_override():
     """build_chat_model 用 llm_config 覆盖 api_key/base_url/model；空字段/未配回退 env 默认。"""
     from app.services import llm
@@ -129,6 +199,7 @@ def test_build_chat_model_override():
         assert kw["api_key"] == "sk-u"
         assert kw["base_url"] == "https://x/v1"
         assert kw["model"] == "m1"
+        assert kw["default_headers"] == {"User-Agent": "ynfight/0.2"}  # 中立 UA，防中转站 WAF 拦 SDK 官方 UA
 
         llm.build_chat_model()
         kw = mock.call_args.kwargs

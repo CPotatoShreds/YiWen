@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 chcp 936 >nul
 cd /d "%~dp0"
 
@@ -40,16 +40,28 @@ start "ynfight-backend" /b cmd /c ".venv\Scripts\python.exe -m uvicorn app.main:
 echo === 启动前端 vite :%FRONT_PORT% ===
 start "ynfight-frontend" /b cmd /c "cd /d %~dp0frontend && node node_modules\vite\bin\vite.js --host 127.0.0.1 --port %FRONT_PORT%"
 
-rem ===== 健康检查：约 4 秒后两端口都应已在监听，否则报错并回滚 =====
-ping -n 5 127.0.0.1 >nul
-netstat -ano | findstr /c:":%BACK_PORT% " | findstr "LISTENING" >nul
-if errorlevel 1 (
-    echo [错误] 后端未能启动，请检查上面的报错。正在关闭...
+rem ===== 健康检查：轮询等待前后端端口就绪（后端冷启动可能 >5s，最多 30s）=====
+set /a READY_BACK=0
+set /a READY_FRONT=0
+for /l %%i in (1,1,30) do (
+    if !READY_BACK!==0 (
+        netstat -ano | findstr /c:":%BACK_PORT% " | findstr "LISTENING" >nul
+        if not errorlevel 1 set /a READY_BACK=1
+    )
+    if !READY_FRONT!==0 (
+        netstat -ano | findstr /c:":%FRONT_PORT% " | findstr "LISTENING" >nul
+        if not errorlevel 1 set /a READY_FRONT=1
+    )
+    if !READY_BACK!==1 if !READY_FRONT!==1 goto ready
+    ping -n 2 127.0.0.1 >nul
+)
+:ready
+if !READY_BACK!==0 (
+    echo [错误] 后端超时未启动（30s），正在关闭...
     goto shutdown
 )
-netstat -ano | findstr /c:":%FRONT_PORT% " | findstr "LISTENING" >nul
-if errorlevel 1 (
-    echo [错误] 前端未能启动，请检查上面的报错。正在关闭...
+if !READY_FRONT!==0 (
+    echo [错误] 前端超时未启动（30s），正在关闭...
     goto shutdown
 )
 
@@ -69,7 +81,23 @@ goto loop
 :shutdown
 echo.
 echo 正在关闭前后端...
+rem 因放置缓慢（后端晚绑定端口），重试最多 3 次，防孤儿进程。
+rem 注意：for /f 里的 ^| 不能放在 for /l (...) 块内（括号解析会吃掉 caret，行被拆开），故用 goto 循环。
+set /a TRY=0
+:kill_retry
+set /a TRY+=1
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /c:":%BACK_PORT% " ^| findstr "LISTENING"') do taskkill /F /T /PID %%P >nul 2>&1
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /c:":%FRONT_PORT% " ^| findstr "LISTENING"') do taskkill /F /T /PID %%P >nul 2>&1
+set /a STILL=0
+netstat -ano | findstr /c:":%BACK_PORT% " | findstr "LISTENING" >nul
+if not errorlevel 1 set /a STILL=1
+netstat -ano | findstr /c:":%FRONT_PORT% " | findstr "LISTENING" >nul
+if not errorlevel 1 set /a STILL=1
+if !STILL!==1 (
+    if !TRY! LSS 3 (
+        ping -n 2 127.0.0.1 >nul
+        goto kill_retry
+    )
+)
 echo 已全部关闭，无残留进程。
 exit /b 0
