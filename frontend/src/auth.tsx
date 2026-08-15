@@ -1,7 +1,7 @@
 // 认证上下文：token 管理 + 当前用户
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { api } from "./api";
+import { api, clearApiCache } from "./api";
 
 export interface User {
   id: number;
@@ -62,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api("/auth/logout", { method: "POST" });
     } finally {
+      clearApiCache(); // 换账号/登出后清空 GET 缓存，避免下个会话读到旧数据
       setUser(null);
     }
   }
