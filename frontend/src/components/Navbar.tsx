@@ -2,7 +2,17 @@ import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../auth";
 import StatNumber from "./StatNumber";
 import NotificationBell from "./NotificationBell";
-import { BookIcon, GearIcon, LogoutIcon, ScrollIcon, TrophyIcon } from "./icons";
+import {
+  BookIcon,
+  GearIcon,
+  HomeIcon,
+  LogoutIcon,
+  ScrollIcon,
+  ShieldIcon,
+  SwordIcon,
+  TrophyIcon,
+  UsersIcon,
+} from "./icons";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -21,18 +31,21 @@ export default function Navbar() {
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
             end
           >
+            <HomeIcon size={14} />
             驿路
           </NavLink>
           <NavLink
             to="/abilities"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
+            <SwordIcon size={14} />
             异闻录
           </NavLink>
           <NavLink
             to="/books"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
+            <BookIcon size={14} />
             行迹
           </NavLink>
           <NavLink
@@ -53,6 +66,7 @@ export default function Navbar() {
             to="/friends"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
+            <UsersIcon size={14} />
             故人
           </NavLink>
           <NotificationBell />
@@ -61,7 +75,7 @@ export default function Navbar() {
               to="/admin"
               className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
             >
-              <GearIcon size={14} />
+              <ShieldIcon size={14} />
               管理
             </NavLink>
           )}
@@ -69,6 +83,7 @@ export default function Navbar() {
             to="/settings"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
+            <GearIcon size={14} />
             设置
           </NavLink>
           <span className="nav__user">

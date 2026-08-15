@@ -134,6 +134,9 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 45%, transparent), 0 1px 3px -1px rgba(47, 43, 38, 0.4);
 }
 .nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 7px 12px;
   border-radius: 10px;
   color: var(--muted);
@@ -173,32 +176,34 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 .notify { position: relative; margin-left: 4px; }
 .notify__bell {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border: 0;
   border-radius: 10px;
   background: transparent;
   color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  transition: color 0.18s var(--ease), background 0.18s var(--ease), border-color 0.18s var(--ease);
+  transition: color 0.18s var(--ease), background 0.18s var(--ease);
 }
 .notify__bell:hover { color: var(--ink); background: var(--ground-2); }
 .notify__badge {
   position: absolute;
   top: 2px;
-  right: 1px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
   border-radius: 999px;
   background: var(--accent);
   color: var(--surface);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 700;
-  line-height: 17px;
+  line-height: 16px;
   text-align: center;
   box-shadow: 0 0 0 2px var(--ground);
 }
@@ -1280,6 +1285,8 @@ body::after {
     padding: 7px 8px;
     font-size: 13px;
   }
+  .notify { flex: none; }
+  .notify__bell { min-height: 40px; padding: 7px 8px; font-size: 13px; }
   .brand { flex: none; font-size: 18px; }
   /* iOS 聚焦自动缩放：输入字号提到 16px 以上 */
   .input, .textarea, select.input { font-size: 16px; }

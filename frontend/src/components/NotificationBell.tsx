@@ -54,8 +54,9 @@ export default function NotificationBell() {
         aria-label={unread > 0 ? `通知，${unread} 条未读` : "通知"}
         aria-expanded={open}
       >
-        <BellIcon size={18} />
+        <BellIcon size={14} />
         {unread > 0 && <span className="notify__badge">{unread > 99 ? "99+" : unread}</span>}
+        通知
       </button>
       {open && (
         <div className="notify__panel">
