@@ -37,6 +37,7 @@ function cachePolicyFor(path: string): "cache" | "skip" {
   if (path.includes("?")) return "skip"; // 带查询参数的结果随条件变化，不缓存
   if (path.startsWith("/admin/")) return "skip"; // 管理工具要实时
   if (path.startsWith("/battles/")) return "skip"; // 进行中对战/分享，SSE 实时驱动
+  if (path.startsWith("/notifications")) return "skip"; // 未读角标状态敏感 + SSE 推送重拉，缓存会吞掉更新
   return "cache";
 }
 

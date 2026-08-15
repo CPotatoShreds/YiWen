@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
+import { parseUtc } from "../../time";
 import {
   CheckIcon,
   EyeIcon,
@@ -24,7 +25,12 @@ import { PairGrid, TraceView } from "./TraceViews";
 const statusLabel = (s: string) => (s === "pending" ? "推演中" : s === "failed" ? "失手" : "已落成");
 
 const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
-const fmtDt = (iso: string) => iso.replace("T", " ").slice(0, 19);
+const fmtDt = (iso: string) => {
+  // 后端 naive UTC → 本地（北京）时间，保持 YYYY-MM-DD HH:mm:ss 表格式
+  const d = parseUtc(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 
 function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
   return (

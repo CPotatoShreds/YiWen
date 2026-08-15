@@ -43,6 +43,7 @@ class BoardGuessProgress(Base):
     )
     cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched, cracked}] 按 entry.abilities 下标
     guess_history: Mapped[list] = mapped_column(JSON, default=list)  # 跨场累积的道出猜测原文
+    guess_log: Mapped[list] = mapped_column(JSON, default=list)  # 逐条猜词记录 [{battle_id, round, text, clue:[{name, fragments}], cracked_after, at}]
     attempts_used: Mapped[int] = mapped_column(Integer, default=0)
     attempts_max: Mapped[int] = mapped_column(Integer, default=99)
     flipped: Mapped[bool] = mapped_column(Boolean, default=False)  # 刻印全部奇术已被该挑战者看破

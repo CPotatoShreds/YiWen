@@ -1,5 +1,6 @@
 """启程路由：启程 / 猜奇术 / 收手 / 再战 / 查看行迹 / 历史。"""
 
+import asyncio
 import json
 from typing import Annotated
 
@@ -18,6 +19,7 @@ from app.schemas.battle import BattleOut, BattleStartIn, GuessBlock, GuessIn
 from app.services.battle import (
     FAIL_GUESS_TEXT,
     GUESS_ATTEMPTS_MAX,
+    _guess_inflight,
     disambiguate_fighters,
     try_start_guess,
 )
@@ -28,6 +30,11 @@ from app.services.battle_stream import _get_stream
 from app.services.nodes.guess_matcher import split_atomic_guesses
 
 router = APIRouter(prefix="/battles", tags=["battles"])
+
+# 猜词阶段流闲置超时（秒）：订阅方在等"下一轮判定"事件，但当前无在途判定任务、
+# 也无法判断订阅方是否已离开页面（空闲流不写数据，服务端无断开信号）。超时后主动收流，
+# 释放连接/DB 会话；前端 onClose 视为断连自动重连，误伤由重连兜底。
+GUESS_PHASE_IDLE_SECONDS = 60
 
 
 def _filter_story(
@@ -176,6 +183,11 @@ async def _to_out(
     elif battle.winner_id == battle.user_b_id:
         winner_fighter = fighter_b
     story = json.loads(battle.story) if battle.story else None
+    revealed = battle.revealed
+    if battle.board_entry_id is not None:
+        # 点将局三方视角：只对「完全看破」的挑战者开放（unlocked = 跨场全破）；
+        # 榜主无论何时都只见刻印己方视角，不开放上帝/对方。
+        revealed = unlocked if viewer_id == battle.user_a_id else False
     story = _filter_story(
         story,
         viewer_id,
@@ -184,7 +196,7 @@ async def _to_out(
         battle.user_a_id,
         battle.user_b_id,
         unlock_all=unlocked,
-        revealed=battle.revealed,
+        revealed=revealed,
     )
     # 平铺字段兼容：非和局单行（败方行）为主；和局以查看者自己的行为主（my_guess 兜底）
     if battle.guess_by is not None:
@@ -199,6 +211,16 @@ async def _to_out(
     guess_total = len(primary.used_abilities) if primary and primary.used_abilities else 0
     guess_cards = _guess_block(primary).cards if primary and primary.used_abilities else None
     guess_history = list(primary.guess_history or []) if primary else []
+    # 榜主看本刻印点将单场：只看自己视角、不开放任何猜词（行迹仅显示对方与胜负）
+    poster_board_view = battle.board_entry_id is not None and viewer_id == battle.user_b_id
+    if poster_board_view:
+        opp_row = None
+        primary = None
+        guess_history = []
+        guess_cards = None
+        guess_total = 0
+    guess_attempts_used = primary.attempts_used if primary else 0
+    guess_attempts_max = primary.attempts_max if primary else GUESS_ATTEMPTS_MAX
     return BattleOut(
         id=battle.id,
         user_a=names.get(battle.user_a_id, "?"),
@@ -232,9 +254,9 @@ async def _to_out(
         guess_text=battle.guess_text if is_guesser else "",
         guess_total=guess_total,
         guess_cards=guess_cards,
-        guess_attempts_used=primary.attempts_used if primary else 0,
-        guess_attempts_max=primary.attempts_max if primary else GUESS_ATTEMPTS_MAX,
-        revealed=battle.revealed,
+        guess_attempts_used=guess_attempts_used,
+        guess_attempts_max=guess_attempts_max,
+        revealed=revealed,
         friendly=battle.friendly,
         my_guess=_guess_block(my_row),
         opp_guess=_guess_block(opp_row),
@@ -358,14 +380,12 @@ async def get_battle(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BattleOut:
-    """查看行迹（仅参战双方可见；点将局榜主不可看单场）。"""
+    """查看行迹（仅参战双方可见；榜主看点将单场时只看自己视角、不开放猜词）。"""
     battle = await db.get(Battle, battle_id)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
     if current.id not in (battle.user_a_id, battle.user_b_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权查看")
-    if battle.board_entry_id is not None and current.id == battle.user_b_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="榜主不查看点将单场")
     return await _to_out(db, battle, viewer_id=current.id)
 
 
@@ -398,8 +418,6 @@ async def battle_stream(
         battle = await db.get(Battle, battle_id)
         if battle is None or current.id not in (battle.user_a_id, battle.user_b_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
-        if battle.board_entry_id is not None and current.id == battle.user_b_id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
         a_id, b_id, status_ = battle.user_a_id, battle.user_b_id, battle.status
         guess_state_ = battle.guess_state
         story_json = battle.story  # 已结束战斗的错误信息存于 story.error_message
@@ -420,6 +438,13 @@ async def battle_stream(
         if status_ != "pending" and not guess_phase:
             yield _encode({"type": "done", "status": status_})
             return
+        # 猜词阶段但无在途判定任务：没有事件会在近期到来，且服务端感知不到订阅方是否已离开。
+        # 给 q.get() 加闲置超时，超时即收流（不发终止事件，前端按断连重连），避免连接永久泄漏。
+        idle_timeout = (
+            GUESS_PHASE_IDLE_SECONDS
+            if guess_phase and not any(k[0] == battle_id for k in _guess_inflight)
+            else None
+        )
         stream = _get_stream(battle_id)
         q, snapshot = stream.subscribe()
         try:
@@ -428,7 +453,10 @@ async def battle_stream(
                 if payload:
                     yield _encode(payload)
             while True:
-                ev = await q.get()
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=idle_timeout)
+                except TimeoutError:
+                    return  # 闲置超时主动收流（frontend onClose:reconnect 自愈）
                 if ev is None:  # 关闭哨兵
                     break
                 payload = _filter_for_viewer(ev, current.id, a_id, b_id)

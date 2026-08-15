@@ -49,8 +49,8 @@ from app.db.base import async_session_factory
 from app.models.ability import Ability
 from app.models.battle import Battle, BattleGuess
 from app.models.board import BoardEntry, BoardGuessProgress
-from app.models.loadout import Loadout
 from app.models.llm_profile import LlmProfile
+from app.models.loadout import Loadout
 from app.models.user import User
 from app.services import economy
 from app.services.battle_stream import _get_stream
@@ -828,7 +828,22 @@ async def _guess_settle(
     rows = await _guess_rows(db, battle.id)
     battle.guess_state = _agg_guess_state(rows)
     if battle.board_entry_id is not None:
-        await _sync_board_progress(db, battle, guess)  # 点将局：回写跨场进度，揭示以进度全破为准
+        # 点将局：本轮新增片段即「本猜词爆出的线索」（pre_state 与 post cards 同下标对齐）
+        clue = []
+        for i, (pre, card) in enumerate(zip(pre_state, cards)):
+            pre_matched = pre.get("matched") or []
+            new_frag = list(card.get("matched") or [])[len(pre_matched) :]
+            if new_frag:
+                clue.append({"name": guess.used_abilities[i]["name"], "fragments": new_frag})
+        log_entry = {
+            "battle_id": battle.id,
+            "round": guess.attempts_used,
+            "text": text,
+            "clue": clue,
+            "cracked_after": cracked,
+            "at": battle.created_at.isoformat(),
+        }
+        await _sync_board_progress(db, battle, guess, log_entry=log_entry)  # 点将局：回写跨场进度，揭示以进度全破为准
     else:
         await _recalc_reveal(db, battle, rows)
     if battle.guess_by is None and battle.guess_state == "done":
@@ -1041,13 +1056,14 @@ def _progress_index(abilities: list[dict], used: dict) -> int | None:
 
 
 async def _sync_board_progress(
-    db: AsyncSession, battle: Battle, guess: BattleGuess
+    db: AsyncSession, battle: Battle, guess: BattleGuess, log_entry: dict | None = None
 ) -> None:
     """点将局：把本场猜词行状态合并回跨场进度（并集语义：已看破的卡不回退）。
 
     跨场进度与本场猜词行可能基于不同快照预填（新场结算读到的进度可能先于上一场猜词
     提交），故只上卷不回卷。揭示以「刻印全量奇术全破」为准（不翻转胜负）；收手未全破
-    只回写进度、不置 done：下一场仍可猜。重建 JSON 对象触发变更检测。
+    只回写进度、不置 done：下一场仍可猜。重建 JSON 对象触发变更检测。log_entry 非空时
+    追加一条逐条猜词记录（供榜主挑战者追踪）。
     """
     entry = await db.get(BoardEntry, battle.board_entry_id)
     if entry is None:
@@ -1057,12 +1073,22 @@ async def _sync_board_progress(
     new_cards = [dict(p) for p in progress.cards]  # 重建触发 JSON 变更检测
     for used, card in zip(guess.used_abilities, guess.cards):
         idx = _progress_index(abilities, used)
-        if idx is None or idx >= len(new_cards) or not card["cracked"]:
+        if idx is None or idx >= len(new_cards):
             continue
-        new_cards[idx] = dict(card)
+        if card["cracked"]:
+            new_cards[idx] = dict(card)
+        else:
+            # 未看破门：只上卷已累计的线索片段（跨场并集），供挑战者详情页看破进度展示；
+            # 不回退（新场预填的进度可能先于另一场提交，并集而非赋值）。
+            base = list(new_cards[idx].get("matched") or [])
+            new_cards[idx]["matched"] = base + [
+                f for f in (card.get("matched") or []) if f not in base
+            ]
     progress.cards = new_cards
     progress.guess_history = list(guess.guess_history or [])
     progress.attempts_used = max(progress.attempts_used or 0, guess.attempts_used or 0)
+    if log_entry is not None:
+        progress.guess_log = list(progress.guess_log or []) + [log_entry]
     if new_cards and all(c["cracked"] for c in new_cards):
         progress.flipped = True
         progress.done = True

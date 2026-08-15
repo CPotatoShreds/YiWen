@@ -149,13 +149,21 @@ def _challenge(client, entry_id, h_challenger, loadout_id, god_text, usage_indic
 
 
 def _guess(client, battle, headers, text, pair_fn, verify_guessed):
-    """对一场点将局提交猜测（打桩配对/检定），等待落库后返回行迹 dict。"""
+    """对一场点将局提交猜测（打桩配对/检定），等待落库后返回行迹 dict。
+
+    attempts_used 落库先于判定锁释放：连续快速提交可能撞上 409「仍在判定中」，重试数次。
+    """
     pair, verify = _guess_pipeline(pair_fn, verify_guessed)
     with (
         patch("app.services.battle._build_pair_llm", return_value=pair),
         patch("app.services.battle._build_verify_llm", return_value=verify),
     ):
-        g = client.post(f"/api/battles/{battle['id']}/guess", json={"text": text}, headers=headers)
+        g = None
+        for _ in range(20):
+            g = client.post(f"/api/battles/{battle['id']}/guess", json={"text": text}, headers=headers)
+            if g.status_code != 409:
+                break
+            time.sleep(0.2)
         assert g.status_code == 202, g.text
         return _wait_guess(client, battle["id"], headers, attempts_before=battle.get("guess_attempts_used", 0))
 
@@ -306,6 +314,31 @@ def test_board_full_crack_skips_guess_and_unlocks_story():
         assert b2["story"]["abilities_b"]
 
 
+def test_board_list_shows_cracked_flag():
+    """榜单对挑战者展示「已看破」标记：全破刻印 cracked=True；无关挑战者/榜主自己 False。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbcf")
+        h_c = {"Authorization": f"Bearer {_mk_user(client, 'tbcf')}"}
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        # 挑战者全破唯一刻印奇术 → 该挑战者看榜单：此刻印标「已看破」
+        b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        rows_b = client.get("/api/board", headers=h_b).json()
+        assert next(r for r in rows_b if r["id"] == eid)["cracked"] is True
+
+        # 无关挑战者、榜主自己都不标
+        rows_c = client.get("/api/board", headers=h_c).json()
+        assert next(r for r in rows_c if r["id"] == eid)["cracked"] is False
+        rows_a = client.get("/api/board", headers=h_a).json()
+        assert next(r for r in rows_a if r["id"] == eid)["cracked"] is False
+
+
 def test_board_give_up_keeps_progress():
     """收手未全破：进度保留、不置 done，下场仍可猜、未看破卡继续保密。"""
     with TestClient(app) as client:
@@ -361,7 +394,7 @@ def test_board_progress_not_shared_across_entries():
 
 
 def test_board_poster_passive_and_rewards():
-    """榜主：行迹不含点将局、单场/流/再战/榜主侧传阅全禁；双方 +5 见闻照发。"""
+    """榜主：行迹不含点将局；单场/流放行但猜词全掩码（只看自己视角、无任何猜词）；再战/榜主侧传阅全禁；双方 +5 见闻照发。"""
     with TestClient(app) as client:
         h_a, h_b = _mk_two_users(client, "tbpp")
         name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
@@ -385,9 +418,27 @@ def test_board_poster_passive_and_rewards():
         assert all(x["id"] != b["id"] for x in mine_a)
         assert any(x["id"] == b["id"] and x["board_entry_id"] == eid for x in mine_b)
 
-        # 榜主不能查看单场 / 订阅流 / 再战（点将局一律不可再战） / 榜主侧传阅
-        assert client.get(f"/api/battles/{b['id']}", headers=h_a).status_code == 403
-        assert client.get(f"/api/battles/{b['id']}/stream", headers=h_a).status_code == 404
+        # 榜主可看单场 / 订阅流，但猜词全掩码：只看自己视角、无任何猜词，只显示对方与胜负
+        pv = client.get(f"/api/battles/{b['id']}", headers=h_a).json()
+        assert pv["id"] == b["id"]
+        assert pv["status"] == "done"
+        assert pv["winner"] == name_b  # 对方（挑战者）与胜负可见
+        assert pv["guess_history"] == []
+        assert pv["my_guess"] is None
+        assert pv["opp_guess"] is None
+        assert pv["guess_total"] == 0
+        assert pv["guess_cards"] is None
+        assert pv["guess_attempts_used"] == 0
+        assert pv["guess_attempts_max"] == 99
+        assert pv["guess_text"] == ""
+        assert pv["story"]["narration_b"]  # 自己视角叙述
+        assert "narration_a" not in pv["story"]  # 对方视角不展示
+        assert "narration" not in pv["story"]  # 上帝视角不展示
+        # 挑战者收手结束猜词阶段（guess_state→done）→ 榜主开流立即短接 done；否则开放猜词阶段的无事件流会一直挂着
+        assert client.post(f"/api/battles/{b['id']}/give-up", headers=h_b).status_code == 200
+        with client.stream("GET", f"/api/battles/{b['id']}/stream", headers=h_a) as resp:
+            assert resp.status_code == 200
+        # 再战（点将局一律不可再战）/ 榜主侧传阅仍禁
         assert client.post(f"/api/battles/{b['id']}/rematch", headers=h_a).status_code == 400
         assert client.post(f"/api/battles/{b['id']}/rematch", headers=h_b).status_code == 400
         assert client.get(f"/api/battles/share/{b['share_token_b']}").status_code == 404
@@ -559,8 +610,8 @@ def test_board_detail_fresh_viewer_all_hidden():
         assert d["battles"] == []
 
 
-def test_board_detail_poster_reveals_all_no_battles():
-    """榜主视角：刻印全貌可见、无任何挑战者对局记录（发帖语义）。"""
+def test_board_detail_poster_reveals_all_and_challenge_tracks():
+    """榜主视角：刻印全貌可见、全部挑战局行迹可见（猜词掩码，只显示对方与胜负）。"""
     with TestClient(app) as client:
         h_a, h_b = _mk_two_users(client, "tbdp")
         name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
@@ -570,14 +621,22 @@ def test_board_detail_poster_reveals_all_no_battles():
         ld_b = _arm(client, h_b)
         eid = _board_entry(client, h_a, ld_a["id"])
 
-        _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        b = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
 
         d = client.get(f"/api/board/{eid}", headers=h_a).json()
         assert d["mine"] is True
         assert d["challenge_count"] == 1
         assert all(c["cracked"] for c in d["progress"])  # 榜主看全貌
         assert d["progress"][0]["name"] == "影刃"
-        assert d["battles"] == []  # 无挑战者行迹
+        # 榜主开放全部挑战局行迹：掩码后（无猜词、只看自己视角、显示对方与胜负）
+        assert len(d["battles"]) == 1
+        pv = d["battles"][0]
+        assert pv["id"] == b["id"]
+        assert pv["board_entry_id"] == eid
+        assert pv["winner"] == name_b
+        assert pv["guess_history"] == []
+        assert pv["my_guess"] is None
+        assert pv["opp_guess"] is None
 
 
 def test_board_detail_404():
@@ -585,3 +644,90 @@ def test_board_detail_404():
     with TestClient(app) as client:
         h_a, _ = _mk_two_users(client, "tbd404")
         assert client.get("/api/board/999999", headers=h_a).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 刻印统计 + 榜主追踪
+# ---------------------------------------------------------------------------
+
+
+def test_board_stats_win_rate_and_avg_crack():
+    """榜单/详情统计：刻印胜率 = 刻印胜场/被挑战场次；平均看破花费 = 总猜测次数/总看破门数。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbwr")
+        name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_a, "血咒", "以自身鲜血为引发动诅咒")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        assert next(x for x in client.get("/api/board", headers=h_b).json() if x["id"] == eid)["win_rate"] is None
+        # 场 1：挑战者胜（刻印负），三次猜测看破两门（首猜未命中 → 总花费 3）
+        b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        _guess(client, b1, h_b, "暗影潜行", _pair_only("绝无此术", "无"), False)
+        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "血咒献祭", _pair_only("以自身鲜血", "血咒以血为引"), True)
+        # 场 2：刻印胜（两门已全破 → 无猜词阶段）
+        _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_a}")
+
+        e = next(x for x in client.get("/api/board", headers=h_b).json() if x["id"] == eid)
+        assert e["challenge_count"] == 2
+        assert e["win_rate"] == 0.5
+        assert e["avg_crack_attempts"] == 1.5
+        d = client.get(f"/api/board/{eid}", headers=h_b).json()
+        assert d["win_rate"] == 0.5
+        assert d["avg_crack_attempts"] == 1.5
+
+
+def test_board_poster_tracks_challenger_guess_path():
+    """榜主追踪：挑战者列表（可搜索）+ 逐条猜词记录（文本/线索/看破数/战报）+ 非榜主 403。"""
+    with TestClient(app) as client:
+        h_a, h_b = _mk_two_users(client, "tbtr")
+        name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
+        user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
+        h_c = {"Authorization": f"Bearer {_mk_user(client, 'tbtr_c')}"}
+        _give_ability(client, h_a, "影刃", "以暗影凝聚利刃斩杀敌人")
+        _give_ability(client, h_a, "血咒", "以自身鲜血为引发动诅咒")
+        _give_ability(client, h_b, "天雷", "引九天之雷轰击敌人")
+        ld_a = _arm(client, h_a)
+        ld_b = _arm(client, h_b)
+        eid = _board_entry(client, h_a, ld_a["id"])
+
+        b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
+        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "血咒献祭", _pair_only("以自身鲜血", "血咒以血为引"), True)
+
+        # 非榜主不可追踪
+        assert client.get(f"/api/board/{eid}/tracking/challengers", headers=h_c).status_code == 403
+        assert (
+            client.get(f"/api/board/{eid}/tracking/challengers/{user_b_id}/guess-path", headers=h_c).status_code
+            == 403
+        )
+
+        # 榜主：搜索命中/未命中/空搜索
+        lst = client.get(f"/api/board/{eid}/tracking/challengers?search={name_b}", headers=h_a).json()
+        assert [x["user_id"] for x in lst] == [user_b_id]
+        assert lst[0]["username"] == name_b
+        assert lst[0]["total_guesses"] == 2
+        assert lst[0]["cracked"] == 2
+        assert lst[0]["total"] == 2
+        assert client.get(f"/api/board/{eid}/tracking/challengers?search=不存在的人", headers=h_a).json() == []
+        assert len(client.get(f"/api/board/{eid}/tracking/challengers", headers=h_a).json()) == 1
+
+        # 猜词路径：按时间升序，含文本/线索/看破数/对应战报
+        path = client.get(f"/api/board/{eid}/tracking/challengers/{user_b_id}/guess-path", headers=h_a).json()
+        assert len(path) == 2
+        assert path[0]["battle_id"] == b1["id"]
+        assert path[0]["round"] == 1
+        assert path[0]["text"] == "影刃化形"
+        assert path[0]["cracked_after"] == 1
+        assert path[0]["clue"][0]["name"] == "影刃"
+        assert path[0]["clue"][0]["fragments"] == ["影刃以暗影凝刃"]
+        assert path[1]["battle_id"] == b1["id"]
+        assert path[1]["round"] == 2
+        assert path[1]["text"] == "血咒献祭"
+        assert path[1]["cracked_after"] == 2
+        assert path[1]["clue"][0]["name"] == "血咒"

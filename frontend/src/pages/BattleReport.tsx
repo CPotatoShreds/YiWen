@@ -475,7 +475,11 @@ export default function BattleReport() {
             </span>
             <div>
               <h3>{b.winner ? `胜者 ${b.winner}` : "和局"}</h3>
-              <p>败而不馁，窥秘一刻——你获得了猜测对手奇术的机会。</p>
+              <p>
+                {isGuesser
+                  ? "败而不馁，窥秘一刻——你获得了猜测对手奇术的机会。"
+                  : "这一场对决的行迹已落定。"}
+              </p>
             </div>
           </div>
         )}
@@ -491,22 +495,23 @@ export default function BattleReport() {
         />
       )}
 
-      {/* 猜测结果（仅败方视角可见；赢家的收尾在下方赢家面板） */}
+      {/* 猜测结果（仅败方视角可见；赢家的收尾在下方赢家面板）。
+          全破看 flipped：点将局全破不翻转胜负（guess_hit 恒 None），不能用 guess_hit 判断。 */}
       {isGuesser && b.guessed && myGuess && myGuess.total > 0 && (
-        <div className={`banner rise rise-1 ${b.guess_hit ? "banner--hit" : "banner--miss"}`}>
+        <div className={`banner rise rise-1 ${myGuess.flipped ? "banner--hit" : "banner--miss"}`}>
           <span className="banner__icon">
-            {b.guess_hit ? <CheckIcon size={20} /> : <XIcon size={20} />}
+            {myGuess.flipped ? <CheckIcon size={20} /> : <XIcon size={20} />}
           </span>
           <div>
             <h3>
-              {b.guess_hit
-                ? "你识破了全部奇术，胜负逆转！"
-                : "未看穿对家"}
+              {myGuess.flipped ? "你识破了全部奇术" : "未看穿对家"}
             </h3>
             <p>
-              {b.guess_hit
-                ? "对家实际用过的奇术已被你尽数看破，反败为胜。"
-                : `机会用尽，你道出的猜测：${b.guess_text || "（无）"}。`}
+              {myGuess.flipped
+                ? b.board_entry_id
+                  ? "刻印的全部奇术已被你尽数看破，此后点将可直接以完整三视角铺陈。"
+                  : "对家实际用过的奇术已被你尽数看破，反败为胜。"
+                : "机会用尽，未能看破对家奇术。"}
               {b.revealed ? " 双方奇术已尽数揭示。" : " 对家奇术仍未揭示。"}
             </p>
           </div>

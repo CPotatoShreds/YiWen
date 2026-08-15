@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import BoardChallengeModal from "../components/BoardChallengeModal";
 import { ScrollIcon, SwordIcon, TrashIcon } from "../components/icons";
+import { parseUtc } from "../time";
 import type { BoardEntry } from "../types";
 
 export default function Board() {
@@ -40,7 +41,7 @@ export default function Board() {
   }
 
   const fmt = (s: string) =>
-    new Date(s).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+    parseUtc(s).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 
   return (
     <>
@@ -89,9 +90,16 @@ export default function Board() {
                       我
                     </span>
                   )}
+                  {e.cracked && (
+                    <span className="chip chip--cracked" style={{ fontSize: 11, padding: "2px 8px" }}>
+                      已看破
+                    </span>
+                  )}
                 </div>
                 <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
-                  {e.style || "（未写风格）"} · {e.ability_count} 门奇术 · 被挑战 {e.challenge_count} 次
+                  {e.style || "（未写风格）"} · {e.ability_count} 门奇术 · 被挑战 {e.challenge_count} 次 · 挑战者胜率{" "}
+                  {e.win_rate == null ? "—" : `${Math.round(e.win_rate * 100)}%`} · 每门奇术被看破所费平均{" "}
+                  {e.avg_crack_attempts == null ? "—" : `${e.avg_crack_attempts.toFixed(1)} 次`}
                 </p>
               </div>
               <span className="muted" style={{ fontSize: 12, flex: "none" }}>

@@ -68,15 +68,18 @@ export function useNotifications() {
 
   const markRead = useCallback(
     (id: number) => {
-      api(`/notifications/${id}/read`, { method: "POST" }).catch(() => {});
-      load();
+      // 等 POST 落库再重拉，否则读到未 commit 的旧未读数，红点卡住
+      api(`/notifications/${id}/read`, { method: "POST" })
+        .catch(() => {})
+        .finally(() => load());
     },
     [load],
   );
 
   const markAllRead = useCallback(() => {
-    api("/notifications/read-all", { method: "POST" }).catch(() => {});
-    load();
+    api("/notifications/read-all", { method: "POST" })
+      .catch(() => {})
+      .finally(() => load());
   }, [load]);
 
   return {

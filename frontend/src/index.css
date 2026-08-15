@@ -646,6 +646,7 @@ select.input { appearance: auto; }
   font-weight: 600;
 }
 .chip--ability { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent-strong); }
+.chip--cracked { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip-x {
   display: grid;
   place-items: center;

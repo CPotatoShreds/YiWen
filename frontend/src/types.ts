@@ -44,8 +44,30 @@ export interface BoardEntry {
   style: string;
   ability_count: number;
   challenge_count: number;
+  win_rate: number | null; // 刻印胜率（被挑战场次中刻印胜场占比；无挑战 → null）
+  avg_crack_attempts: number | null; // 平均每门看破花费的猜测次数（无看破 → null）
   mine: boolean;
+  cracked: boolean; // 当前查看者是否已看破该刻印全部奇术
   created_at: string;
+}
+
+// 榜主追踪：某刻印的挑战者摘要
+export interface BoardChallenger {
+  user_id: number;
+  username: string;
+  total_guesses: number; // 累计猜词次数
+  cracked: number; // 已看破门数
+  total: number; // 该刻印门数（供「已看破 X/Z」）
+}
+
+// 榜主追踪：挑战者对某刻印的单条猜词记录
+export interface GuessPathRecord {
+  battle_id: number; // 对应战报（榜主己方视角打开）
+  round: number; // 本场内第几次猜测（1 起）
+  text: string; // 提交的猜测原文
+  clue: { name: string; fragments: string[] }[]; // 本猜词爆出的线索
+  cracked_after: number; // 截至目前已看破门数
+  at: string; // 发生时间（ISO）
 }
 
 // 刻印单门奇术的进度卡：已看破亮出真实名/效果，未看破仅线索片段

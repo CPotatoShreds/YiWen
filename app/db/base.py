@@ -1,4 +1,5 @@
 """数据库引擎与会话管理（SQLAlchemy 2.0 + async）。"""
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
@@ -40,12 +41,25 @@ if settings.DATABASE_URL.startswith("sqlite"):
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+logger = logging.getLogger(__name__)
+
 
 class Base(DeclarativeBase):
     """所有 ORM 模型的基类。"""
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI 依赖：为每个请求提供一个数据库会话。"""
-    async with async_session_factory() as session:
+    """FastAPI 依赖：为每个请求提供一个数据库会话。
+
+    连接被服务端终止（PG 空闲终止/重启）后，会话关闭时的 rollback 会对死连接抛 InterfaceError；
+    asyncpg 的 _rollback_and_discard 已把该连接丢弃（池下次检出 pool_pre_ping 自检重连）。
+    这里吞掉清理错误，不让它反噬已完成请求（请求本身已成功或已抛自己的异常）。
+    """
+    session = async_session_factory()
+    try:
         yield session
+    finally:
+        try:
+            await session.close()
+        except Exception:  # noqa: BLE001 - 死连接清理失败：仅记录并丢弃，不反噬请求
+            logger.debug("db session close failed; dead connection discarded")

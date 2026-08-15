@@ -11,6 +11,7 @@ import Friends from "./pages/Friends";
 import Leaderboard from "./pages/Leaderboard";
 import Board from "./pages/Board";
 import BoardDetail from "./pages/BoardDetail";
+import BoardTracking from "./pages/BoardTracking";
 import Share from "./pages/Share";
 import Settings from "./pages/Settings";
 import AdminLayout from "./components/AdminLayout";
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
             <Route path="/board" element={<RequireAuth><Board /></RequireAuth>} />
             <Route path="/board/:id" element={<RequireAuth><BoardDetail /></RequireAuth>} />
+            <Route path="/board/:id/tracking" element={<RequireAuth><BoardTracking /></RequireAuth>} />
             <Route path="/friends" element={<RequireAuth><Friends /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/admin" element={<RequireAuth><RequireAdmin><AdminLayout /></RequireAdmin></RequireAuth>}>
