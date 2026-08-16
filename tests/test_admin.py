@@ -4,7 +4,10 @@
 的连接池（app 用 asyncpg，psycopg 是独立连接，无 loop 冲突）。
 """
 
+import json
 import os
+from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import psycopg
@@ -66,6 +69,29 @@ def _insert_battle_guess(battle_id: int, guesser_id: int) -> None:
         " attempts_used, attempts_max, flipped, done)"
         " VALUES (%s, %s, '[]', '[]', '[]', 0, 5, FALSE, TRUE)",
         (battle_id, guesser_id),
+    )
+    con.commit()
+    con.close()
+
+
+def _insert_battle_guess_full(battle_id: int, guesser_id: int) -> None:
+    """带真实数据的猜词行：两门奇术，一门未看破一门看破。"""
+    con = _sqlite()
+    con.execute(
+        "INSERT INTO battle_guesses (battle_id, guesser_id, used_abilities, cards, guess_history,"
+        " attempts_used, attempts_max, flipped, done)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, TRUE)",
+        (
+            battle_id,
+            guesser_id,
+            '[{"name": "焚风", "effect": "战地起火"}, {"name": "寒铁", "effect": "兵刃凝霜"}]',
+            '[{"matched": ["手执兵刃"], "cracked": false},'
+            ' {"matched": ["火光冲天", "灼热难当"], "cracked": true, "cracked_round": 3,'
+            ' "rounds": [1, 2, 3], "verifies": ["看破"]}]',
+            '["第一轮猜测", "第二轮猜测"]',
+            2,
+            5,
+        ),
     )
     con.commit()
     con.close()
@@ -249,6 +275,14 @@ def test_battle_read_and_delete():
         # 详情（上帝视角 story 原样返回）
         detail = client.get(f"/api/admin/battles/{done_id}", headers=h_a).json()
         assert detail["id"] == done_id and detail["status"] == "done"
+        # 猜词详情：本场猜词行为空数据（cards/history 空，次数走 GUESS_ATTEMPTS_MAX 兜底）
+        assert detail["guess_history"] == []
+        assert detail["guess_cards"] is None
+        assert detail["guess_total"] == 0
+        assert detail["guess_attempts_used"] == 0
+        assert detail["guess_attempts_max"] == 5
+        # 列表端点保持精简：不携带猜词详情（空兜底）
+        assert all(b["guess_cards"] is None for b in battles)
 
         # pending 不可删
         assert client.delete(f"/api/admin/battles/{pending_id}", headers=h_a).status_code == 409
@@ -264,6 +298,36 @@ def test_battle_read_and_delete():
         con.execute("DELETE FROM battles WHERE id=%s", (pending_id,))
         con.commit()
         con.close()
+
+
+def test_battle_detail_guess_cards():
+    with TestClient(app) as client:
+        _, _, h_a = _new_user(client)
+        a_name = _me_name(client, h_a)
+        _, _, h_b = _new_user(client, "testbg_b")
+        b_id = _user_id(client, h_b)
+        _promote(a_name)
+
+        done_id = _insert_battle(_user_id(client, h_a), b_id, "done")
+        _insert_battle_guess_full(done_id, b_id)
+        con = _sqlite()
+        con.execute("UPDATE battles SET guess_by=%s WHERE id=%s", (b_id, done_id))
+        con.commit()
+        con.close()
+
+        detail = client.get(f"/api/admin/battles/{done_id}", headers=h_a).json()
+        assert detail["guess_total"] == 2
+        assert detail["guess_attempts_used"] == 2
+        assert detail["guess_attempts_max"] == 5
+        assert detail["guess_history"] == ["第一轮猜测", "第二轮猜测"]
+        cards = detail["guess_cards"]
+        assert cards is not None and len(cards) == 2
+        assert cards[0]["cracked"] is False
+        assert cards[0]["matched"] == ["手执兵刃"]
+        assert "name" not in cards[0]
+        assert cards[1]["cracked"] is True
+        assert cards[1]["name"] == "寒铁" and cards[1]["effect"] == "兵刃凝霜"
+        assert cards[1]["cracked_round"] == 3
 
 
 def test_loadout_and_friendship_delete():
@@ -296,6 +360,42 @@ def test_loadout_and_friendship_delete():
             (row["user_id"], row["friend_id"]),
         ).fetchone() is None
         con.close()
+
+
+def test_loadout_detail():
+    """GET /api/admin/loadouts/{id}：单个奇人详情（奇术、参战数）；非管理员 403，不存在 404。"""
+    with TestClient(app) as client:
+        _, _, h_b = _new_user(client, "testld_b")
+        b_name = _me_name(client, h_b)
+        _, _, h_a = _new_user(client, "testld_a")
+        a_name = _me_name(client, h_a)
+        _promote(a_name)
+
+        # 普通用户不可见
+        assert client.get("/api/admin/loadouts/1", headers=h_b).status_code == 403
+
+        # 建奇人 + 装奇术
+        ld = client.post("/api/loadouts", json={"name": "奇人·叁"}, headers=h_b).json()
+        ability = client.post(
+            "/api/abilities", json={"name": "霜语", "effect": "低温减速"}, headers=h_b
+        ).json()
+        client.post(f"/api/loadouts/{ld['id']}/abilities/{ability['id']}", headers=h_b)
+
+        # 不存在 → 404
+        assert client.get("/api/admin/loadouts/999999", headers=h_a).status_code == 404
+
+        detail = client.get(f"/api/admin/loadouts/{ld['id']}", headers=h_a).json()
+        assert detail["id"] == ld["id"]
+        assert detail["username"] == b_name
+        assert detail["name"] == "奇人·叁"
+        assert detail["style"] == ""
+        assert detail["enabled"] is True
+        assert detail["tactic"] == ""
+        assert detail["ability_count"] == 1
+        assert detail["battle_count"] == 0
+        assert detail["created_at"]
+        assert detail["abilities"][0]["name"] == "霜语"
+        assert detail["abilities"][0]["effect"] == "低温减速"
 
 
 def test_stats_counts():
@@ -601,3 +701,229 @@ def test_llm_trace_forbidden_for_non_admin():
         _, _, h = _new_user(client)
         assert client.get("/api/admin/llm-traces", headers=h).status_code == 403
         assert client.get("/api/admin/llm-traces/stats", headers=h).status_code == 403
+
+
+# ---------- 提示词方案调试 ----------
+
+
+def _insert_battle_with_snapshots(user_a_id: int, user_b_id: int, *, name_a="赤焰", name_b="霜语") -> int:
+    """插一场带双方奇人快照的 done 行迹（重跑依赖 _resolve_loadout_inputs 读快照输入）。"""
+    con = _sqlite()
+    cur = con.execute(
+        "INSERT INTO battles (user_a_id, user_b_id, story, status, rank_delta_a, rank_delta_b,"
+        " friendly, guess_text, guess_state, revealed, revealed_a, revealed_b, snapshot_a, snapshot_b)"
+        " VALUES (%s, %s, '', 'done', 0, 0, FALSE, '', 'none', FALSE, FALSE, FALSE, %s::json, %s::json)"
+        " RETURNING id",
+        (
+            user_a_id,
+            user_b_id,
+            json.dumps({"name": name_a, "abilities": [{"name": "焚风", "effect": "战地起火"}]}, ensure_ascii=False),
+            json.dumps({"name": name_b, "abilities": [{"name": "寒铁", "effect": "兵刃凝霜"}]}, ensure_ascii=False),
+        ),
+    )
+    new_id = cur.fetchone()[0]
+    con.commit()
+    con.close()
+    return new_id
+
+
+def _insert_debug_run(battle_id: int, scheme_id: int) -> int:
+    con = _sqlite()
+    cur = con.execute(
+        "INSERT INTO prompt_debug_runs (battle_id, scheme_id, status, story, discuss_report)"
+        " VALUES (%s, %s, 'done', %s, '') RETURNING id",
+        (battle_id, scheme_id, json.dumps({"narration": "旧产物"}, ensure_ascii=False)),
+    )
+    new_id = cur.fetchone()[0]
+    con.commit()
+    con.close()
+    return new_id
+
+
+def _wait_for_run_status(run_id: int, timeout: float = 6.0) -> str | None:
+    """重跑是后台任务：轮询直连库直到记录落定，返回最终 status。"""
+    import time
+
+    con = _sqlite()
+    deadline = time.monotonic() + timeout
+    status = None
+    while time.monotonic() < deadline:
+        row = con.execute("SELECT status FROM prompt_debug_runs WHERE id=%s", (run_id,)).fetchone()
+        status = row[0] if row else None
+        if status and status != "pending":
+            break
+        time.sleep(0.05)
+    con.close()
+    return status
+
+
+# 重跑打桩：直接 patch prompt_debug 模块命名空间里的节点构建器（_stage_builder 经 globals()
+# 运行时动态解析，patch 模块属性即生效——对齐 battle.py 的 _build_* 打桩缝）。
+_BUILDER_ATTR = {
+    "discuss": "build_discuss_llm",
+    "deduce": "build_deduce_chain",
+    "transcribe": "build_transcribe_chain",
+    "validate": "build_validate_chain",
+    "repair": "build_repair_chain",
+}
+
+
+def _stub_prompt_debug_builders(stack: ExitStack):
+    """打桩 5 个推演段构建器；返回 (builder_mocks, deduce 输入捕获 dict)。"""
+    from app.services.nodes.transcribe_validator import TranscribeVerdict
+
+    captured: dict = {}
+    builder_mocks: dict[str, MagicMock] = {}
+
+    async def _discuss(_):
+        return ""
+
+    async def _deduce(kwargs):
+        captured.update(kwargs)
+        # 以推演输入里的 A 结尾句原文收尾 → _parse_winner 判甲胜；覆盖是否生效经 captured 断言
+        return f"白光落下，一番激战。{kwargs['ending_a']}"
+
+    async def _transcribe(_):
+        return {"narration_a": "甲视角：潜行逼近，斩落对手。", "narration_b": "乙视角：措手不及，被一击击倒。"}
+
+    async def _validate(_):
+        return TranscribeVerdict(passes=True)
+
+    async def _repair(_):
+        return ""
+
+    impls = {
+        "discuss": _discuss,
+        "deduce": _deduce,
+        "transcribe": _transcribe,
+        "validate": _validate,
+        "repair": _repair,
+    }
+    for stage, attr in _BUILDER_ATTR.items():
+        chain = MagicMock()
+        chain.ainvoke = AsyncMock(side_effect=impls[stage])
+        builder_mocks[stage] = stack.enter_context(patch(f"app.services.prompt_debug.{attr}", return_value=chain))
+    return builder_mocks, captured
+
+
+def test_prompt_scheme_crud_and_guards():
+    """方案管理：非管理员 403；新建/重名 409/列表/更新/删除，删除级联清理其调试记录。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        assert client.get("/api/admin/prompt-schemes", headers=h).status_code == 403
+
+        _promote(_me_name(client, h))
+
+        # 新建（带 deduce 覆盖）
+        r = client.post(
+            "/api/admin/prompt-schemes",
+            json={"name": "测试覆盖", "description": "desc", "deduce_prompt": "OVR"},
+            headers=h,
+        )
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+        assert r.json()["deduce_prompt"] == "OVR" and r.json()["enabled"] is True
+
+        # 重名 → 409
+        assert client.post("/api/admin/prompt-schemes", json={"name": "测试覆盖"}, headers=h).status_code == 409
+
+        # 列表含自己（种子方案也在，不断言总数）
+        lst = client.get("/api/admin/prompt-schemes", headers=h).json()
+        mine = [s for s in lst if s["id"] == sid]
+        assert len(mine) == 1 and mine[0]["name"] == "测试覆盖" and mine[0]["deduce_prompt"] == "OVR"
+
+        # 更新：改描述 + 清空 deduce 覆盖（空串 = 回冻结默认，builders 视作无覆盖）
+        r = client.patch(
+            f"/api/admin/prompt-schemes/{sid}", json={"description": "desc2", "deduce_prompt": ""}, headers=h
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["description"] == "desc2" and not r.json()["deduce_prompt"]
+
+        # 删除级联清调试记录：先造一条指向它的运行记录
+        _, _, h_b = _new_user(client, "testschm_b")
+        b_id = _user_id(client, h_b)
+        battle_id = _insert_battle(_user_id(client, h), b_id, "done")
+        _insert_debug_run(battle_id, sid)
+        assert client.delete(f"/api/admin/prompt-schemes/{sid}", headers=h).status_code == 204
+        con = _sqlite()
+        assert con.execute("SELECT 1 FROM prompt_schemes WHERE id=%s", (sid,)).fetchone() is None
+        assert con.execute("SELECT 1 FROM prompt_debug_runs WHERE scheme_id=%s", (sid,)).fetchone() is None
+        con.close()
+
+
+def test_prompt_debug_rerun_flow():
+    """重跑：带快照行迹 + 覆盖方案 → POST rerun 建 pending → 后台落定 → 产物三视角/覆盖生效/独立追踪。"""
+    with TestClient(app) as client:
+        _, _, h_a = _new_user(client)
+        _promote(_me_name(client, h_a))
+        _, _, h_b = _new_user(client, "testprun_b")
+        b_id = _user_id(client, h_b)
+        a_id = _user_id(client, h_a)
+
+        battle_id = _insert_battle_with_snapshots(a_id, b_id)
+        # 原场 deduce 追踪带开场白：重跑应提取同一开场，让提示词成为唯一变量
+        con = _sqlite()
+        con.execute(
+            "INSERT INTO llm_traces (kind, operation, status, trace_id, request_json, latency_ms, tokens_input, tokens_output)"
+            " VALUES ('battle', 'deduce', 'ok', %s, %s::json, 0, 0, 0)",
+            (str(battle_id), json.dumps({"opening": "特定开场白"}, ensure_ascii=False)),
+        )
+        con.commit()
+        con.close()
+
+        # 覆盖 deduce 提示词的方案
+        r = client.post("/api/admin/prompt-schemes", json={"name": "重跑覆盖", "deduce_prompt": "精简推演指令"}, headers=h_a)
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+
+        # 打桩 5 个推演段构建器后重跑
+        with ExitStack() as stack:
+            builder_mocks, captured = _stub_prompt_debug_builders(stack)
+            rr = client.post(f"/api/admin/battles/{battle_id}/rerun", json={"scheme_id": sid}, headers=h_a)
+            assert rr.status_code == 201, rr.text
+            run_id = rr.json()["id"]
+            assert rr.json()["status"] == "pending"
+
+            # 后台任务落定（轮询直连库）
+            status = _wait_for_run_status(run_id)
+            assert status == "done", f"重跑未落定，status={status}"
+
+            # 覆盖生效：deduce 构建器收到 system_prompt；输入沿用原场开场白
+            builder_mocks["deduce"].assert_called_with(llm_config=None, system_prompt="精简推演指令")
+            assert captured.get("opening") == "特定开场白"
+            assert captured.get("ending_a")
+
+        # 产物落库完整
+        con = _sqlite()
+        row = con.execute(
+            "SELECT story, discuss_report, winner_side, error FROM prompt_debug_runs WHERE id=%s", (run_id,)
+        ).fetchone()
+        con.close()
+        story = json.loads(row[0])
+        assert story["narration"] and story["narration_a"] and story["narration_b"]
+        assert row[1] == ""  # 讨论桩返回空
+        assert row[2] == "A"
+        assert row[3] is None
+
+        # 管理端列表/详情可见（含方案名与解析后的三视角）
+        lst = client.get(f"/api/admin/prompt-debug-runs?battle_id={battle_id}", headers=h_a).json()
+        assert [x["id"] for x in lst] == [run_id]
+        assert lst[0]["scheme_name"] == "重跑覆盖"
+        assert lst[0]["winner_side"] == "A"
+        assert lst[0]["story"]["narration"]
+        detail = client.get(f"/api/admin/prompt-debug-runs/{run_id}", headers=h_a).json()
+        assert detail["id"] == run_id
+        assert client.get("/api/admin/prompt-debug-runs/999999", headers=h_a).status_code == 404
+
+        # 重跑产生 debug_rerun 链路追踪（独立 kind/trace_id，不污染原场 battle 追踪）
+        con = _sqlite()
+        n = _wait_for_trace_count(con, 1, kind="debug_rerun", trace_id=str(run_id))
+        con.close()
+        assert n >= 1
+
+        # 删除调试记录
+        assert client.delete(f"/api/admin/prompt-debug-runs/{run_id}", headers=h_a).status_code == 204
+        con = _sqlite()
+        assert con.execute("SELECT 1 FROM prompt_debug_runs WHERE id=%s", (run_id,)).fetchone() is None
+        con.close()
+

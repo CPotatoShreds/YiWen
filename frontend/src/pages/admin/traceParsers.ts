@@ -2,6 +2,20 @@
 // 纯函数，无 React；渲染组件在 TraceViews.tsx。
 
 import type { LlmTrace, LlmTraceDetail } from "./types";
+import { parseUtc } from "../../time";
+
+/** 行迹状态 → 中文标签。 */
+export const statusLabel = (s: string) =>
+  s === "pending" ? "推演中" : s === "failed" ? "失手" : "已落成";
+
+export const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
+
+/** 后端 naive UTC → 本地（北京）时间，YYYY-MM-DD HH:mm:ss。 */
+export const fmtDt = (iso: string) => {
+  const d = parseUtc(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 
 function norm(s: string): string {
   return s.replace(/\s+/g, "").replace(/[，。；：、,.;：]/g, "");
@@ -53,6 +67,7 @@ export function extractVar(d: LlmTraceDetail, ...keys: string[]): string {
 }
 
 // ---------- 分类 ----------
+export const CAT_DISCUSS = "discuss";
 export const CAT_DEDUCE = "deduce";
 export const CAT_TRANSCRIBE = "transcribe";
 export const CAT_VALIDATE = "validate";
@@ -65,6 +80,7 @@ export const CAT_RAW = "raw";
 
 export function categorize(op: string): string {
   switch (op) {
+    case "discuss": return CAT_DISCUSS;
     case "deduce": return CAT_DEDUCE;
     case "transcribe": return CAT_TRANSCRIBE;
     case "validate": return CAT_VALIDATE;
@@ -78,6 +94,7 @@ export function categorize(op: string): string {
 }
 
 export const CAT_LABEL: Record<string, string> = {
+  [CAT_DISCUSS]: "讨论（战前预演）",
   [CAT_DEDUCE]: "写意开局（上帝视角生成）",
   [CAT_TRANSCRIBE]: "转写（双视角讲述）",
   [CAT_VALIDATE]: "校验",

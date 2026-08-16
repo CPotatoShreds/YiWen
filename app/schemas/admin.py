@@ -68,6 +68,11 @@ class AdminBattleOut(BaseModel):
     guess_state: str
     guess_hit: bool | None = None
     guess_score: float | None = None
+    guess_history: list[str] = []
+    guess_total: int = 0
+    guess_cards: list[dict] | None = None
+    guess_attempts_used: int = 0
+    guess_attempts_max: int = 5
     revealed: bool
     share_token: str | None = None
     share_token_b: str | None = None
@@ -83,6 +88,8 @@ class AdminLoadoutOut(BaseModel):
     enabled: bool
     tactic: str
     ability_count: int = 0
+    battle_count: int = 0
+    abilities: list[AbilityOut] = []
     created_at: datetime
 
 
@@ -308,4 +315,76 @@ class LlmTraceStatsOut(BaseModel):
     total: int
     fail_total: int
     by_operation: list[LlmTraceOpStat]
+
+
+# ---------- 提示词方案调试 ----------
+
+
+class PromptSchemeOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    enabled: bool
+    discuss_prompt: str | None = None
+    deduce_prompt: str | None = None
+    transcribe_prompt: str | None = None
+    validate_prompt: str | None = None
+    repair_prompt: str | None = None
+    usage_prompt: str | None = None
+    guess_pair_prompt: str | None = None
+    guess_verify_prompt: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PromptSchemeIn(BaseModel):
+    """新建/更新方案：name 必填，各环节提示词 None = 用冻结默认。"""
+
+    name: str = Field(min_length=1, max_length=50)
+    description: str = ""
+    enabled: bool = True
+    discuss_prompt: str | None = None
+    deduce_prompt: str | None = None
+    transcribe_prompt: str | None = None
+    validate_prompt: str | None = None
+    repair_prompt: str | None = None
+    usage_prompt: str | None = None
+    guess_pair_prompt: str | None = None
+    guess_verify_prompt: str | None = None
+
+
+class PromptSchemeUpdate(BaseModel):
+    """更新方案：全部可空，None = 保持不变（与 PromptSchemeIn 区别：name 也可不改）。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    description: str | None = None
+    enabled: bool | None = None
+    discuss_prompt: str | None = None
+    deduce_prompt: str | None = None
+    transcribe_prompt: str | None = None
+    validate_prompt: str | None = None
+    repair_prompt: str | None = None
+    usage_prompt: str | None = None
+    guess_pair_prompt: str | None = None
+    guess_verify_prompt: str | None = None
+
+
+class RerunIn(BaseModel):
+    scheme_id: int
+
+
+class PromptDebugRunOut(BaseModel):
+    id: int
+    battle_id: int
+    scheme_id: int
+    scheme_name: str | None = None
+    status: str
+    error: str | None = None
+    story: dict | None = None
+    discuss_report: str = ""
+    winner_side: str | None = None
+    created_at: datetime
+
 

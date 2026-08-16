@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 
 from app.services.llm import build_chat_model
+from app.services.nodes._override import with_system_override
 
 TRANSCRIBE_SYSTEM_PROMPT = """你是记录在你异闻师《异闻录》中的奇人，刚被派出打完一场奇术对决，分出胜负后被传送回异闻录中。现在，你要向自己的异闻师讲述这场战斗的完整经历。
 
@@ -43,9 +44,14 @@ TRANSCRIBE_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_transcribe_chain(llm_config: dict | None = None) -> Runnable:
-    """双视角转写链：对完整上帝叙述做一次性转写，A/B 各一个视角分支并发。"""
+def build_transcribe_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
+    """双视角转写链：对完整上帝叙述做一次性转写，A/B 各一个视角分支并发。
+
+    system_prompt 非空时以它覆盖转写系统指令（提示词方案调试用，须保留 {info}/{god}
+    /{viewer_name} 数据槽）；None 用冻结默认，生产行为不变。
+    """
     llm = build_chat_model(thinking=False, llm_config=llm_config)
+    template = with_system_override(TRANSCRIBE_TEMPLATE, system_prompt)
 
     def _branch(name_key: str) -> Runnable:
         return (
@@ -56,7 +62,7 @@ def build_transcribe_chain(llm_config: dict | None = None) -> Runnable:
                     "viewer_name": inputs[name_key],
                 }
             )
-            | TRANSCRIBE_TEMPLATE
+            | template
             | llm
             | StrOutputParser()
         )

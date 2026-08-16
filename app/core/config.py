@@ -39,12 +39,12 @@ class Settings(BaseSettings):
 
     # LLM 提供商（兼容 OpenAI 协议的任意服务，如 DeepSeek / 通义 / Ollama）
     LLM_PROVIDER: Literal["openai", "deepseek", "anthropic", "ollama"] = "openai"
-    LLM_BASE_URL: str | None = None
+    LLM_BASE_URL: str | None = "https://ws-mfxldgdpk6czro89.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     LLM_API_KEY: str = ""
-    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "qwen3.7-flash"
     # 全局在途 LLM 请求并发上限：单 worker 进程内所有 LLM 调用共享，防并发对决累积的
     # 在途请求打爆服务商 RPM/TPM（此前仅靠逐调用退避，429 风暴下多场同时失败）
-    LLM_MAX_CONCURRENCY: int = 8
+    LLM_MAX_CONCURRENCY: int = 1000
 
     @property
     def auth_cookie_secure(self) -> bool:

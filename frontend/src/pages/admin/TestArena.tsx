@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
-import { parseUtc } from "../../time";
+import Markdown from "../../components/Markdown";
 import {
   CheckIcon,
   EyeIcon,
@@ -11,26 +11,14 @@ import {
 } from "../../components/icons";
 import type {
   Ability,
-  LlmTrace,
-  LlmTraceDetail,
   TestBattle,
-  TestBattleStory,
   TestGuessCard,
   TestLoadout,
   TestUser,
 } from "./types";
-import { CAT_GUESS_PAIR, CAT_LABEL, buildSummary, categorize } from "./traceParsers";
-import { PairGrid, TraceView } from "./TraceViews";
+import { StoryView, TracePanel } from "./chainViews";
 
 const statusLabel = (s: string) => (s === "pending" ? "推演中" : s === "failed" ? "失手" : "已落成");
-
-const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
-const fmtDt = (iso: string) => {
-  // 后端 naive UTC → 本地（北京）时间，保持 YYYY-MM-DD HH:mm:ss 表格式
-  const d = parseUtc(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-};
 
 function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
   return (
@@ -68,8 +56,6 @@ function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
     </div>
   );
 }
-
-const emptyStory = "（无叙述，指定胜负跳过）";
 
 /**
  * 猜词累计描述表：每轮猜测一张表。行 = 本轮拆出的原子叙述，列 = 对家奇术。
@@ -168,166 +154,6 @@ function GuessMatrix({ cards }: { cards: TestGuessCard[] }) {
                 </tbody>
               </table>
             </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function StoryView({ story }: { story: TestBattleStory }) {
-  const [tab, setTab] = useState<"discuss" | "god" | "a" | "b">("god");
-  const content =
-    tab === "discuss"
-      ? story.discuss_report
-      : tab === "god"
-        ? story.narration
-        : tab === "a"
-          ? story.narration_a
-          : story.narration_b;
-  return (
-    <div className="story-view">
-      <div className="admin-tabs">
-        <button className={tab === "discuss" ? "is-active" : ""} onClick={() => setTab("discuss")}>讨论</button>
-        <button className={tab === "god" ? "is-active" : ""} onClick={() => setTab("god")}>上帝视角</button>
-        <button className={tab === "a" ? "is-active" : ""} onClick={() => setTab("a")}>甲 视角</button>
-        <button className={tab === "b" ? "is-active" : ""} onClick={() => setTab("b")}>乙 视角</button>
-      </div>
-      {content ? (
-        <p className="story-view__text" style={{ whiteSpace: "pre-wrap" }}>{content}</p>
-      ) : (
-        <p className="muted">{emptyStory}</p>
-      )}
-    </div>
-  );
-}
-
-function TracePanel({ battleId }: { battleId: number }) {
-  const [traces, setTraces] = useState<LlmTrace[]>([]);
-  const [details, setDetails] = useState<Record<number, LlmTraceDetail>>({});
-  const [open, setOpen] = useState<number | null>(null);
-  const [err, setErr] = useState("");
-
-  const load = () => {
-    Promise.all([
-      api<LlmTrace[]>(`/admin/llm-traces?trace_id=${battleId}&kind=test_battle`),
-      api<LlmTrace[]>(`/admin/llm-traces?trace_id=${battleId}&kind=test_guess`),
-    ])
-      .then(([a, b]) => {
-        const merged = [...a, ...b].sort((x, y) => x.id - y.id);
-        setTraces(merged);
-        setDetails({});
-        setOpen(null);
-      })
-      .catch((e: Error) => setErr(e.message));
-  };
-
-  useEffect(load, [battleId]);
-
-  async function toggleDetail(t: LlmTrace) {
-    if (open === t.id) {
-      setOpen(null);
-      return;
-    }
-    setErr("");
-    try {
-      if (!details[t.id]) {
-        const data = await api<LlmTraceDetail>(`/admin/llm-traces/${t.id}`);
-        setDetails((prev) => ({ ...prev, [t.id]: data }));
-      }
-      setOpen(t.id);
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  }
-
-  // 环节顺序：推演 → 转写 → 校验/修复 → usage → 猜词三环节
-  const ORDER = [
-    "deduce",
-    "transcribe",
-    "validate",
-    "repair",
-    "usage",
-    "guess_split",
-    "guess_pair",
-    "guess_verify",
-  ];
-  const groups = useMemo(() => {
-    const m = new Map<string, LlmTrace[]>();
-    for (const t of traces) {
-      const k = categorize(t.operation);
-      m.set(k, [...(m.get(k) ?? []), t]);
-    }
-    return [...m.entries()].sort(
-      (a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0])
-    );
-  }, [traces]);
-
-  // 汇总头部：usage 判定 + 环节覆盖
-  const summary = useMemo(() => buildSummary(traces, details), [traces, details]);
-  const covered = groups
-    .filter(([k]) => ORDER.includes(k))
-    .map(([k]) => k);
-
-  return (
-    <div className="trace-panel">
-      <div className="trace-panel__bar">
-        <span className="muted">共 {traces.length} 条调用</span>
-        <button className="btn btn-ghost btn-sm" onClick={load}>刷新</button>
-      </div>
-      {err && <p className="err">{err}</p>}
-      {traces.length === 0 && !err && <p className="muted">本次对局暂无 LLM 调用记录。</p>}
-      {traces.length > 0 && (
-        <div className="trace-panel__meta">
-          <span className="trace-panel__meta-item">
-            环节 <b>{covered.length}/{ORDER.length}</b>
-          </span>
-          <span className="trace-panel__meta-item">
-            失败 <b className={traces.some((t) => t.status === "fail") ? "is-bad" : ""}>{traces.filter((t) => t.status === "fail").length}</b>
-          </span>
-          {summary.usedAbilityIdx.length > 0 && (
-            <span className="trace-panel__meta-item">
-              实际使用 <b className="is-used">{summary.usedAbilityIdx.join("、")}</b>
-            </span>
-          )}
-          {summary.usageFailed && <span className="trace-panel__meta-item is-bad">使用判定失败</span>}
-        </div>
-      )}
-      {groups.map(([cat, rows]) => {
-        const isPair = cat === CAT_GUESS_PAIR;
-        return (
-          <div key={cat} className="trace-group">
-            <div className="trace-group__head">
-              <b>{CAT_LABEL[cat] ?? cat}</b>
-              <span className="muted">{rows.length} 次</span>
-            </div>
-            {isPair && rows.length > 1 && (
-              <PairGrid details={rows.map((r) => details[r.id]).filter(Boolean) as LlmTraceDetail[]} />
-            )}
-            {rows.map((t) => (
-              <div className={`trace-row ${open === t.id ? "is-open" : ""}`} key={t.id}>
-                <button className="trace-row__main" onClick={() => toggleDetail(t)}>
-                  <span className={`trace-dot trace-dot--${t.status}`} />
-                  <span className="trace-row__status">
-                    {t.status === "ok" ? "成功" : t.status === "fail" ? "失败" : t.status}
-                  </span>
-                  <span className="trace-row__ms mono">{fmtMs(t.latency_ms)}</span>
-                  <span className="trace-row__tokens mono">{t.tokens_input}→{t.tokens_output}</span>
-                  <span className="trace-row__time mono">{fmtDt(t.created_at)}</span>
-                  <span className="trace-row__op">#{t.id}</span>
-                </button>
-                {open === t.id && (
-                  <div className="trace-row__detail">
-                    {t.error && <p className="err">{t.error}</p>}
-                    {details[t.id] ? (
-                      <TraceView d={details[t.id]} />
-                    ) : (
-                      <p className="muted">加载中…</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
           </div>
         );
       })}
@@ -662,7 +488,7 @@ export default function TestArena() {
               <span className="muted">仅讨论，未推演、未落库</span>
             </div>
             {report ? (
-              <p className="story-view__text" style={{ whiteSpace: "pre-wrap" }}>{report}</p>
+              <Markdown className="story-view__text" text={report} />
             ) : (
               <p className="muted">（讨论失败，未生成报告）</p>
             )}

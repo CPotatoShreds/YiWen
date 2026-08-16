@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
 from app.services.llm import build_chat_model
+from app.services.nodes._override import with_system_override
 
 DISCUSS_SYSTEM_PROMPT = """你是一名严谨公正的论战分析师，负责在战斗推演之前，对两名能力者的异能与战术做全面的理论与实战分析。
 你输出的不是故事、不是剧情、不是任何文学性的叙述，而是一份条理分明的分析报告，供后续的推演者据此生成战斗。
@@ -57,14 +58,17 @@ DISCUSS_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_discuss_llm(llm_config: dict | None = None) -> Runnable:
+def build_discuss_llm(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
     """讨论节点链：DISCUSS_TEMPLATE 格式化双方信息 → 低温 LLM → 纯文本报告。
 
     与 deducer 同一约定（模板 | 模型 | 解析器）：调用方直接传 {"info": ...} 给 chain.ainvoke。
     低温保证报告条理稳定、不滑向故事叙述。
+    system_prompt 非空时以它覆盖讨论系统指令（提示词方案调试用，须保留 {info} 数据槽）；
+    None 用冻结默认，生产行为不变。
     """
+    template = with_system_override(DISCUSS_TEMPLATE, system_prompt)
     return (
-        DISCUSS_TEMPLATE
+        template
         | build_chat_model(thinking=False, max_tokens=8192, temperature=0.2, llm_config=llm_config)
         | StrOutputParser()
     )

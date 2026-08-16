@@ -23,6 +23,11 @@ import AdminRelations from "./pages/admin/AdminRelations";
 import AdminTraffic from "./pages/admin/AdminTraffic";
 import TestArena from "./pages/admin/TestArena";
 import CoreGuessLab from "./pages/admin/CoreGuessLab";
+import BattleChain from "./pages/admin/BattleChain";
+import LoadoutBrowser from "./pages/admin/LoadoutBrowser";
+import LoadoutDetail from "./pages/admin/LoadoutDetail";
+import AdminBattleDetail from "./pages/admin/AdminBattleDetail";
+import PromptSchemes from "./pages/admin/PromptSchemes";
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
@@ -63,8 +68,13 @@ export default function App() {
               <Route path="users" element={<AdminUsers />} />
               <Route path="abilities" element={<AdminAbilities />} />
               <Route path="battles" element={<AdminBattles />} />
+              <Route path="loadouts" element={<LoadoutBrowser />} />
+              <Route path="loadouts/:id" element={<LoadoutDetail />} />
+              <Route path="battles/:id" element={<AdminBattleDetail />} />
               <Route path="relations" element={<AdminRelations />} />
               <Route path="traffic" element={<AdminTraffic />} />
+              <Route path="chain" element={<BattleChain />} />
+              <Route path="prompt-schemes" element={<PromptSchemes />} />
               <Route path="test" element={<TestArena />} />
               <Route path="test/core-guess" element={<CoreGuessLab />} />
             </Route>

@@ -62,6 +62,17 @@ export interface Traffic {
   recent: RequestLog[];
 }
 
+export interface AdminGuessCard {
+  index: number;
+  matched: string[];
+  cracked: boolean;
+  cracked_round: number | null;
+  rounds: number[];
+  verifies: string[];
+  name?: string;
+  effect?: string;
+}
+
 export interface AdminBattle {
   id: number;
   user_a: string | null;
@@ -78,6 +89,11 @@ export interface AdminBattle {
   guess_state: string;
   guess_hit: boolean | null;
   guess_score: number | null;
+  guess_history: string[];
+  guess_total: number;
+  guess_cards: AdminGuessCard[] | null;
+  guess_attempts_used: number;
+  guess_attempts_max: number;
   revealed: boolean;
   share_token: string | null;
   share_token_b: string | null;
@@ -93,6 +109,8 @@ export interface AdminLoadout {
   enabled: boolean;
   tactic: string;
   ability_count: number;
+  battle_count: number;
+  abilities: Ability[];
   created_at: string;
 }
 
@@ -204,4 +222,46 @@ export interface LlmTrace {
 export interface LlmTraceDetail extends LlmTrace {
   request_json: unknown;
   response_json: unknown;
+}
+
+// ---------- 提示词方案调试 ----------
+
+export type PromptStage =
+  | "discuss_prompt"
+  | "deduce_prompt"
+  | "transcribe_prompt"
+  | "validate_prompt"
+  | "repair_prompt"
+  | "usage_prompt"
+  | "guess_pair_prompt"
+  | "guess_verify_prompt";
+
+export interface PromptScheme {
+  id: number;
+  name: string;
+  description: string;
+  enabled: boolean;
+  discuss_prompt: string | null;
+  deduce_prompt: string | null;
+  transcribe_prompt: string | null;
+  validate_prompt: string | null;
+  repair_prompt: string | null;
+  usage_prompt: string | null;
+  guess_pair_prompt: string | null;
+  guess_verify_prompt: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptDebugRun {
+  id: number;
+  battle_id: number;
+  scheme_id: number;
+  scheme_name: string | null;
+  status: string; // pending / done / failed
+  error: string | null;
+  story: TestBattleStory | null;
+  discuss_report: string;
+  winner_side: string | null;
+  created_at: string;
 }

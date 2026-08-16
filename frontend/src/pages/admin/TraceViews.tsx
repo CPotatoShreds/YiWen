@@ -1,8 +1,10 @@
 // LLM 链路适配视图组件：按环节渲染 trace 的解析结果（与 traceViews.ts 的纯函数配套）。
 
+import Markdown from "../../components/Markdown";
 import type { LlmTraceDetail } from "./types";
 import {
   CAT_DEDUCE,
+  CAT_DISCUSS,
   CAT_GUESS_PAIR,
   CAT_GUESS_SPLIT,
   CAT_GUESS_VERIFY,
@@ -83,6 +85,17 @@ export function PairGrid({ details }: { details: LlmTraceDetail[] }) {
 
 export function TraceView({ d }: { d: LlmTraceDetail }) {
   switch (d.operation) {
+    case CAT_DISCUSS:
+      return (
+        <div className="trace-v">
+          <div className="trace-v__resp">
+            <span className="trace-v__label">战前讨论报告</span>
+            <Markdown className="trace-v__text" text={typeof d.response_json === "string" ? d.response_json : "（非文本输出）"} />
+          </div>
+          <JsonToggle label="查看原始请求" obj={d.request_json} />
+        </div>
+      );
+
     case CAT_DEDUCE:
       return (
         <div className="trace-v">

@@ -5,6 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
 from app.services.llm import build_chat_model
+from app.services.nodes._override import with_system_override
 
 DEDUCE_SYSTEM_PROMPT = """你是一个严谨公正的论战师，以上帝视角推演两名能力者的战斗。你是全知叙述者：直述双方的真实行动、异能机制与意图，不隐藏任何信息，也绝不偏向任何一方。
 你应该坚持以角色的能力和战术为核心，禁止使用一些看似合理的文学加工（如意志力硬抗一两秒最后操作一番）影响战局，能力的效果往往是绝对的。“只有能力才能对抗能力”是你推演的信条。
@@ -107,9 +108,12 @@ DEDUCE_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_deduce_chain(llm_config: dict | None = None) -> Runnable:
+def build_deduce_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
     """上帝视角推演链：一次性输出完整对战（纯文本，无结构化），以结尾句声明胜负/平局。
 
     max_tokens 调大：一次性长文，输出被截断会导致结尾句缺失、胜负无法解析。
+    system_prompt 非空时以它覆盖推演系统指令（提示词方案调试用，须保留 {info}/{discuss_report}
+    /{opening}/{ending_*} 数据槽）；None 用冻结默认，生产行为不变。
     """
-    return DEDUCE_TEMPLATE | build_chat_model(thinking=False, max_tokens=8192, llm_config=llm_config) | StrOutputParser()
+    template = with_system_override(DEDUCE_TEMPLATE, system_prompt)
+    return template | build_chat_model(thinking=False, max_tokens=8192, llm_config=llm_config) | StrOutputParser()

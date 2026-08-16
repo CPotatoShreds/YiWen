@@ -28,6 +28,7 @@ from app.models.friendship import Friendship
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
 from app.models.notification import Notification
+from app.models.prompt_debug import PromptDebugRun, PromptScheme
 from app.models.request_log import RequestLog
 from app.models.test_battle import (
     TestBattle,
@@ -53,8 +54,13 @@ from app.schemas.admin import (
     LlmTraceOpStat,
     LlmTraceOut,
     LlmTraceStatsOut,
+    PromptDebugRunOut,
+    PromptSchemeIn,
+    PromptSchemeOut,
+    PromptSchemeUpdate,
     RecentBattle,
     RequestLogOut,
+    RerunIn,
     StatsOut,
     TestBattleOut,
     TestBattleStartIn,
@@ -69,6 +75,7 @@ from app.schemas.admin import (
     TrafficOut,
 )
 from app.services.battle import GUESS_ATTEMPTS_MAX
+from app.services.prompt_debug import rerun_battle
 from app.services.test_battle import (
     generate_test_discuss_report,
     resolve_test_battle,
@@ -115,6 +122,44 @@ def _load_story(raw: str) -> dict | None:
         return json.loads(raw)
     except (ValueError, TypeError):
         return None
+
+
+def _admin_battle_out(
+    b: Battle,
+    name_map: dict[int, str],
+    guess_history: list[str] | None = None,
+    guess_total: int = 0,
+    guess_cards: list[dict] | None = None,
+    guess_attempts_used: int = 0,
+    guess_attempts_max: int = GUESS_ATTEMPTS_MAX,
+) -> AdminBattleOut:
+    """行迹的管理员视角序列化（story 完整上帝视角，含双方奇术表）。"""
+    return AdminBattleOut(
+        id=b.id,
+        user_a=name_map.get(b.user_a_id),
+        user_b=name_map.get(b.user_b_id),
+        winner=name_map.get(b.winner_id) if b.winner_id else None,
+        status=b.status,
+        friendly=b.friendly,
+        story=_load_story(b.story),
+        rank_delta_a=b.rank_delta_a,
+        rank_delta_b=b.rank_delta_b,
+        loadout_a_id=b.loadout_a_id,
+        loadout_b_id=b.loadout_b_id,
+        guess_by=name_map.get(b.guess_by) if b.guess_by else None,
+        guess_state=b.guess_state,
+        guess_hit=b.guess_hit,
+        guess_score=b.guess_score,
+        guess_history=guess_history or [],
+        guess_total=guess_total,
+        guess_cards=guess_cards,
+        guess_attempts_used=guess_attempts_used,
+        guess_attempts_max=guess_attempts_max,
+        revealed=b.revealed,
+        share_token=b.share_token,
+        share_token_b=b.share_token_b,
+        created_at=b.created_at,
+    )
 
 
 # ---------- 仪表盘 ----------
@@ -454,30 +499,7 @@ async def admin_battles(
         if b.guess_by:
             ids.add(b.guess_by)
     name_map = await _names(db, ids)
-    return [
-        AdminBattleOut(
-            id=b.id,
-            user_a=name_map.get(b.user_a_id),
-            user_b=name_map.get(b.user_b_id),
-            winner=name_map.get(b.winner_id) if b.winner_id else None,
-            status=b.status,
-            friendly=b.friendly,
-            story=_load_story(b.story),
-            rank_delta_a=b.rank_delta_a,
-            rank_delta_b=b.rank_delta_b,
-            loadout_a_id=b.loadout_a_id,
-            loadout_b_id=b.loadout_b_id,
-            guess_by=name_map.get(b.guess_by) if b.guess_by else None,
-            guess_state=b.guess_state,
-            guess_hit=b.guess_hit,
-            guess_score=b.guess_score,
-            revealed=b.revealed,
-            share_token=b.share_token,
-            share_token_b=b.share_token_b,
-            created_at=b.created_at,
-        )
-        for b in battles
-    ]
+    return [_admin_battle_out(b, name_map) for b in battles]
 
 
 @router.get("/battles/{battle_id}", response_model=AdminBattleOut)
@@ -496,26 +518,38 @@ async def admin_battle_detail(
     if battle.guess_by:
         ids.add(battle.guess_by)
     name_map = await _names(db, ids)
-    return AdminBattleOut(
-        id=battle.id,
-        user_a=name_map.get(battle.user_a_id),
-        user_b=name_map.get(battle.user_b_id),
-        winner=name_map.get(battle.winner_id) if battle.winner_id else None,
-        status=battle.status,
-        friendly=battle.friendly,
-        story=_load_story(battle.story),
-        rank_delta_a=battle.rank_delta_a,
-        rank_delta_b=battle.rank_delta_b,
-        loadout_a_id=battle.loadout_a_id,
-        loadout_b_id=battle.loadout_b_id,
-        guess_by=name_map.get(battle.guess_by) if battle.guess_by else None,
-        guess_state=battle.guess_state,
-        guess_hit=battle.guess_hit,
-        guess_score=battle.guess_score,
-        revealed=battle.revealed,
-        share_token=battle.share_token,
-        share_token_b=battle.share_token_b,
-        created_at=battle.created_at,
+    # 猜词行一行一猜测者（和局两行）；优先取 battle.guess_by 指向的那行，兜底第一行
+    rows = (
+        (await db.execute(select(BattleGuess).where(BattleGuess.battle_id == battle_id)))
+        .scalars()
+        .all()
+    )
+    guess = next((r for r in rows if r.guesser_id == battle.guess_by), None) if battle.guess_by else None
+    if guess is None and rows:
+        guess = rows[0]
+    guess_total = len(guess.used_abilities) if guess and guess.used_abilities else 0
+    guess_cards = None
+    if guess is not None and guess.used_abilities:
+        guess_cards = [
+            {
+                "index": i + 1,
+                "matched": c["matched"],
+                "cracked": c["cracked"],
+                "cracked_round": c.get("cracked_round"),
+                "rounds": c.get("rounds") or [],
+                "verifies": c.get("verifies") or [],
+                **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+            }
+            for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
+        ]
+    return _admin_battle_out(
+        battle,
+        name_map,
+        guess_history=list(guess.guess_history) if guess else [],
+        guess_total=guess_total,
+        guess_cards=guess_cards,
+        guess_attempts_used=guess.attempts_used if guess else 0,
+        guess_attempts_max=guess.attempts_max if guess else GUESS_ATTEMPTS_MAX,
     )
 
 
@@ -547,24 +581,99 @@ async def admin_loadouts(
     admin: Annotated[User, Depends(get_current_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[AdminLoadoutOut]:
-    """奇人列表（含所装奇术数），按创建时间倒序。"""
+    """奇人列表（含所装奇术、参战数），按创建时间倒序。"""
     ability_cnt = select(func.count()).where(LoadoutAbility.loadout_id == Loadout.id).scalar_subquery()
-    rows = (await db.execute(select(Loadout, ability_cnt.label("ac")).order_by(Loadout.created_at.desc()))).all()
-    name_map = await _names(db, {l.user_id for l, _ in rows})
-    return [
-        AdminLoadoutOut(
-            id=l.id,
-            user_id=l.user_id,
-            username=name_map.get(l.user_id),
-            name=l.name,
-            style=l.style,
-            enabled=l.enabled,
-            tactic=l.tactic,
-            ability_count=ac,
-            created_at=l.created_at,
+    battle_cnt = (
+        select(func.count())
+        .where(or_(Battle.loadout_a_id == Loadout.id, Battle.loadout_b_id == Loadout.id))
+        .scalar_subquery()
+    )
+    rows = (
+        await db.execute(
+            select(Loadout, ability_cnt.label("ac"), battle_cnt.label("bc")).order_by(Loadout.created_at.desc())
         )
-        for l, ac in rows
-    ]
+    ).all()
+    name_map = await _names(db, {l.user_id for l, _, _ in rows})
+    return [await _loadout_out(db, l, name_map.get(l.user_id), ac, bc) for l, ac, bc in rows]
+
+
+async def _loadout_out(
+    db: AsyncSession, l: Loadout, username: str | None, ability_count: int, battle_count: int
+) -> AdminLoadoutOut:
+    """序列化一个奇人（含按装配顺序的奇术）。"""
+    ab_rows = await db.execute(
+        select(Ability)
+        .join(LoadoutAbility, LoadoutAbility.ability_id == Ability.id)
+        .where(LoadoutAbility.loadout_id == l.id)
+        .order_by(LoadoutAbility.added_at)
+    )
+    return AdminLoadoutOut(
+        id=l.id,
+        user_id=l.user_id,
+        username=username,
+        name=(l.name or "").strip() or "奇人",
+        style=l.style,
+        enabled=l.enabled,
+        tactic=l.tactic,
+        ability_count=ability_count,
+        battle_count=battle_count,
+        abilities=[AbilityOut.model_validate(a) for a in ab_rows.scalars().all()],
+        created_at=l.created_at,
+    )
+
+
+@router.get("/loadouts/{loadout_id}", response_model=AdminLoadoutOut)
+async def admin_loadout_detail(
+    loadout_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminLoadoutOut:
+    """单个奇人详情（含所装奇术、参战数）。"""
+    loadout = await db.get(Loadout, loadout_id)
+    if loadout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="奇人不存在")
+    ability_count = (
+        await db.execute(select(func.count()).where(LoadoutAbility.loadout_id == loadout.id))
+    ).scalar_one()
+    battle_count = (
+        await db.execute(
+            select(func.count()).where(or_(Battle.loadout_a_id == loadout.id, Battle.loadout_b_id == loadout.id))
+        )
+    ).scalar_one()
+    username = (await _names(db, {loadout.user_id})).get(loadout.user_id)
+    return await _loadout_out(db, loadout, username, ability_count, battle_count)
+
+
+@router.get("/loadouts/{loadout_id}/battles", response_model=list[AdminBattleOut])
+async def admin_loadout_battles(
+    loadout_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[AdminBattleOut]:
+    """某奇人参与过的全部行迹（甲乙任一侧），按创建时间倒序。"""
+    loadout = await db.get(Loadout, loadout_id)
+    if loadout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="奇人不存在")
+    battles = (
+        (
+            await db.execute(
+                select(Battle)
+                .where(or_(Battle.loadout_a_id == loadout_id, Battle.loadout_b_id == loadout_id))
+                .order_by(Battle.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ids = set()
+    for b in battles:
+        ids.update((b.user_a_id, b.user_b_id))
+        if b.winner_id:
+            ids.add(b.winner_id)
+        if b.guess_by:
+            ids.add(b.guess_by)
+    name_map = await _names(db, ids)
+    return [_admin_battle_out(b, name_map) for b in battles]
 
 
 @router.delete("/loadouts/{loadout_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1246,3 +1355,147 @@ async def admin_llm_trace_detail(
     if trace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="追踪记录不存在")
     return LlmTraceDetailOut.model_validate(trace)
+
+
+# ---------- 提示词方案调试 ----------
+
+
+async def _debug_run_out(db: AsyncSession, run: PromptDebugRun) -> PromptDebugRunOut:
+    """调试记录 → 输出 schema：解析 story JSON + 关联方案名。"""
+    scheme = await db.get(PromptScheme, run.scheme_id)
+    return PromptDebugRunOut(
+        id=run.id,
+        battle_id=run.battle_id,
+        scheme_id=run.scheme_id,
+        scheme_name=scheme.name if scheme else None,
+        status=run.status,
+        error=run.error,
+        story=_load_story(run.story),
+        discuss_report=run.discuss_report,
+        winner_side=run.winner_side,
+        created_at=run.created_at,
+    )
+
+
+@router.get("/prompt-schemes", response_model=list[PromptSchemeOut])
+async def admin_prompt_schemes(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[PromptSchemeOut]:
+    """提示词方案列表（按创建顺序）。"""
+    rows = (await db.execute(select(PromptScheme).order_by(PromptScheme.id))).scalars().all()
+    return [PromptSchemeOut.model_validate(r) for r in rows]
+
+
+@router.post("/prompt-schemes", response_model=PromptSchemeOut, status_code=status.HTTP_201_CREATED)
+async def admin_create_prompt_scheme(
+    data: PromptSchemeIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PromptSchemeOut:
+    """新建方案：name 唯一，各环节提示词空/None = 冻结默认。"""
+    try:
+        scheme = PromptScheme(**data.model_dump())
+        db.add(scheme)
+        await db.commit()
+        await db.refresh(scheme)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="方案名已存在") from None
+    return PromptSchemeOut.model_validate(scheme)
+
+
+@router.patch("/prompt-schemes/{scheme_id}", response_model=PromptSchemeOut)
+async def admin_update_prompt_scheme(
+    scheme_id: int,
+    data: PromptSchemeUpdate,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PromptSchemeOut:
+    """更新方案：只改传入字段（None 保持原值；空字符串 = 清空覆盖、回冻结默认）。"""
+    scheme = await db.get(PromptScheme, scheme_id)
+    if scheme is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="方案不存在")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(scheme, field, value)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="方案名已存在") from None
+    await db.refresh(scheme)
+    return PromptSchemeOut.model_validate(scheme)
+
+
+@router.delete("/prompt-schemes/{scheme_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_prompt_scheme(
+    scheme_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除方案：一并清理其调试记录（对齐 SQLite 无级联的手动清理模式）。"""
+    scheme = await db.get(PromptScheme, scheme_id)
+    if scheme is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="方案不存在")
+    await db.execute(delete(PromptDebugRun).where(PromptDebugRun.scheme_id == scheme_id))
+    await db.delete(scheme)
+    await db.commit()
+
+
+@router.post("/battles/{battle_id}/rerun", response_model=PromptDebugRunOut, status_code=status.HTTP_201_CREATED)
+async def admin_rerun_battle(
+    battle_id: int,
+    data: RerunIn,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PromptDebugRunOut:
+    """用指定方案重跑一场行迹：建 pending 调试记录并后台推演，接口立即返回。"""
+    battle = await db.get(Battle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+    scheme = await db.get(PromptScheme, data.scheme_id)
+    if scheme is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="方案不存在")
+    run = await rerun_battle(db, battle_id, data.scheme_id)
+    return await _debug_run_out(db, run)
+
+
+@router.get("/prompt-debug-runs", response_model=list[PromptDebugRunOut])
+async def admin_prompt_debug_runs(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    battle_id: int | None = Query(default=None),
+) -> list[PromptDebugRunOut]:
+    """调试记录列表：按战场筛选（默认全部），新→旧。"""
+    stmt = select(PromptDebugRun)
+    if battle_id is not None:
+        stmt = stmt.where(PromptDebugRun.battle_id == battle_id)
+    rows = (await db.execute(stmt.order_by(PromptDebugRun.id.desc()))).scalars().all()
+    return [await _debug_run_out(db, r) for r in rows]
+
+
+@router.get("/prompt-debug-runs/{run_id}", response_model=PromptDebugRunOut)
+async def admin_prompt_debug_run_detail(
+    run_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PromptDebugRunOut:
+    """单条调试记录详情（含重跑产物三视角全文）。"""
+    run = await db.get(PromptDebugRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="调试记录不存在")
+    return await _debug_run_out(db, run)
+
+
+@router.delete("/prompt-debug-runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_prompt_debug_run(
+    run_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除单条调试记录（重跑产物是独立调试数据，可随时清理）。"""
+    run = await db.get(PromptDebugRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="调试记录不存在")
+    await db.delete(run)
+    await db.commit()

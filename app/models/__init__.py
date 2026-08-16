@@ -8,6 +8,7 @@ from app.models.llm_profile import LlmProfile
 from app.models.llm_trace import LlmTrace
 from app.models.loadout import Loadout, LoadoutAbility
 from app.models.notification import Notification
+from app.models.prompt_debug import PromptDebugRun, PromptScheme
 from app.models.request_log import RequestLog
 from app.models.test_battle import (
     TestBattle,
@@ -30,6 +31,8 @@ __all__ = [
     "Loadout",
     "LoadoutAbility",
     "Notification",
+    "PromptDebugRun",
+    "PromptScheme",
     "RequestLog",
     "TestBattle",
     "TestBattleGuess",

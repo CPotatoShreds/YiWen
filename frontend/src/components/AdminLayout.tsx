@@ -1,13 +1,16 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3Icon, BookIcon, GearIcon, SwordIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
+import { BarChart3Icon, BookIcon, GearIcon, PencilIcon, ScrollIcon, ShieldIcon, SwordIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
   { to: "/admin/users", label: "异闻师", icon: UsersIcon },
   { to: "/admin/abilities", label: "奇术", icon: BookIcon },
   { to: "/admin/battles", label: "行迹", icon: GearIcon },
+  { to: "/admin/loadouts", label: "奇人", icon: ShieldIcon },
   { to: "/admin/relations", label: "关系", icon: UsersIcon },
   { to: "/admin/traffic", label: "流量", icon: BarChart3Icon },
+  { to: "/admin/chain", label: "链路", icon: ScrollIcon },
+  { to: "/admin/prompt-schemes", label: "提示词方案", icon: PencilIcon },
   { to: "/admin/test", label: "试验场", icon: TestTubeIcon },
   { to: "/admin/test/core-guess", label: "核心一句话", icon: SwordIcon }, // 临时试验：删除时连同页面一并移除
 ];

@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.logger import get_logger, setup_logging
 from app.db.base import Base, engine
 from app.services.battle import recover_pending_battles
+from app.services.prompt_debug import seed_prompt_schemes
 
 logger = get_logger("main")
 
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     await recover_pending_battles()  # 重启后补推遗留 pending，防后台任务孤儿卡死
+    await seed_prompt_schemes()  # 提示词方案表空则写入种子方案（幂等）
     logger.info("app_ready pending=%s", settings.APP_NAME)
     yield
 

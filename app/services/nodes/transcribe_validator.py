@@ -12,6 +12,7 @@ from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 from app.services.llm import build_chat_model
+from app.services.nodes._override import with_system_override
 
 VALIDATE_SYSTEM_PROMPT = """你是转写质检员。把一段「视角叙述」对照以下要求逐条核对，判定是否**全部满足**：
 1. 第一人称、以视角人物为中心，以向自己的异闻师讲述经历的口吻，完整讲完这场对战直到胜负分明；只讲 TA 亲眼所见、亲耳所闻、亲身经历与内心判断（或其能力获取到的信息）；TA 不知道的内容一律不能写；TA 失去意识的时间段内不能写任何内容。
@@ -45,9 +46,14 @@ class TranscribeVerdict(BaseModel):
     )
 
 
-def build_validate_chain(llm_config: dict | None = None) -> Runnable:
-    """单侧转写校验链：结构化输出 TranscribeVerdict（method="function_calling"——DeepSeek 唯一可用方式）。"""
-    return VALIDATE_TEMPLATE | build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
+def build_validate_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
+    """单侧转写校验链：结构化输出 TranscribeVerdict（method="function_calling"——DeepSeek 唯一可用方式）。
+
+    system_prompt 非空时以它覆盖校验系统指令（提示词方案调试用，须保留 {info}/{god}
+    /{viewer_name}/{narration} 数据槽）；None 用冻结默认，生产行为不变。
+    """
+    template = with_system_override(VALIDATE_TEMPLATE, system_prompt)
+    return template | build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
         TranscribeVerdict, method="function_calling"
     )
 
@@ -79,6 +85,11 @@ REPAIR_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
-def build_repair_chain(llm_config: dict | None = None) -> Runnable:
-    """单侧修复链：按质检违规点重写视角叙述，纯文本输出。"""
-    return REPAIR_TEMPLATE | build_chat_model(thinking=False, llm_config=llm_config) | StrOutputParser()
+def build_repair_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
+    """单侧修复链：按质检违规点重写视角叙述，纯文本输出。
+
+    system_prompt 非空时以它覆盖修复系统指令（提示词方案调试用，须保留 {info}/{god}
+    /{viewer_name}/{narration}/{violations} 数据槽）；None 用冻结默认，生产行为不变。
+    """
+    template = with_system_override(REPAIR_TEMPLATE, system_prompt)
+    return template | build_chat_model(thinking=False, llm_config=llm_config) | StrOutputParser()
