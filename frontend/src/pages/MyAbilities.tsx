@@ -1,11 +1,37 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
 import type { Ability, Loadout } from "../types";
-import { LOADOUT_NUMBERS, loadoutLabel } from "../types";
+import { LOADOUT_NUMBERS, loadoutLabel, parseUnderstanding } from "../types";
 import { CheckIcon, PencilIcon, PlusIcon, ScrollIcon, TrashIcon, XIcon } from "../components/icons";
 
 const MAX_SLOTS = 4; // 每位奇人最多装配 4 个奇术
+
+// 三相因果槽位的展示配置（与后端 Phase 对应）
+const PHASE_LABELS: { key: "pre" | "mid" | "post"; label: string }[] = [
+  { key: "pre", label: "契相" },
+  { key: "mid", label: "显相" },
+  { key: "post", label: "果相" },
+];
+
+// 字段字数上限（与后端 AbilitySetIn 的 max_length 对齐）
+const FIELD_LIMITS = { name: 10, effect: 50, detail: 500 };
+
+// 三相理论简介（弹窗问号悬浮提示，与 services/ability_understanding.py 的三相提示词同源）
+// 契相/显相/果相 等专有名词主题红；「至少一相」主题红加粗
+function ThreePhaseTheory() {
+  return (
+    <>
+      三相理论：任何奇术都须在「<em className="tip-help__term">契相</em>」「<em className="tip-help__term">显相</em>」「<em className="tip-help__term">果相</em>」<strong className="tip-help__term">至少一相</strong>与世界共鸣，才能使其蕴含的力量降临；共鸣「相」的数量越多，「相」本身的效果越好，奇术的效果就越强。若三相皆无，奇术效果将被削弱至近乎为零。
+      <br />
+      「<em className="tip-help__term">契相</em>」：启动前置。发动前须向世界支付的仪式、动作、时间与交互让渡。
+      <br />
+      「<em className="tip-help__term">显相</em>」：运作机制。能力如何干涉现实、令其生效的过程与机理解释。
+      <br />
+      「<em className="tip-help__term">果相</em>」：代价反噬。结算后的系统负债、自损与对等规则。
+    </>
+  );
+}
 
 // 奇术信息悬浮提示：鼠标悬浮显示名目与效果
 function Tip({ label, children }: { label: string; children: ReactNode }) {
@@ -21,6 +47,7 @@ function AbilityModal({
   editing,
   name,
   effect,
+  detail,
   busy,
   onChange,
   onSave,
@@ -29,8 +56,9 @@ function AbilityModal({
   editing: Ability | null;
   name: string;
   effect: string;
+  detail: string;
   busy: boolean;
-  onChange: (p: { name?: string; effect?: string }) => void;
+  onChange: (p: { name?: string; effect?: string; detail?: string }) => void;
   onSave: () => void;
   onClose: () => void;
 }) {
@@ -42,6 +70,11 @@ function AbilityModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const over =
+    name.length > FIELD_LIMITS.name ||
+    effect.length > FIELD_LIMITS.effect ||
+    detail.length > FIELD_LIMITS.detail;
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -51,25 +84,53 @@ function AbilityModal({
             <XIcon size={16} />
           </button>
         </div>
+        <p className="muted" style={{ padding: "0 2px 14px", lineHeight: 1.7 }}>
+          奇术写下后，AI 会基于三相理论对其进行解析
+          <span className="tip tip-help" tabIndex={0}>
+            <span className="tip-help__mark">?</span>
+            <span className="tip__bubble"><ThreePhaseTheory /></span>
+          </span>
+        </p>
         <div className="field">
           <label htmlFor="ab-name">名目</label>
+          <span className={`char-count${name.length > FIELD_LIMITS.name ? " char-count--over" : ""}`}>
+            {name.length}/{FIELD_LIMITS.name}
+          </span>
           <input
             id="ab-name"
             className="input"
             value={name}
+            maxLength={FIELD_LIMITS.name}
             onChange={(e) => onChange({ name: e.target.value })}
-            placeholder="如：燃烬之握"
             autoFocus
           />
         </div>
         <div className="field">
           <label htmlFor="ab-effect">效果</label>
+          <span className={`char-count${effect.length > FIELD_LIMITS.effect ? " char-count--over" : ""}`}>
+            {effect.length}/{FIELD_LIMITS.effect}
+          </span>
           <textarea
             id="ab-effect"
             className="textarea"
             value={effect}
+            maxLength={FIELD_LIMITS.effect}
             onChange={(e) => onChange({ effect: e.target.value })}
-            placeholder="如：接触的物体被点燃为不会熄灭的火焰，火焰温度随心念升降"
+            rows={4}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="ab-detail">详细阐述</label>
+          <span className={`char-count${detail.length > FIELD_LIMITS.detail ? " char-count--over" : ""}`}>
+            {detail.length}/{FIELD_LIMITS.detail}
+          </span>
+          <textarea
+            id="ab-detail"
+            className="textarea"
+            value={detail}
+            maxLength={FIELD_LIMITS.detail}
+            onChange={(e) => onChange({ detail: e.target.value })}
+            placeholder="在此处进一步阐述奇术的限制、具体实现方式、代价以及其他的效果细节；阐述内容越详细，AI 理解越准确；如果 AI 的三相解析与您预期不符，也可于此处添加适当解释，帮助 AI 理解"
             rows={4}
           />
         </div>
@@ -77,7 +138,7 @@ function AbilityModal({
           <button className="btn btn-ghost" onClick={onClose}>
             作罢
           </button>
-          <button className="btn btn-primary" onClick={onSave} disabled={busy || !name.trim() || !effect.trim()}>
+          <button className="btn btn-primary" onClick={onSave} disabled={busy || over || !name.trim() || !effect.trim()}>
             <PlusIcon size={15} />
             {busy ? "写入中…" : editing ? "存下修订" : "写下奇术"}
           </button>
@@ -134,19 +195,34 @@ function ConfirmDialog({
   );
 }
 
-function CharacterModal({
+// 两步向导：第 1 步从奇术库勾选 1-4 门，第 2 步填姓名/角色介绍/战术
+function CreateLoadoutWizard({
+  step,
+  picked,
+  pool,
   busy,
   name,
   style,
   tactic,
+  err,
+  onToggle,
+  onNext,
+  onBack,
   onChange,
   onSave,
   onClose,
 }: {
+  step: 1 | 2;
+  picked: Set<string>;
+  pool: Ability[];
   busy: boolean;
   name: string;
   style: string;
   tactic: string;
+  err: string;
+  onToggle: (id: string) => void;
+  onNext: () => void;
+  onBack: () => void;
   onChange: (p: { name?: string; style?: string; tactic?: string }) => void;
   onSave: () => void;
   onClose: () => void;
@@ -161,60 +237,107 @@ function CharacterModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <div className="modal picker-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head">
-          <h3>新增奇人</h3>
+          <h3>{step === 1 ? "新增奇人 · 选奇术" : "新增奇人 · 立名目"}</h3>
           <button className="modal__close" onClick={onClose} aria-label="关闭">
             <XIcon size={16} />
           </button>
         </div>
-        <div className="field">
-          <label htmlFor="ld-name">姓名</label>
-          <input
-            id="ld-name"
-            className="input"
-            value={name}
-            onChange={(e) => onChange({ name: e.target.value })}
-            placeholder="如：白鹤仙人"
-            autoFocus
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="ld-style">战斗风格</label>
-          <input
-            id="ld-style"
-            className="input"
-            value={style}
-            onChange={(e) => onChange({ style: e.target.value })}
-            placeholder="可选，如：轻功卓绝，来去无踪"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="ld-tactic">战术</label>
-          <textarea
-            id="ld-tactic"
-            className="textarea"
-            value={tactic}
-            onChange={(e) => onChange({ tactic: e.target.value })}
-            placeholder="这位奇人该怎么打…（可选）"
-            rows={3}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button className="btn btn-ghost" onClick={onClose}>
-            作罢
-          </button>
-          <button className="btn btn-primary" onClick={onSave} disabled={busy || !name.trim()}>
-            <PlusIcon size={15} />
-            {busy ? "写入中…" : "立起奇人"}
-          </button>
-        </div>
+        {step === 1 ? (
+          <>
+            <p className="muted" style={{ padding: "2px 2px 12px" }}>
+              第 1 步：从奇术库勾选 1-4 门奇术，点「生成 →」。
+            </p>
+            {pool.length === 0 ? (
+              <p className="muted" style={{ padding: "8px 2px 14px" }}>
+                奇术篇是空的。先去写下奇术，再来立起奇人。
+              </p>
+            ) : (
+              <div className="picker">
+                {pool.map((a) => {
+                  const sel = picked.has(a.id);
+                  return (
+                    <Tip key={a.id} label={`${a.name}：${a.effect}`}>
+                      <button className={`picker-item${sel ? " is-on" : ""}`} onClick={() => onToggle(a.id)}>
+                        <span className="picker-item__name">{a.name}</span>
+                        <span className="picker-item__eff">{a.effect}</span>
+                        {sel && (
+                          <span className="picker-item__check">
+                            <CheckIcon size={16} />
+                          </span>
+                        )}
+                      </button>
+                    </Tip>
+                  );
+                })}
+              </div>
+            )}
+            {err && <p className="err" style={{ margin: "4px 2px 0" }}>{err}</p>}
+            <div className="poker__count" style={{ marginTop: 8 }}>
+              已选 {picked.size} / 最多 {MAX_SLOTS}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn btn-ghost" onClick={onClose}>
+                作罢
+              </button>
+              <button className="btn btn-primary" onClick={onNext} disabled={picked.size === 0}>
+                <ScrollIcon size={15} />
+                生成 →
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="field">
+              <label htmlFor="wz-name">姓名</label>
+              <input
+                id="wz-name"
+                className="input"
+                value={name}
+                onChange={(e) => onChange({ name: e.target.value })}
+                autoFocus
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="wz-style">角色介绍</label>
+              <input
+                id="wz-style"
+                className="input"
+                value={style}
+                onChange={(e) => onChange({ style: e.target.value })}
+                placeholder="可选，角色相关信息，如性格特征、个人习惯、行事风格等"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="wz-tactic">战术</label>
+              <textarea
+                id="wz-tactic"
+                className="textarea"
+                value={tactic}
+                onChange={(e) => onChange({ tactic: e.target.value })}
+                placeholder="可于此处基于角色拥有的奇术制定战术，推演战斗时，角色会依据战术指导行动"
+                rows={3}
+              />
+            </div>
+            {err && <p className="err" style={{ margin: "4px 2px 0" }}>{err}</p>}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn btn-ghost" onClick={onBack}>
+                上一步
+              </button>
+              <button className="btn btn-primary" onClick={onSave} disabled={busy || !name.trim()}>
+                <PlusIcon size={15} />
+                {busy ? "写入中…" : "立起奇人"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// 编辑奇人（姓名 / 战斗风格 / 战术）：点击卡上「编辑」按钮后悬浮修改
+// 编辑奇人（姓名 / 角色介绍 / 战术）：点击卡上「编辑」按钮后悬浮修改
 function EditLoadoutModal({
   busy,
   name,
@@ -260,13 +383,13 @@ function EditLoadoutModal({
           />
         </div>
         <div className="field">
-          <label htmlFor="e-ld-style">战斗风格</label>
+          <label htmlFor="e-ld-style">角色介绍</label>
           <input
             id="e-ld-style"
             className="input"
             value={style}
             onChange={(e) => onChange({ style: e.target.value })}
-            placeholder="可选，如：轻功卓绝，来去无踪"
+            placeholder="可选，角色相关信息，如性格特征、个人习惯、行事风格等"
           />
         </div>
         <div className="field">
@@ -276,7 +399,7 @@ function EditLoadoutModal({
             className="textarea"
             value={tactic}
             onChange={(e) => onChange({ tactic: e.target.value })}
-            placeholder="这位奇人该怎么打…（可选）"
+            placeholder="可于此处基于角色拥有的奇术制定战术，推演战斗时，角色会依据战术指导行动"
             rows={3}
           />
         </div>
@@ -387,13 +510,18 @@ export default function MyAbilities() {
   const [editing, setEditing] = useState<Ability | null>(null);
   const [name, setName] = useState("");
   const [effect, setEffect] = useState("");
+  const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [awaiting, setAwaiting] = useState<Set<string>>(new Set()); // 刚保存、槽位尚在后台生成的奇术 id
 
-  // 新增奇人
+  // 新增奇人（两步向导）
   const [charModal, setCharModal] = useState(false);
+  const [charStep, setCharStep] = useState<1 | 2>(1);
   const [charName, setCharName] = useState("");
   const [charStyle, setCharStyle] = useState("");
   const [charTactic, setCharTactic] = useState("");
+  const [charPicked, setCharPicked] = useState<Set<string>>(new Set());
+  const [charErr, setCharErr] = useState("");
 
   // 编辑奇人（悬浮窗）
   const [editLd, setEditLd] = useState<Loadout | null>(null);
@@ -409,25 +537,6 @@ export default function MyAbilities() {
   // 删除确认（奇术/奇人通用）
   const [confirm, setConfirm] = useState<{ kind: "ability" | "loadout"; id: string | number; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // 上榜（冻结刻印）
-  const [boardBusy, setBoardBusy] = useState<number | null>(null);
-  const [notice, setNotice] = useState("");
-
-  async function putOnBoard(l: Loadout) {
-    setBoardBusy(l.id);
-    setErr("");
-    setNotice("");
-    try {
-      await api("/board", { method: "POST", body: JSON.stringify({ loadout_id: l.id }) });
-      setNotice(`「${l.name}」已刻印上榜，奇人榜可被点将挑战。`);
-      window.setTimeout(() => setNotice(""), 4000);
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setBoardBusy(null);
-    }
-  }
 
   async function load() {
     try {
@@ -453,12 +562,14 @@ export default function MyAbilities() {
     setEditing(null);
     setName("");
     setEffect("");
+    setDetail("");
     setModal(true);
   }
   function openEdit(a: Ability) {
     setEditing(a);
     setName(a.name);
     setEffect(a.effect);
+    setDetail(a.detail ?? "");
     setModal(true);
   }
 
@@ -466,19 +577,15 @@ export default function MyAbilities() {
     setBusy(true);
     setErr("");
     try {
-      if (editing) {
-        await api(`/abilities/${editing.id}`, {
-          method: "PUT",
-          body: JSON.stringify({ name: name.trim(), effect: effect.trim() }),
-        });
-      } else {
-        await api("/abilities", {
-          method: "POST",
-          body: JSON.stringify({ name: name.trim(), effect: effect.trim() }),
-        });
-      }
+      const body = JSON.stringify({ name: name.trim(), effect: effect.trim(), detail: detail.trim() });
+      const saved = editing
+        ? await api<Ability>(`/abilities/${editing.id}`, { method: "PUT", body })
+        : await api<Ability>("/abilities", { method: "POST", body });
       setModal(false);
       await load();
+      // 槽位在后台异步生成：短轮询直到出现或超时（带 ?t= 绕过 SWR 缓存）
+      setAwaiting((s) => new Set(s).add(saved.id));
+      void pollSlot(saved.id);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -486,9 +593,54 @@ export default function MyAbilities() {
     }
   }
 
+  // 保存后轮询 /abilities/mine，槽位出现即停止；最多 6 次、每 2.5s 一次
+  async function pollSlot(id: string) {
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const fresh = await api<Ability[]>(`/abilities/mine?t=${Date.now()}`);
+        setList(fresh);
+        if (fresh.find((x) => x.id === id)?.understanding) break;
+      } catch {
+        // 单次失败静默，下一轮再试
+      }
+    }
+    setAwaiting((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function openCreateChar() {
+    setCharStep(1);
+    setCharName("");
+    setCharStyle("");
+    setCharTactic("");
+    setCharPicked(new Set());
+    setCharErr("");
+    setCharModal(true);
+  }
+  function toggleCharPicked(id: string) {
+    setCharErr("");
+    if (charPicked.has(id)) {
+      const next = new Set(charPicked);
+      next.delete(id);
+      setCharPicked(next);
+      return;
+    }
+    if (charPicked.size >= MAX_SLOTS) {
+      setCharErr(`每位奇人最多装配 ${MAX_SLOTS} 个奇术，已满。`);
+      return;
+    }
+    const next = new Set(charPicked);
+    next.add(id);
+    setCharPicked(next);
+  }
+
   async function createCharacter() {
     setBusy(true);
-    setErr("");
+    setCharErr("");
     try {
       await api("/loadouts", {
         method: "POST",
@@ -496,12 +648,13 @@ export default function MyAbilities() {
           name: charName.trim(),
           style: charStyle.trim(),
           tactic: charTactic.trim(),
+          ability_ids: [...charPicked],
         }),
       });
       setCharModal(false);
       await load(); // 立起后横向列表已含新奇人
     } catch (e: any) {
-      setErr(e.message);
+      setCharErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -612,39 +765,6 @@ export default function MyAbilities() {
     }
   }
 
-  // 横向列表拖动：鼠标 Pointer Events 手拖滚动（触屏走浏览器原生滚动，不接管）。
-  // 不用 setPointerCapture——它会把 click 重定向到 rail，让卡内按钮/登台开关收不到点击；
-  // 鼠标指针按下时本就隐式捕获，move/up 事件会冒泡回 rail。拖动超 5px 视为滚动，
-  // 用 suppress 标记吞掉随之而来的那一次 click，避免误触卡内控件。
-  const railRef = useRef<HTMLDivElement>(null);
-  const drag = useRef({ startX: 0, startLeft: 0, down: false, moved: false, suppress: false });
-
-  function onRailDown(e: React.PointerEvent<HTMLDivElement>) {
-    const el = railRef.current;
-    if (!el) return;
-    drag.current = { startX: e.clientX, startLeft: el.scrollLeft, down: true, moved: false, suppress: false };
-  }
-  function onRailMove(e: React.PointerEvent<HTMLDivElement>) {
-    const d = drag.current;
-    const el = railRef.current;
-    if (!d.down || !el || e.pointerType !== "mouse") return;
-    const dx = e.clientX - d.startX;
-    if (Math.abs(dx) > 5) d.moved = true;
-    el.scrollLeft = d.startLeft - dx;
-  }
-  function onRailUp() {
-    const d = drag.current;
-    if (d.down && d.moved) d.suppress = true;
-    d.down = false;
-  }
-  function onRailClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (drag.current.suppress) {
-      drag.current.suppress = false;
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }
-
   const pool = pickerLd ? list.filter((a) => !pickerLd.abilities.some((x) => x.id === a.id)) : [];
 
   return (
@@ -656,9 +776,8 @@ export default function MyAbilities() {
         </p>
       </div>
       {err && <p className="err">{err}</p>}
-      {notice && <div className="banner banner--hit" style={{ marginTop: 12 }}><span className="banner__icon"><CheckIcon size={18} /></span><div><p>{notice}</p></div></div>}
 
-      {/* 奇人篇：横向滚动列表 + 拖动条 */}
+      {/* 奇人篇：响应式网格扁平卡 */}
       <div className="section-head" style={{ marginTop: 20 }}>
         <h2 className="section-title">
           奇人篇
@@ -674,35 +793,21 @@ export default function MyAbilities() {
         <div className="empty" style={{ marginTop: 8 }}>
           <PlusIcon size={22} />
           <h3>奇人篇还是空的</h3>
-          <p>立起第一位奇人——名字必填，之后装入奇术并解封即可启程。</p>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setCharName("");
-              setCharStyle("");
-              setCharTactic("");
-              setCharModal(true);
-            }}
-          >
+          <p>立起第一位奇人——先勾选 1-4 门奇术，再填姓名与角色介绍，解封即可启程。</p>
+          <button className="btn btn-primary" onClick={openCreateChar}>
             <PlusIcon size={15} />
             立起第一位奇人
           </button>
         </div>
       ) : (
-        <div
-          className="char-rail"
-          ref={railRef}
-          onPointerDown={onRailDown}
-          onPointerMove={onRailMove}
-          onPointerUp={onRailUp}
-          onPointerCancel={onRailUp}
-          onClickCapture={onRailClick}
-        >
+        <div className="char-grid">
           {loadouts.map((l, i) => (
-            <div className={`poker${l.enabled ? " is-on" : ""}`} key={l.id}>
-              <div className="poker__head">
-                <span className="poker__seal">{LOADOUT_NUMBERS[i] ?? i + 1}</span>
-                <span className="poker__name">{loadoutLabel(l, i)}</span>
+            <div className={`char-card char-card--manage${l.enabled ? " is-on" : ""}`} key={l.id}>
+              <div className="char-card__head">
+                <span className="char-card__name">
+                  <span className="seal">{LOADOUT_NUMBERS[i] ?? i + 1}</span>
+                  {loadoutLabel(l, i)}
+                </span>
                 <label className="toggle" title={l.enabled ? "点击未解封" : "点击解封"}>
                   <input
                     type="checkbox"
@@ -712,73 +817,65 @@ export default function MyAbilities() {
                   <span className="toggle__track" />
                 </label>
               </div>
-              <p className="poker__style">{l.style || "　"}</p>
+              {l.style && (
+                <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+                  {l.style}
+                </p>
+              )}
 
-              <div className="poker__slots">
-                {l.abilities.map((a) => (
-                  <Tip key={a.id} label={`${a.name}：${a.effect}`}>
-                    <span className="poker__chip">
-                      {a.name}
-                      <button
-                        className="chip-x"
-                        onClick={() => removeAbility(l, a.id)}
-                        aria-label={`卸下 ${a.name}`}
-                        title="卸下"
-                      >
-                        <XIcon size={12} />
-                      </button>
-                    </span>
-                  </Tip>
-                ))}
-                {Array.from({ length: Math.max(0, MAX_SLOTS - l.abilities.length) }, (_, j) => (
-                  <span className="poker__chip-empty" key={`empty-${j}`}>
-                    <PlusIcon size={12} />
-                    空位（点下方「装入」）
-                  </span>
-                ))}
+              <div className="char-card__slots">
+                {Array.from({ length: MAX_SLOTS }, (_, j) => {
+                  const a = l.abilities[j];
+                  if (a) {
+                    return (
+                      <Tip key={a.id} label={`${a.name}：${a.effect}`}>
+                        <span className="char-card__slot char-card__slot--on">
+                          <span className="char-card__slot-name">{a.name}</span>
+                          <button
+                            className="chip-x"
+                            onClick={() => removeAbility(l, a.id)}
+                            aria-label={`卸下 ${a.name}`}
+                            title="卸下"
+                          >
+                            <XIcon size={12} />
+                          </button>
+                        </span>
+                      </Tip>
+                    );
+                  }
+                  return (
+                    <button
+                      className="char-card__slot char-card__slot--empty"
+                      key={`empty-${j}`}
+                      onClick={() => openPicker(l)}
+                      title="装入奇术"
+                    >
+                      <PlusIcon size={12} />
+                      空位
+                    </button>
+                  );
+                })}
               </div>
 
-              <p className="poker__count">
-                {l.abilities.length}/{MAX_SLOTS} 奇术
-              </p>
-              <div className="poker__foot">
+              <div className="char-card__foot">
                 <button className="btn btn-ghost btn-sm" onClick={() => openEditLd(l)}>
                   <PencilIcon size={14} />
                   编辑
                 </button>
-                <button className="btn btn-primary btn-sm" onClick={() => openPicker(l)}>
-                  <PlusIcon size={14} />
-                  装入
-                </button>
                 <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => putOnBoard(l)}
-                  disabled={l.abilities.length === 0 || boardBusy === l.id}
-                  title={l.abilities.length === 0 ? "先装入至少一个奇术才能上榜" : "上榜 = 冻结当前状态为刻印，供他人点将"}
-                >
-                  <ScrollIcon size={14} />
-                  {boardBusy === l.id ? "刻印中…" : "上榜"}
-                </button>
-                <button
-                  className="btn btn-danger btn-sm btn-icon"
+                  className="btn btn-danger btn-sm"
                   onClick={() => setConfirm({ kind: "loadout", id: l.id, name: loadoutLabel(l, i) })}
-                  title="删除奇人"
-                  aria-label="删除奇人"
                 >
                   <TrashIcon size={14} />
+                  删除
                 </button>
               </div>
             </div>
           ))}
 
           <button
-            className="poker-add"
-            onClick={() => {
-              setCharName("");
-              setCharStyle("");
-              setCharTactic("");
-              setCharModal(true);
-            }}
+            className="char-card char-card--add"
+            onClick={openCreateChar}
             disabled={loadouts.length >= maxLoadouts}
             title={
               loadouts.length >= maxLoadouts
@@ -786,7 +883,7 @@ export default function MyAbilities() {
                 : undefined
             }
           >
-            <PlusIcon size={20} />
+            <PlusIcon size={22} />
             <span>{loadouts.length >= maxLoadouts ? `槽位已满 ${maxLoadouts}/${maxLoadouts}` : "新增奇人"}</span>
           </button>
         </div>
@@ -805,13 +902,14 @@ export default function MyAbilities() {
         <div className="empty" style={{ marginTop: 8 }}>
           <PlusIcon size={22} />
           <h3>奇术篇还是空的</h3>
-          <p>点击右上角「新增奇术」，写下第一招奇术的名目与效果，再装入奇人解封。</p>
+          <p>点击右上角「新增奇术」，写下第一招奇术的名目、效果与详细解释，再装入奇人解封。</p>
         </div>
       ) : (
         list.map((a) => {
           const chars = loadouts
             .map((l, i) => (l.abilities.some((x) => x.id === a.id) ? i : -1))
             .filter((n) => n >= 0);
+          const slot = parseUnderstanding(a.understanding);
           return (
             <div className="ability-item rise" key={a.id}>
               <div className="ability-item__body">
@@ -824,6 +922,30 @@ export default function MyAbilities() {
                   ))}
                 </div>
                 <p className="ability-item__effect">{a.effect}</p>
+                {a.detail && <p className="ability-item__detail">{a.detail}</p>}
+                {awaiting.has(a.id) && !slot ? (
+                  <p className="ability-item__pending">因果解析生成中…</p>
+                ) : null}
+                {slot && (slot.verdict.zero_phase || PHASE_LABELS.some(({ key }) => slot[key].present)) && (
+                  <div className="ability-slot">
+                    {slot.verdict.zero_phase && (
+                      <div className="ability-slot__zero">
+                        <span className="ability-slot__zero-pill">三相皆无</span>
+                        <span className="ability-slot__zero-note">奇术效果被削弱至近乎为零</span>
+                      </div>
+                    )}
+                    {PHASE_LABELS.map(({ key, label }) => {
+                      const ph = slot[key];
+                      if (!ph.present) return null;
+                      return (
+                        <div className="ability-slot__phase" key={key}>
+                          <span className="ability-slot__phase-label">{label}</span>
+                          <span className="ability-slot__phase-text">{ph.text}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div className="ability-item__actions">
                 <button className="btn btn-ghost btn-sm btn-icon" onClick={() => openEdit(a)} title="修订" aria-label="修订">
@@ -848,21 +970,30 @@ export default function MyAbilities() {
           editing={editing}
           name={name}
           effect={effect}
+          detail={detail}
           busy={busy}
           onChange={(p) => {
             if (p.name !== undefined) setName(p.name);
             if (p.effect !== undefined) setEffect(p.effect);
+            if (p.detail !== undefined) setDetail(p.detail);
           }}
           onSave={save}
           onClose={() => setModal(false)}
         />
       )}
       {charModal && (
-        <CharacterModal
+        <CreateLoadoutWizard
+          step={charStep}
+          picked={charPicked}
+          pool={list}
           busy={busy}
           name={charName}
           style={charStyle}
           tactic={charTactic}
+          err={charErr}
+          onToggle={toggleCharPicked}
+          onNext={() => setCharStep(2)}
+          onBack={() => setCharStep(1)}
           onChange={(p) => {
             if (p.name !== undefined) setCharName(p.name);
             if (p.style !== undefined) setCharStyle(p.style);

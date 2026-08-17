@@ -1,12 +1,12 @@
 """【临时试验节点，不编排进任何链路】单条奇术的一句话描述。
 
-接收奇术原始字段（名称/效果/补充说明/战术，不含 AI 理解——避免预生成理解污染试验输入），
+接收奇术原始字段（名称/效果/补充说明，不含 AI 理解——避免预生成理解污染试验输入），
 LLM 输出一句话概括。仅作试验用，不出现在推演/猜词编排中。
 
 调用示例（等幂，需自行调用 ensure_xxx 或直接 ainvoke）：
     msgs = DESCRIBE_TEMPLATE.format_messages(
         name=ability.name, effect=ability.effect,
-        detail=ability.detail, tactic=ability.tactic,
+        detail=ability.detail,
     )
     text = await ainvoke_with_reliability(
         build_describer_llm(), msgs, operation="ability_describe",
@@ -24,8 +24,7 @@ DESCRIBE_PROMPT = """你是异能设定分析师。给定一条奇术的完整�
 
 【名称】{name}
 【效果】{effect}
-【补充说明】{detail}
-【战术用法】{tactic}"""
+【补充说明】{detail}"""
 
 DESCRIBE_TEMPLATE = ChatPromptTemplate.from_messages([("system", DESCRIBE_PROMPT)])
 

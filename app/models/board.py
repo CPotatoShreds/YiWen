@@ -19,9 +19,9 @@ class BoardEntry(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)  # 榜主
     loadout_id: Mapped[int | None] = mapped_column(ForeignKey("loadouts.id"), nullable=True)  # 来源奇人（仅溯源，删除不清榜）
     name: Mapped[str] = mapped_column(Text, server_default="")  # 奇人姓名（刻印）
-    style: Mapped[str] = mapped_column(Text, server_default="")  # 战斗风格（刻印）
+    style: Mapped[str] = mapped_column(Text, server_default="")  # 角色介绍（原战斗风格，刻印）
     tactic: Mapped[str] = mapped_column(Text, server_default="")  # 战术（刻印，榜上仅保密展示）
-    abilities: Mapped[list] = mapped_column(JSON, default=list)  # [{name, effect, detail, tactic, understanding}] 冻结奇术快照（榜上保密，发起对决时作快照）
+    abilities: Mapped[list] = mapped_column(JSON, default=list)  # [{name, effect, detail, understanding}] 冻结奇术快照（榜上保密，发起对决时作快照）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

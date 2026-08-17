@@ -57,12 +57,12 @@ class DeductionResult:
 
 
 def _render_ability(a: Ability) -> str:
-    """单条异能渲染为推演输入文本（有值才附补充说明/战术各行）。"""
+    """单条异能渲染为推演输入文本（有值才附详细解释/因果槽位）。"""
     lines = [f"- {a.name}：{a.effect}"]
     if a.detail:
-        lines.append(f"  补充说明：{a.detail}")
-    if a.tactic:
-        lines.append(f"  我会怎么用：{a.tactic}")
+        lines.append(f"  详细解释：{a.detail}")
+    if a.understanding:
+        lines.append(f"  因果槽位：{a.understanding}")
     return "\n".join(lines)
 
 

@@ -3,8 +3,50 @@ export interface Ability {
   name: string;
   effect: string;
   detail?: string;
-  tactic?: string;
   understanding?: string;
+}
+
+// 奇术因果槽位（时序三相因果守恒律的 JSON 解析，见 services/ability_understanding.py）
+export interface UnderstandingPhase {
+  present: boolean;
+  text: string;
+}
+
+export interface Understanding {
+  verdict: { zero_phase: boolean; source_phases: string[]; summary: string };
+  pre: UnderstandingPhase;
+  mid: UnderstandingPhase;
+  post: UnderstandingPhase;
+}
+
+function _normPhase(p: unknown): UnderstandingPhase {
+  const o = (p && typeof p === "object" ? p : {}) as Record<string, unknown>;
+  return {
+    present: !!o.present,
+    text: typeof o.text === "string" ? o.text : "",
+  };
+}
+
+// 安全解析槽位 JSON：非法/缺失返回 null（渲染方据此显示「解析中/待生成」）
+export function parseUnderstanding(json: string | undefined | null): Understanding | null {
+  if (!json) return null;
+  try {
+    const u = JSON.parse(json) as Record<string, unknown>;
+    if (!u || typeof u !== "object" || !u.verdict) return null;
+    const v = u.verdict as Record<string, unknown>;
+    return {
+      verdict: {
+        zero_phase: !!v.zero_phase,
+        source_phases: Array.isArray(v.source_phases) ? v.source_phases.filter((s) => typeof s === "string") : [],
+        summary: typeof v.summary === "string" ? v.summary : "",
+      },
+      pre: _normPhase(u.pre),
+      mid: _normPhase(u.mid),
+      post: _normPhase(u.post),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface Loadout {

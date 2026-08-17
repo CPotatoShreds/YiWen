@@ -19,7 +19,7 @@ class Loadout(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(Text, server_default="")  # 奇人姓名（初始「奇人·壹/贰/叁」，可改名）
-    style: Mapped[str] = mapped_column(Text, server_default="")  # 战斗风格（可选）
+    style: Mapped[str] = mapped_column(Text, server_default="")  # 角色介绍（原战斗风格，可选）
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tactic: Mapped[str] = mapped_column(Text, server_default="")  # 这位奇人会怎么打（推演时指导整套打法）
     style_interpretation: Mapped[str] = mapped_column(Text, server_default="")  # 异步解读产出：剔除未装配奇术引用后的清洗风格

@@ -1,9 +1,11 @@
 """奇术路由：异闻师自定义奇术（多个，自由增删改）。
 
-奇术不再由系统生成：异闻师写什么就是什么（名称 + 效果自由文本），
-全部可启程。同名同效果在系统内共享一条记录（内容哈希去重）。
+奇术由异闻师写下（名目 + 效果 + 详细解释），保存后后台异步生成「因果槽位」
+（见 services/ability_understanding.py），作为推演对战的主要依据。
+同名同效果在系统内共享一条记录（内容哈希去重）。
 """
 
+import asyncio
 from hashlib import sha256
 from typing import Annotated
 
@@ -18,8 +20,19 @@ from app.models.loadout import Loadout, LoadoutAbility
 from app.models.user import User
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut, AbilitySetIn
+from app.services.ability_understanding import ensure_ability_understanding
 
 router = APIRouter(prefix="/abilities", tags=["abilities"])
+
+# 持有后台任务引用，防止 asyncio 在任务完成前 GC 取消它
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_understanding(ability_id: str) -> None:
+    """后台异步重算奇术因果槽位（失败静默，不阻塞用户操作）。"""
+    task = asyncio.create_task(ensure_ability_understanding(ability_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def _ability_id(user_id: int, name: str, effect: str) -> str:
@@ -45,7 +58,6 @@ async def create_ability(
             name=name,
             effect=effect,
             detail=(body.detail or "").strip(),
-            tactic=(body.tactic or "").strip(),
         )
         db.add(ability)
         await db.flush()
@@ -53,13 +65,12 @@ async def create_ability(
         ability.name, ability.effect = name, effect
         if body.detail is not None:
             ability.detail = body.detail.strip()
-        if body.tactic is not None:
-            ability.tactic = body.tactic.strip()
     owns = await db.get(UserAbility, (current.id, aid))
     if owns is None:
         db.add(UserAbility(user_id=current.id, ability_id=aid))
     await db.commit()
     await db.refresh(ability)
+    _schedule_understanding(ability.id)
     return ability
 
 
@@ -95,13 +106,15 @@ async def update_ability(
     name, effect = body.name.strip(), body.effect.strip()
     if not name or not effect:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="奇术名称与效果不能为空")
+    detail = body.detail.strip() if body.detail is not None else ability.detail
+    changed = (name, effect, detail) != (ability.name, ability.effect, ability.detail)
     ability.name, ability.effect = name, effect
     if body.detail is not None:
-        ability.detail = body.detail.strip()
-    if body.tactic is not None:
-        ability.tactic = body.tactic.strip()
+        ability.detail = detail
     await db.commit()
     await db.refresh(ability)
+    if changed:  # 全字段无变化不触发因果推演
+        _schedule_understanding(ability.id)
     return ability
 
 

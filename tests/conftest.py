@@ -53,6 +53,28 @@ def _no_real_loadout_interpretation_llm():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_ability_understanding_llm():
+    """奇术因果槽位后台任务打桩：返回默认空槽位（三相空、零相为 False），全测试生效。
+
+    创建/更新奇术时路由调度该任务；不打桩会触发真实 LLM。空槽位对既有测试零影响
+    （_render_ability 仅在 understanding 非空时才输出「因果槽位」行）。具体行为由测试 override。
+    """
+    from app.services.ability_understanding import AbilitySlot, Phase, SlotVerdict
+
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(
+        return_value=AbilitySlot(
+            verdict=SlotVerdict(zero_phase=False, source_phases=[], summary=""),
+            pre=Phase(present=False),
+            mid=Phase(present=False),
+            post=Phase(present=False),
+        )
+    )
+    with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _no_real_usage_llm():
     """奇术使用子集节点打桩：返回空子集（触发 _prepare_guess 的「全部装配」降级，等价于全用），瞬时完成，全测试生效。
 

@@ -74,6 +74,7 @@ from app.schemas.admin import (
     TestUserOut,
     TrafficOut,
 )
+from app.services.ability_understanding import ensure_ability_understanding
 from app.services.battle import GUESS_ATTEMPTS_MAX
 from app.services.prompt_debug import rerun_battle
 from app.services.test_battle import (
@@ -96,6 +97,13 @@ _background_tasks: set[asyncio.Task] = set()
 def _ability_id(name: str, effect: str) -> str:
     """后台创建的奇术 id：内容哈希（管理员域内同内容去重）。"""
     return sha256(f"admin:{name}:{effect}".encode()).hexdigest()[:16]
+
+
+def _schedule_understanding(ability_id: str) -> None:
+    """后台异步重算奇术因果槽位（失败静默，不阻塞管理员操作）。"""
+    task = asyncio.create_task(ensure_ability_understanding(ability_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def _names(db: AsyncSession, ids: set[int]) -> dict[int, str]:
@@ -409,7 +417,7 @@ async def admin_create_ability(
     admin: Annotated[User, Depends(get_current_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Ability:
-    """后台新建奇术（内容哈希去重，可挂到指定异闻师名下；不调度 LLM 理解）。"""
+    """后台新建奇术（内容哈希去重，可挂到指定异闻师名下；调度因果槽位生成）。"""
     name, effect = body.name.strip(), body.effect.strip()
     if not name or not effect:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="奇术名称与效果不能为空")
@@ -421,7 +429,6 @@ async def admin_create_ability(
             name=name,
             effect=effect,
             detail=(body.detail or "").strip(),
-            tactic=(body.tactic or "").strip(),
         )
         db.add(ability)
         await db.flush()
@@ -434,6 +441,7 @@ async def admin_create_ability(
             db.add(UserAbility(user_id=body.owner_id, ability_id=aid))
     await db.commit()
     await db.refresh(ability)
+    _schedule_understanding(ability.id)
     return ability
 
 
@@ -451,13 +459,15 @@ async def admin_update_ability(
     name, effect = body.name.strip(), body.effect.strip()
     if not name or not effect:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="奇术名称与效果不能为空")
+    detail = body.detail.strip() if body.detail is not None else ability.detail
+    changed = (name, effect, detail) != (ability.name, ability.effect, ability.detail)
     ability.name, ability.effect = name, effect
     if body.detail is not None:
-        ability.detail = body.detail.strip()
-    if body.tactic is not None:
-        ability.tactic = body.tactic.strip()
+        ability.detail = detail
     await db.commit()
     await db.refresh(ability)
+    if changed:  # 全字段无变化不触发因果推演
+        _schedule_understanding(ability.id)
     return ability
 
 
@@ -475,6 +485,18 @@ async def admin_delete_ability(
     if ability is not None:
         await db.delete(ability)
     await db.commit()
+
+
+@router.post("/abilities/backfill", status_code=status.HTTP_200_OK)
+async def admin_backfill_understanding(
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, int]:
+    """为所有尚无因果槽位的奇术调度后台生成（一次性补全旧数据）。"""
+    rows = (await db.execute(select(Ability.id).where(Ability.understanding == ""))).scalars().all()
+    for aid in rows:
+        _schedule_understanding(aid)
+    return {"scheduled": len(rows)}
 
 
 # ---------- 对战：查看 + 删除 ----------

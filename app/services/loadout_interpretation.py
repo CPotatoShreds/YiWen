@@ -13,6 +13,7 @@
 
 from contextlib import suppress
 
+from cryptography.fernet import InvalidToken
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
@@ -79,9 +80,12 @@ async def ensure_loadout_interpretation(loadout_id: int) -> None:
             return
         owner = await db.get(User, loadout.user_id)
         profile = await db.get(LlmProfile, owner.active_profile_id) if owner and owner.active_profile_id else None
-        llm_config = profile_to_llm_config(profile)
         abilities = await loadout_abilities(db, loadout_id)
         abilities_txt = "\n".join(f"{i + 1}. {a.name}：{a.effect}" for i, a in enumerate(abilities))
+        try:
+            llm_config = profile_to_llm_config(profile)
+        except InvalidToken:  # api_key 解密失败 → 回退默认模型（qwen）
+            llm_config = None
         with suppress(Exception):  # 解读失败静默（可靠性层已记日志），推演时回退原文
             out = await ainvoke_with_reliability(
                 build_interpretation_chain(llm_config=llm_config),

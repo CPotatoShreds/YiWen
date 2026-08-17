@@ -121,25 +121,11 @@ def test_delete_ability_removes_from_loadouts():
         assert [a["name"] for a in out["abilities"]] == ["霜语"]  # 已删异能不在装配位
 
 
-def test_tactic_fields_roundtrip():
-    """异能战术描述 + 配置打法：可读写、回读一致；只切 enabled 不擦除打法。"""
+def test_loadout_tactic_roundtrip():
+    """奇人打法：PUT 带 tactic 持久化并回读；只切 enabled 不擦除打法。"""
     with TestClient(app) as client:
         tok = _mk(client)
         h = {"Authorization": f"Bearer {tok}"}
-        aid = _give_ability(client, tok, "燃烬之握", "点燃接触物")
-        # 异能战术：PUT 带 tactic 持久化并回读
-        r = client.put(
-            f"/api/abilities/{aid}",
-            json={"name": "燃烬之握", "effect": "点燃接触物", "tactic": "近身缠斗时点燃对方衣物"},
-            headers=h,
-        )
-        assert r.status_code == 200 and r.json()["tactic"] == "近身缠斗时点燃对方衣物"
-        assert client.get("/api/abilities/mine", headers=h).json()[0]["tactic"] == "近身缠斗时点燃对方衣物"
-        # 异能 PUT 不带 tactic → 不清空已存战术
-        client.put(f"/api/abilities/{aid}", json={"name": "燃烬之握", "effect": "点燃接触物"}, headers=h)
-        assert client.get("/api/abilities/mine", headers=h).json()[0]["tactic"] == "近身缠斗时点燃对方衣物"
-
-        # 配置打法：PUT 带 tactic 持久化并回读
         first = _mk_loadout(client, tok, "燃烬")
         r = client.put(f"/api/loadouts/{first['id']}", json={"tactic": "开局隐身绕后，先手突袭"}, headers=h)
         assert r.status_code == 200 and r.json()["tactic"] == "开局隐身绕后，先手突袭"
@@ -239,6 +225,39 @@ def test_delete_loadout():
         tok_b = _mk(client)
         h_b = {"Authorization": f"Bearer {tok_b}"}
         assert client.delete(f"/api/loadouts/{first['id']}", headers=h_b).status_code == 404
+
+
+def test_create_loadout_with_ability_ids():
+    """创建奇人一步装配：ability_ids 去重/归属校验；回读装配一致；他人奇术 → 404。"""
+    with TestClient(app) as client:
+        tok = _mk(client)
+        h = {"Authorization": f"Bearer {tok}"}
+        a1 = _give_ability(client, tok, "燃烬之握", "点燃接触物")
+        a2 = _give_ability(client, tok, "霜语", "冻结空气中的水分")
+        r = client.post(
+            "/api/loadouts",
+            json={"name": "白鹤", "style": "轻功卓绝", "ability_ids": [a1, a2, a1, a2]},
+            headers=h,
+        )
+        assert r.status_code == 201
+        out = r.json()
+        assert out["style"] == "轻功卓绝"
+        # 同事务插入 added_at 相同，装配顺序不定 → 只比较集合
+        assert {a["id"] for a in out["abilities"]} == {a1, a2}  # 去重后恰好两门
+        assert {a["id"] for a in client.get("/api/loadouts", headers=h).json()[0]["abilities"]} == {a1, a2}
+        # 未拥有的奇术 → 404
+        tok_b = _mk(client)
+        a4 = _give_ability(client, tok_b, "血咒", "以自身鲜血为引发动诅咒")
+        assert client.post("/api/loadouts", json={"name": "青锋", "ability_ids": [a4]}, headers=h).status_code == 404
+
+
+def test_create_loadout_ability_ids_cap_four():
+    """ability_ids 去重后超过 4 个 → 400。"""
+    with TestClient(app) as client:
+        tok = _mk(client)
+        h = {"Authorization": f"Bearer {tok}"}
+        ids = [_give_ability(client, tok, f"奇术{i}", f"效果{i}") for i in range(5)]
+        assert client.post("/api/loadouts", json={"name": "青锋", "ability_ids": ids}, headers=h).status_code == 400
 
 
 def test_delete_loadout_unlinks_battle_snapshot():

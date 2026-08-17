@@ -18,7 +18,7 @@ export interface Ability {
   name: string;
   effect: string;
   detail: string;
-  tactic: string;
+  understanding: string;
 }
 
 export interface RecentBattle {

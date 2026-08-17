@@ -81,7 +81,7 @@ export default function LoadoutDetail() {
             <div className="tbl-row tbl-row--wrap" key={a.id}>
               <span className="tbl-col tbl-col--main">
                 <b>{a.name}</b>
-                <small>{a.effect}{a.tactic ? ` · 战术：${a.tactic}` : ""}</small>
+                <small>{a.effect}</small>
               </span>
             </div>
           ))}

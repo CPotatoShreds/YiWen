@@ -11,7 +11,7 @@ class BoardEntryOut(BaseModel):
     id: int
     user: str  # 榜主异闻师名
     name: str  # 奇人姓名（刻印）
-    style: str  # 战斗风格（刻印）
+    style: str  # 角色介绍（原战斗风格，刻印）
     ability_count: int = 0  # 奇术数（保密，仅展示数量）
     challenge_count: int = 0  # 被点将次数（浏览量）
     win_rate: float | None = None  # 刻印胜率：被挑战场次中刻印胜场占比（无挑战 → None）

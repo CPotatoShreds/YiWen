@@ -324,9 +324,11 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 .btn-block { width: 100%; }
 
 /* ---------- 表单 ---------- */
-.field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; position: relative; }
 .field > label { font-size: 13px; font-weight: 700; color: var(--ink); }
 .field .hint { font-size: 12px; color: var(--muted); }
+.char-count { position: absolute; top: 0; right: 0; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.char-count--over { color: var(--accent); font-weight: 700; }
 .input, .textarea, select.input {
   width: 100%;
   padding: 11px 13px;
@@ -600,6 +602,28 @@ select.input { appearance: auto; }
 .ability-item__effect { font-size: 13px; color: var(--muted); margin-top: 3px; }
 .ability-item__actions { display: flex; gap: 6px; flex: none; }
 
+/* 详细解释 + 因果槽位（时序三相因果守恒律的解析结果，用户可见） */
+.ability-item__detail { font-size: 13px; color: var(--ink); margin-top: 4px; line-height: 1.7; }
+.ability-item__detail::before { content: "详释"; display: inline-block; font-size: 11px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 4px; padding: 1px 5px; margin-right: 7px; vertical-align: 1px; }
+.ability-item__pending { font-size: 13px; color: var(--accent); margin-top: 6px; animation: pulse 1.6s var(--ease) infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.ability-slot {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ability-slot__phase { display: flex; align-items: center; gap: 8px; padding-left: 10px; border-left: 2px solid var(--line-strong); }
+.ability-slot__phase-label { flex: none; font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 11px; letter-spacing: 1px; line-height: 1.6; white-space: nowrap; }
+.ability-slot__phase-text { flex: 1; font-size: 13px; color: var(--ink); line-height: 1.65; }
+.ability-slot__zero { display: flex; align-items: center; gap: 8px; align-self: flex-start; }
+.ability-slot__zero-pill { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--ground-2); border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 11px; letter-spacing: 1px; line-height: 1.6; white-space: nowrap; }
+.ability-slot__zero-note { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+
 /* ---------- 猜奇术：空白卡片 ---------- */
 .guess-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
 .guess-card {
@@ -664,7 +688,7 @@ select.input { appearance: auto; }
 .chip-x:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* 印章（壹/贰/叁 序号）：歇场 = 空章，登台 = 朱泥印 */
-.seal, .poker__seal {
+.seal {
   display: inline-grid;
   place-items: center;
   flex: none;
@@ -680,111 +704,58 @@ select.input { appearance: auto; }
   line-height: 1;
   transition: border-color 0.18s var(--ease), color 0.18s var(--ease), background 0.18s var(--ease);
 }
-.is-on .seal, .poker.is-on .poker__seal {
+.is-on .seal {
   background: var(--accent);
   border: 1.5px solid var(--accent-strong);
   color: var(--surface);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 50%, transparent), 0 1px 3px -1px rgba(47, 43, 38, 0.4);
 }
 
-/* 奇人卡（MyAbilities：横向滚动列表 + 拖动条） */
-.char-rail {
-  display: flex;
-  gap: 16px;
-  overflow-x: auto;
-  padding: 4px 6px 16px;
-  scroll-snap-type: x proximity;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 50%, var(--line-strong)) transparent;
+/* 奇人管理卡（MyAbilities 异闻录：响应式网格扁平卡，复用首页 .char-grid/.char-card 外壳） */
+.char-card--manage .char-card__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.char-card--manage .char-card__foot { justify-content: flex-end; }
+.char-card__slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
-.char-rail::-webkit-scrollbar { height: 10px; }
-.char-rail::-webkit-scrollbar-track { background: transparent; }
-.char-rail::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--accent) 50%, var(--line-strong));
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-.char-rail::-webkit-scrollbar-thumb:hover { background-color: var(--accent); }
-.char-rail > .poker, .poker-add { flex: 0 0 min(300px, 84vw); scroll-snap-align: start; }
-
-.poker {
-  display: flex;
-  flex-direction: column;
-  aspect-ratio: 3 / 4;
-  padding: 18px 18px 14px;
-  background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 94%, var(--ground-2)));
-  border: 1.5px solid var(--line-strong);
-  border-radius: 18px;
-  box-shadow: var(--shadow-soft);
-  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
-}
-.poker.is-on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), var(--shadow-soft); }
-.poker__head { display: flex; align-items: center; gap: 10px; }
-.poker__name {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 16px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.poker__style { font-size: 12px; color: var(--muted); margin-top: 3px; min-height: 15px; }
-.poker__slots { display: flex; flex-direction: column; gap: 8px; margin: 13px 0; flex: 1; }
-.poker__chip {
+.char-card__slots .tip { display: flex; }
+.char-card__slots .tip .char-card__slot--on { flex: 1; }
+.char-card__slot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: 11px;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.char-card__slot--on {
   background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
   color: var(--accent-strong);
-  font-weight: 700;
-  font-size: 13px;
 }
-.poker__chip-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: 11px;
-  border: 1.5px dashed var(--line-strong);
-  color: var(--muted);
-  font-size: 12px;
-}
-.poker__count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: right; margin-bottom: 8px; }
-.poker__foot { display: flex; gap: 8px; padding-top: 11px; border-top: 1px solid var(--line); }
-.poker__foot .btn { flex: 1; }
-.poker__foot .btn-danger { flex: 0 0 auto; } /* 删除奇人：图标键自适应宽度 */
-
-/* 新增奇人（横向列表末尾的砖位） */
-.poker-add {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.char-card__slot-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.char-card__slot--empty {
   justify-content: center;
-  gap: 10px;
-  aspect-ratio: 3 / 4;
-  padding: 18px;
+  gap: 6px;
   border: 1.5px dashed var(--line-strong);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  background: transparent;
   color: var(--muted);
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 15px;
+  font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.18s var(--ease), color 0.18s var(--ease), background 0.18s var(--ease);
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease), background 0.15s var(--ease);
 }
-.poker-add:hover { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
-.poker-add:active { transform: scale(0.98); }
-.poker-add:disabled { opacity: 0.45; cursor: not-allowed; }
-.poker-add:disabled:hover { border-color: var(--line-strong); color: inherit; background: transparent; }
-.poker-add:disabled:active { transform: none; }
+.char-card__slot--empty:hover { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
+
+/* 选中计数器（装配/向导弹窗沿用） */
+.poker__count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: right; margin-bottom: 8px; }
+
+/* 新增奇人（网格末尾的砖位，button 化） */
+button.char-card--add:disabled { opacity: 0.45; cursor: not-allowed; }
+button.char-card--add:disabled:hover { transform: none; box-shadow: var(--shadow-soft); border-color: var(--line); color: var(--muted); background: var(--surface); }
 
 /* 悬浮提示（奇术信息） */
 .tip { position: relative; display: inline-flex; }
@@ -810,11 +781,30 @@ select.input { appearance: auto; }
 }
 .tip:hover .tip__bubble, .tip:focus-within .tip__bubble { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* 三相理论问号提示（新增/修订奇术弹窗）：圆圈问号，气泡向下展开 */
+.tip-help { margin-left: 5px; vertical-align: 1px; }
+.tip-help .tip__bubble { top: calc(100% + 8px); bottom: auto; white-space: pre-line; background: var(--ground); color: var(--ink); border: 1px solid var(--line-strong); }
+.tip-help__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+}
+.tip-help__term { color: var(--accent); font-style: normal; }
+strong.tip-help__term { font-weight: 700; }
+
 /* 奇术多选悬浮窗（加号装配） */
 .picker-modal .modal { max-width: 560px; }
 .picker { display: flex; flex-direction: column; gap: 8px; max-height: 46dvh; overflow-y: auto; padding: 14px 2px 4px; }
-.picker .tip, .poker__slots .tip { display: flex; }
-.picker .tip .picker-item, .poker__slots .tip .poker__chip { flex: 1; }
+.picker .tip, .char-card__slots .tip { display: flex; }
+.picker .tip .picker-item, .char-card__slots .tip .char-card__slot--on { flex: 1; }
 .picker-item {
   display: flex;
   align-items: center;
@@ -832,6 +822,7 @@ select.input { appearance: auto; }
 }
 .picker-item:hover { border-color: var(--accent); }
 .picker-item.is-on { background: var(--accent-soft); border-color: var(--accent); }
+.picker-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .picker-item__name { font-weight: 700; flex: none; }
 .picker-item__eff { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-item__check { flex: none; color: var(--accent); display: grid; place-items: center; }

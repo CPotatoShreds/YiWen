@@ -57,7 +57,6 @@ async def loadout_snapshot(db: AsyncSession, loadout: Loadout) -> dict:
                 "name": a.name,
                 "effect": a.effect,
                 "detail": a.detail,
-                "tactic": a.tactic,
                 "understanding": a.understanding,
             }
             for a in abilities
@@ -72,7 +71,6 @@ def abilities_from_snapshot(snap_abilities: list[dict]) -> list[Ability]:
             name=a["name"],
             effect=a["effect"],
             detail=a.get("detail", ""),
-            tactic=a.get("tactic", ""),
             understanding=a.get("understanding", ""),
         )
         for a in snap_abilities

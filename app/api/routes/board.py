@@ -243,7 +243,6 @@ async def put_on_board(
                 "name": a.name,
                 "effect": a.effect,
                 "detail": a.detail,
-                "tactic": a.tactic,
                 "understanding": a.understanding,
             }
             for a in abilities

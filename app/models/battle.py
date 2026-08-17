@@ -44,7 +44,7 @@ class Battle(Base):
     friendly: Mapped[bool] = mapped_column(Boolean, default=False)  # 切磋局（不计名望）
     loadout_a_id: Mapped[int | None] = mapped_column(ForeignKey("loadouts.id"), nullable=True)  # 发起方本场奇人快照
     loadout_b_id: Mapped[int | None] = mapped_column(ForeignKey("loadouts.id"), nullable=True)  # 对家本场奇人快照
-    snapshot_a: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 本场发起方奇人冻结快照 {name, style, tactic, style_interpretation, tactic_interpretation, abilities:[{name,effect,detail,tactic,understanding}]}
+    snapshot_a: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 本场发起方奇人冻结快照 {name, style, tactic, style_interpretation, tactic_interpretation, abilities:[{name,effect,detail,understanding}]}
     snapshot_b: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 本场对家奇人冻结快照（同结构）
     board_entry_id: Mapped[int | None] = mapped_column(
         ForeignKey("board_entries.id", ondelete="SET NULL"), nullable=True

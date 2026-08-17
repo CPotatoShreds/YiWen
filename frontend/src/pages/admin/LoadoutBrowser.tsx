@@ -61,7 +61,7 @@ export default function LoadoutBrowser() {
                 {l.abilities.length > 0 ? (
                   <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                     {l.abilities.map((a) => (
-                      <span className="chip chip--ability" key={a.id} title={`${a.effect}${a.tactic ? `\n战术：${a.tactic}` : ""}`} style={{ fontSize: 12, padding: "3px 9px" }}>
+                      <span className="chip chip--ability" key={a.id} title={a.effect} style={{ fontSize: 12, padding: "3px 9px" }}>
                         {a.name}
                       </span>
                     ))}

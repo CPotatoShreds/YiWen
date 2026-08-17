@@ -48,7 +48,7 @@ class CoreJudgeIn(BaseModel):
 async def _ability_txt(ability: Ability) -> str:
     return (
         f"名称：{ability.name}\n效果：{ability.effect}\n"
-        f"补充说明：{ability.detail}\n战术用法：{ability.tactic}"
+        f"补充说明：{ability.detail}"
     )
 
 
@@ -68,7 +68,6 @@ async def core_guess_describe(
             name=ability.name,
             effect=ability.effect,
             detail=ability.detail,
-            tactic=ability.tactic,
         ),
         operation="core_desc",
         trace_context={"kind": "core_guess", "trace_id": body.ability_id},

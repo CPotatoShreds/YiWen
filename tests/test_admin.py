@@ -6,6 +6,7 @@
 
 import json
 import os
+import time
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -85,9 +86,11 @@ def _insert_battle_guess_full(battle_id: int, guesser_id: int) -> None:
             battle_id,
             guesser_id,
             '[{"name": "焚风", "effect": "战地起火"}, {"name": "寒铁", "effect": "兵刃凝霜"}]',
-            '[{"matched": ["手执兵刃"], "cracked": false},'
-            ' {"matched": ["火光冲天", "灼热难当"], "cracked": true, "cracked_round": 3,'
-            ' "rounds": [1, 2, 3], "verifies": ["看破"]}]',
+            (
+                '[{"matched": ["手执兵刃"], "cracked": false},'
+                ' {"matched": ["火光冲天", "灼热难当"], "cracked": true, "cracked_round": 3,'
+                ' "rounds": [1, 2, 3], "verifies": ["看破"]}]'
+            ),
             '["第一轮猜测", "第二轮猜测"]',
             2,
             5,
@@ -243,7 +246,7 @@ def test_ability_admin_crud_and_force_delete():
         assert r.status_code == 201, r.text
         aid = r.json()["id"]
 
-        # 修改（理解清空、不调度 LLM）
+        # 修改（触发因果槽位生成）
         r = client.put(f"/api/admin/abilities/{aid}", json={"name": "天罡改", "effect": "召唤暴雨"}, headers=h)
         assert r.status_code == 200
         assert r.json()["name"] == "天罡改"
@@ -254,6 +257,87 @@ def test_ability_admin_crud_and_force_delete():
         assert con.execute("SELECT 1 FROM abilities WHERE id=%s", (aid,)).fetchone() is None
         assert con.execute("SELECT 1 FROM user_abilities WHERE ability_id=%s", (aid,)).fetchone() is None
         con.close()
+
+
+def test_admin_ability_schedules_understanding():
+    """后台新建/编辑奇术触发因果槽位生成；全字段无变化不触发。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+
+        aid = client.post(
+            "/api/admin/abilities",
+            json={"name": "天罡", "effect": "召唤天雷", "detail": "需先布阵"},
+            headers=h,
+        ).json()["id"]
+
+        def _read() -> str:
+            con = _sqlite()
+            v = con.execute("SELECT understanding FROM abilities WHERE id=%s", (aid,)).fetchone()[0]
+            con.close()
+            return v
+
+        for _ in range(50):  # 等创建触发的后台任务（默认桩）落库
+            if _read():
+                break
+            time.sleep(0.1)
+        assert _read()
+        before = _read()
+
+        with patch("app.api.routes.admin._schedule_understanding") as sched:
+            # 全字段不变 → 不调度
+            r = client.put(
+                f"/api/admin/abilities/{aid}",
+                json={"name": "天罡", "effect": "召唤天雷", "detail": "需先布阵"},
+                headers=h,
+            )
+            assert r.status_code == 200
+            assert sched.call_count == 0
+            # 任一字段变化 → 调度一次
+            r = client.put(
+                f"/api/admin/abilities/{aid}",
+                json={"name": "天罡", "effect": "召唤天雷", "detail": "布阵后方可召唤"},
+                headers=h,
+            )
+            assert r.status_code == 200
+            assert sched.call_count == 1
+        assert _read() == before  # 调度被桩住，槽位保持原样
+
+
+def test_admin_ability_backfill_understanding():
+    """补全端点：仅为无槽位的奇术调度后台生成，返回调度数。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+
+        aid = client.post("/api/admin/abilities", json={"name": "天罡", "effect": "召唤天雷"}, headers=h).json()["id"]
+        con = _sqlite()
+        for _ in range(50):  # 等创建触发的后台任务落库，再模拟遗留无槽位状态
+            if con.execute("SELECT understanding FROM abilities WHERE id=%s", (aid,)).fetchone()[0]:
+                break
+            con.rollback()
+            time.sleep(0.1)
+        con.execute("UPDATE abilities SET understanding=%s WHERE id=%s", ("", aid))
+        legacy = "legacy_" + uuid4().hex[:16]
+        con.execute(
+            "INSERT INTO abilities (id, name, effect, detail, understanding, created_at) VALUES (%s,%s,%s,%s,%s,now())",
+            (legacy, "旧术", "遗留效果", "", ""),
+        )
+        con.commit()
+        con.close()
+
+        r = client.post("/api/admin/abilities/backfill", headers=h)
+        assert r.status_code == 200
+        assert r.json()["scheduled"] == 2  # aid 与 legacy 均无槽位
+
+        for _ in range(50):  # 后台补全落库（默认桩）
+            con = _sqlite()
+            v = con.execute("SELECT understanding FROM abilities WHERE id=%s", (legacy,)).fetchone()[0]
+            con.close()
+            if v:
+                break
+            time.sleep(0.1)
+        assert v
 
 
 def test_battle_read_and_delete():

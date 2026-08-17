@@ -43,10 +43,9 @@ class AdminUserOut(BaseModel):
 
 
 class AbilityAdminIn(BaseModel):
-    name: str = Field(max_length=50)
-    effect: str = Field(max_length=500)
-    detail: str | None = Field(default=None, max_length=1000)
-    tactic: str | None = Field(default=None, max_length=500)
+    name: str = Field(max_length=10)
+    effect: str = Field(max_length=50)
+    detail: str | None = Field(default=None, max_length=500)
     owner_id: int | None = Field(default=None, description="挂到指定异闻师名下（可选）")
 
 

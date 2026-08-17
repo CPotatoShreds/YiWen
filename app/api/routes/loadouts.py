@@ -89,6 +89,23 @@ async def create_loadout(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"见闻尚浅，未能解锁更多奇人槽位（{cap}/{cap}，见闻满档可解锁）",
         )
+    # 创建时直接装配奇术（去重 + 归属校验 + 上限校验），一步立起带术奇人
+    ability_ids: list[str] = []
+    if body.ability_ids:
+        seen: set[str] = set()
+        for aid in body.ability_ids:
+            if aid in seen:
+                continue
+            seen.add(aid)
+            owns = await db.get(UserAbility, (current.id, aid))
+            if owns is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未拥有该奇术")
+            ability_ids.append(aid)
+        if len(ability_ids) > MAX_LOADOUT_ABILITIES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"每位奇人最多装配 {MAX_LOADOUT_ABILITIES} 个奇术",
+            )
     loadout = Loadout(
         user_id=current.id,
         name=name,
@@ -96,6 +113,9 @@ async def create_loadout(
         tactic=(body.tactic or "").strip(),
     )
     db.add(loadout)
+    await db.flush()
+    for aid in ability_ids:
+        db.add(LoadoutAbility(loadout_id=loadout.id, ability_id=aid))
     await db.commit()
     await db.refresh(loadout)
     if loadout.style or loadout.tactic:
