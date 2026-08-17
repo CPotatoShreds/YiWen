@@ -1,3 +1,5 @@
+import type { GuessCommentaryGroup } from "../../types";
+
 export interface AdminUser {
   id: number;
   username: string;
@@ -64,11 +66,9 @@ export interface Traffic {
 
 export interface AdminGuessCard {
   index: number;
-  matched: string[];
   cracked: boolean;
   cracked_round: number | null;
-  rounds: number[];
-  verifies: string[];
+  verifies: GuessVerify[];
   name?: string;
   effect?: string;
 }
@@ -144,29 +144,16 @@ export interface TestBattleStory {
   error_message?: string;
 }
 
-export interface GuessRoundPair {
-  item: string;
-  snippet: string;
-}
-
-export interface GuessRound {
-  round: number;
-  items: string[];
-  pairs: GuessRoundPair[];
-}
-
 export interface GuessVerify {
-  round: number;
-  guessed: boolean;
-  reason: string;
+  round: number; // 第几次检定（= 检定时已有的点评数）
+  cracked: boolean;
+  missing: string; // 未看破 → 还缺什么；看破 → 空
 }
 
 export interface TestGuessCard {
   index: number;
-  matched: string[];
   cracked: boolean;
   cracked_round?: number | null;
-  rounds?: GuessRound[];
   verifies?: GuessVerify[];
   name?: string | null;
   effect?: string | null;
@@ -190,10 +177,13 @@ export interface TestBattle {
   guess_score: number | null;
   revealed: boolean;
   guess_history: string[];
+  comments: GuessCommentaryGroup[][]; // 与 guess_history 平行：每轮点评 = 逐门原子判定组列表
   guess_total: number;
   guess_cards: TestGuessCard[] | null;
   guess_attempts_used: number;
   guess_attempts_max: number;
+  verified_round: number | null; // 最近一次检定时的点评数
+  can_verify: boolean; // 自上次检定后又有新点评，可发起检定
   created_at: string;
 }
 

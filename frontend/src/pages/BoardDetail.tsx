@@ -124,13 +124,9 @@ export default function BoardDetail() {
                   <p className="guess-card__effect">{c.effect}</p>
                 </div>
               ) : (
-                c.matched.length > 0 && (
-                  <ul className="guess-card__matched">
-                    {c.matched.map((s, i) => (
-                      <li key={i}>{s}</li>
-                    ))}
-                  </ul>
-                )
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  尚未看破
+                </p>
               )}
             </div>
           ))}

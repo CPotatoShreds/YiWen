@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.schemas.ability import AbilityOut
+from app.schemas.battle import GuessCommentaryGroup
 
 
 class AdminUserCreate(BaseModel):
@@ -71,7 +72,7 @@ class AdminBattleOut(BaseModel):
     guess_total: int = 0
     guess_cards: list[dict] | None = None
     guess_attempts_used: int = 0
-    guess_attempts_max: int = 5
+    guess_attempts_max: int = 200
     revealed: bool
     share_token: str | None = None
     share_token_b: str | None = None
@@ -202,7 +203,7 @@ class TestSkipIn(BaseModel):
 
 
 class TestGuessIn(BaseModel):
-    text: str = Field(min_length=1, max_length=300)
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class TestReportOut(BaseModel):
@@ -228,28 +229,21 @@ class TestLoadoutOut(BaseModel):
     abilities: list[AbilityOut]
 
 
-class TestGuessRoundOut(BaseModel):
-    """一次猜测回合的配对结果：该轮原子条目 + 每卡新增片段。"""
-
-    round: int
-    items: list[str] = []
-    pairs: list[dict] = []  # [{item, snippet, valuable}]
-
-
 class TestGuessVerifyOut(BaseModel):
-    """一次猜测回合对某卡的检定结论（看破 / 未看破 + 原因）。"""
+    """一次检定对某卡的结论（看破 / 未看破 + 还缺什么）。"""
 
     round: int
-    guessed: bool
-    reason: str = ""
+    cracked: bool
+    missing: str = ""
 
 
 class TestGuessCardOut(BaseModel):
+    """试验场单门奇术的进度卡：已看破 → 亮出真实名/效果；未看破 → 最近检定给出的「还缺什么」。"""
+
     index: int
-    matched: list[str] = []
+    missing: str = ""
     cracked: bool = False
     cracked_round: int | None = None
-    rounds: list[TestGuessRoundOut] = []
     verifies: list[TestGuessVerifyOut] = []
     name: str | None = None
     effect: str | None = None
@@ -273,10 +267,13 @@ class TestBattleOut(BaseModel):
     guess_score: float | None = None
     revealed: bool
     guess_history: list[str] = []
+    comments: list[list[GuessCommentaryGroup]] = []  # 与 guess_history 平行：每轮点评 = 逐门原子判定组列表（reason 已剥离）
     guess_total: int = 0
     guess_cards: list[TestGuessCardOut] | None = None
     guess_attempts_used: int = 0
-    guess_attempts_max: int = 5
+    guess_attempts_max: int = 200
+    verified_round: int | None = None  # 最近一次检定时的点评数（can_verify 判据）
+    can_verify: bool = False  # 当前是否可发起检定（自上次检定后又有新点评）
     created_at: datetime
 
 

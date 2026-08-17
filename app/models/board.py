@@ -41,11 +41,13 @@ class BoardGuessProgress(Base):
     board_entry_id: Mapped[int] = mapped_column(
         ForeignKey("board_entries.id", ondelete="CASCADE"), primary_key=True
     )
-    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched, cracked}] 按 entry.abilities 下标
+    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{cracked, missing, cracked_round}] 按 entry.abilities 下标
     guess_history: Mapped[list] = mapped_column(JSON, default=list)  # 跨场累积的道出猜测原文
-    guess_log: Mapped[list] = mapped_column(JSON, default=list)  # 逐条猜词记录 [{battle_id, round, text, clue:[{name, fragments}], cracked_after, at}]
+    comments: Mapped[list] = mapped_column(JSON, default=list)  # 与 guess_history 平行：跨场累积的点评文本
+    guess_log: Mapped[list] = mapped_column(JSON, default=list)  # 逐条猜词记录 [{battle_id, round, text, commentary, cracked_after, at}]
     attempts_used: Mapped[int] = mapped_column(Integer, default=0)
-    attempts_max: Mapped[int] = mapped_column(Integer, default=99)
+    attempts_max: Mapped[int] = mapped_column(Integer, default=200)
+    verified_round: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 最近一次检定时的点评数（can_verify 判据）
     flipped: Mapped[bool] = mapped_column(Boolean, default=False)  # 刻印全部奇术已被该挑战者看破
     done: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(

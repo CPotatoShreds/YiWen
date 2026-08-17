@@ -165,14 +165,10 @@ export default function BoardTracking() {
                         {fmt(r.at)}
                       </span>
                     </div>
-                    {r.clue.length > 0 && (
-                      <ul className="guess-card__matched" style={{ margin: "6px 0 0" }}>
-                        {r.clue.map((c, i) => (
-                          <li key={i}>
-                            命中「{c.name}」：{c.fragments.join("、")}
-                          </li>
-                        ))}
-                      </ul>
+                    {r.commentary && (
+                      <p className="muted" style={{ fontSize: 12, margin: "6px 0 0", whiteSpace: "pre-wrap" }}>
+                        {r.commentary}
+                      </p>
                     )}
                     <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
                       此时已看破 {r.cracked_after} / {selected.total} 门

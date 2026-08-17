@@ -1,13 +1,13 @@
 """通知系统测试：三类通知触发（点将挑战/新战报/猜词进展）+ 已读接口 + SSE 实时流。
 
 打桩方式与 test_board_progress.py 一致：conftest 全局打桩 usage/validate/discuss/理解，
-推演（_build_deduce_llm）与转写（_build_transcribe_chain）、猜词配对/检定
-（_build_pair/verify_llm）在此按测试作用域打桩。
+推演（_build_deduce_llm）与转写（_build_transcribe_chain）、猜词点评/检定
+（_build_commentary/verify_llm）在此按测试作用域打桩。
 
 覆盖语义：
 - 点将挑战 → 榜主收 board_challenge（ref=board）；点将局榜主不收 battle_report/guess_progress。
 - 完整对战落定 → 双方各收 battle_report（ref=battle）。
-- 猜词产生新片段/新看破 → 被猜方收 guess_progress；纯未命中不刷屏。
+- 猜词每次点评 → 被猜方收 guess_progress（点评即窥探）；检定产生新看破 → 再追加一条；检定无新看破不刷屏。
 - 已读/全部已读幂等递减 unread；非本人/未登录被拒。
 - SSE 开流后新通知落库 → 流内收到 notification 事件（客户端据此重拉对账）。
 """
@@ -19,7 +19,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import PairMatch, Verification
+from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
@@ -42,17 +42,23 @@ def _transcribe(nar_a: str, nar_b: str):
     return chain
 
 
-def _guess_pipeline(pair_fn, verify_guessed):
-    pair_chain = MagicMock()
+def _guess_pipeline(verify_fn=None):
+    commentary_chain = MagicMock()
 
-    async def _pair_ainvoke(kwargs):
-        text = "\n".join(m.content for m in kwargs)
-        return pair_fn(text)
+    async def _commentary_ainvoke(kwargs):
+        return CommentaryRound(items=[CommentaryItem(text="收到你的猜测。", verdict="是", reason="")])
 
-    pair_chain.ainvoke = AsyncMock(side_effect=_pair_ainvoke)
+    commentary_chain.ainvoke = AsyncMock(side_effect=_commentary_ainvoke)
     verify_chain = MagicMock()
-    verify_chain.ainvoke = AsyncMock(return_value=Verification(guessed=verify_guessed, reason="检定"))
-    return pair_chain, verify_chain
+
+    async def _verify_ainvoke(kwargs):
+        text = "\n".join(m.content for m in kwargs)
+        if verify_fn:
+            return verify_fn(text)
+        return Verification(cracked=False, missing="")
+
+    verify_chain.ainvoke = AsyncMock(side_effect=_verify_ainvoke)
+    return commentary_chain, verify_chain
 
 
 def _mk_user(client, prefix="tnnot") -> str:
@@ -94,6 +100,23 @@ def _wait_guess(client, battle_id, headers, attempts_before, timeout=12):
             return b
         time.sleep(0.2)
     return b
+
+
+def _post_guess(client, url, headers, text=None):
+    """POST 猜词接口（点评/检定），撞上 409「仍在判定中」时重试数次。
+
+    点评/检定皆为后台任务，落库先于判定锁（_guess_inflight）释放：连续快速提交可能撞上 409。
+    """
+    g = None
+    for _ in range(20):
+        kw = {"headers": headers}
+        if text is not None:
+            kw["json"] = {"text": text}
+        g = client.post(url, **kw)
+        if g.status_code != 409:
+            return g
+        time.sleep(0.2)
+    return g
 
 
 def _mk_two_users(client, prefix):
@@ -191,15 +214,18 @@ def test_board_challenge_notifies_owner_only():
         assert m["ref_type"] == "battle" and m["ref_id"] == b["id"]
         assert m["body"].find(name_a) != -1
 
-        # 挑战者猜词产生新进展（配对命中）：榜主仍只有 board_challenge（无 guess_progress）
-        pair, verify = _guess_pipeline(lambda kw: PairMatch(snippet="以暗影凝聚利刃斩杀敌人"), True)
+        # 挑战者猜词（点评 + 检定看破）：榜主仍只有 board_challenge（无 guess_progress）
+        commentary, verify = _guess_pipeline(lambda kw: Verification(cracked=True, missing=""))
         with (
-            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_commentary_llm", return_value=commentary),
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
-            g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "影刃化形，遁入暗影"}, headers=h_b)
+            g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="影刃化形，遁入暗影")
             assert g.status_code == 202
             _wait_guess(client, b["id"], h_b, attempts_before=0)
+            gv = _post_guess(client, f"/api/battles/{b['id']}/guess/verify", h_b)
+            assert gv.status_code == 202
+            _wait_guess(client, b["id"], h_b, attempts_before=1)
 
         lst_a = _notifs(client, h_a)
         assert lst_a["unread"] == 1
@@ -239,10 +265,10 @@ def test_full_battle_notifies_both_participants():
 # ---------------------------------------------------------------------------
 
 
-def test_guess_progress_only_on_new_progress():
-    """败方猜词产生新片段/新看破 → 胜方收 guess_progress；纯未命中不追加。
+def test_guess_progress_notifies_commentary_and_new_cracks():
+    """败方每次点评 → 胜方收 guess_progress；检定产生新看破 → 再收一条；检定无新看破不追加。
 
-    99 次机会防刷屏的关键：每轮只在「有实际进展」时打扰被猜方一次。
+    点评即新的窥探行为，每次点评都通知被猜方；检定仅在产生新看破时打扰，避免纯重复检定刷屏。
     """
     with TestClient(app) as client:
         h_a, h_b = _mk_two_users(client, "tngp")
@@ -259,36 +285,56 @@ def test_guess_progress_only_on_new_progress():
         lst_a = _notifs(client, h_a)
         assert lst_a["unread"] == 1 and lst_a["items"][0]["type"] == "battle_report"
 
-        # 猜 1：命中一门 → 新片段 + 新看破 → 追加 guess_progress（已看破 1 门）
-        def pair_fn(text):
-            return PairMatch(snippet="召唤雷霆轰击对手" if "雷暴" in text else "")
-
-        pair, verify = _guess_pipeline(pair_fn, True)
+        # 猜 1（点评）：不动看破，但点评本身即窥探 → 追加 guess_progress（已看破 0 门）
+        commentary, verify = _guess_pipeline(
+            lambda text: Verification(cracked=True, missing="") if "雷暴" in text else Verification(cracked=False, missing="")
+        )
         with (
-            patch("app.services.battle._build_pair_llm", return_value=pair),
+            patch("app.services.battle._build_commentary_llm", return_value=commentary),
             patch("app.services.battle._build_verify_llm", return_value=verify),
         ):
-            g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "掌控雷电轰击目标"}, headers=h_b)
+            g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
             gb1 = _wait_guess(client, b["id"], h_b, attempts_before=0)
-        assert sorted(c["cracked"] for c in gb1["guess_cards"]) == [False, True]  # 确有其事
+        assert sorted(c["cracked"] for c in gb1["guess_cards"]) == [False, False]  # 点评不动看破
         lst_a = _wait_unread(client, h_a, 2)  # 等通知落库（guess commit 后微秒级滞后）
         assert lst_a["items"][0]["type"] == "guess_progress"
         assert lst_a["items"][0]["ref_type"] == "battle" and lst_a["items"][0]["ref_id"] == b["id"]
+        assert "已看破 0 门" in lst_a["items"][0]["body"]
+
+        # 检定 1：看破一门 → 追加 guess_progress（已看破 1 门）
+        with (
+            patch("app.services.battle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle._build_verify_llm", return_value=verify),
+        ):
+            gv = _post_guess(client, f"/api/battles/{b['id']}/guess/verify", h_b)
+            assert gv.status_code == 202
+            _wait_guess(client, b["id"], h_b, attempts_before=1)
+        lst_a = _wait_unread(client, h_a, 3)
+        assert lst_a["items"][0]["type"] == "guess_progress"
         assert "已看破 1 门" in lst_a["items"][0]["body"]
 
-        # 猜 2：纯未命中（无新片段/无新看破）→ 不追加
-        pair2, verify2 = _guess_pipeline(lambda kw: PairMatch(snippet=""), False)
+        # 猜 2（点评）：重复猜测也通知（点评即窥探行为）
+        commentary2, verify2 = _guess_pipeline()
         with (
-            patch("app.services.battle._build_pair_llm", return_value=pair2),
+            patch("app.services.battle._build_commentary_llm", return_value=commentary2),
             patch("app.services.battle._build_verify_llm", return_value=verify2),
         ):
-            g = client.post(f"/api/battles/{b['id']}/guess", json={"text": "信口胡说"}, headers=h_b)
+            g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="信口胡说")
             assert g.status_code == 202
-            _wait_guess(client, b["id"], h_b, attempts_before=1)
+            _wait_guess(client, b["id"], h_b, attempts_before=2)
+        lst_a = _wait_unread(client, h_a, 4)
+        assert lst_a["items"][0]["type"] == "guess_progress"
 
-        lst_a = _notifs(client, h_a)
-        assert lst_a["unread"] == 2  # 未新增
+        # 检定 2：无新看破 → 不追加
+        with (
+            patch("app.services.battle._build_commentary_llm", return_value=commentary2),
+            patch("app.services.battle._build_verify_llm", return_value=verify2),
+        ):
+            gv = _post_guess(client, f"/api/battles/{b['id']}/guess/verify", h_b)
+            assert gv.status_code == 202
+            _wait_guess(client, b["id"], h_b, attempts_before=3)
+        lst_a = _wait_unread(client, h_a, 4)  # 未新增
         assert lst_a["items"][0]["type"] == "guess_progress"
 
 

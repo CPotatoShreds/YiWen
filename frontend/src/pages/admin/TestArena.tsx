@@ -16,6 +16,7 @@ import type {
   TestLoadout,
   TestUser,
 } from "./types";
+import type { GuessCommentaryGroup } from "../../types";
 import { StoryView, TracePanel } from "./chainViews";
 
 const statusLabel = (s: string) => (s === "pending" ? "推演中" : s === "failed" ? "失手" : "已落成");
@@ -43,13 +44,9 @@ function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
               <p className="guess-card__effect">{card.effect}</p>
             </div>
           ) : (
-            card.matched.length > 0 && (
-              <ul className="guess-card__matched">
-                {card.matched.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ul>
-            )
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              尚未看破
+            </p>
           )}
         </div>
       ))}
@@ -58,47 +55,52 @@ function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
 }
 
 /**
- * 猜词累计描述表：每轮猜测一张表。行 = 本轮拆出的原子叙述，列 = 对家奇术。
- * 格子 = 该奇术累计解锁的描述：本轮新增红色、历史黑色；看破的列带标记；
- * 有本轮增量的格子可点击，切换显示该轮「看破 / 未看破」的检定原因。
+ * 猜词矩阵：按轮展示「猜测 + 逐门原子点评」；列 = 对家奇术。
+ * 某轮之后该门被看破 → 格内亮真名；未看破 → 留空（不展示检定缺口，避免提示词给额外线索）。
  */
-/**
- * 猜词累计描述表：每轮猜测一张表，且**冻结在该轮**——只显示截止到该轮的累计描述，
- * 后续轮次新增不回写。行 = 该轮拆出的原子叙述，列 = 对家奇术。
- * 原子叙述命中了哪列，就在那列写该奇术累计解锁的描述（本轮新增红色、历史黑色）；
- * 未命中的格子留空。看破的列带标记；有本轮增量的格子可点击切换检定原因。
- */
-function GuessMatrix({ cards }: { cards: TestGuessCard[] }) {
-  const [openCell, setOpenCell] = useState<{ ci: number; round: number } | null>(null);
-  // 每张卡按轮索引（rounds 已按轮序落库，每轮都有）
-  const cardRoundsOf = (c: TestGuessCard) => c.rounds ?? [];
-  const rounds = Math.max(0, ...cards.map((c) => cardRoundsOf(c).length));
+function GuessMatrix({
+  cards,
+  history,
+  comments,
+}: {
+  cards: TestGuessCard[];
+  history: string[];
+  comments: GuessCommentaryGroup[][];
+}) {
+  const rounds = Math.max(0, history.length);
   if (rounds === 0) {
-    return <p className="muted">尚无猜词回合，提交猜测后这里会出现「原子叙述 × 奇术」的累计描述表。</p>;
+    return <p className="muted">尚无猜词回合，提交猜测并得到点评后这里会逐轮出现「猜测+点评」与各门判定。</p>;
   }
-  // 本轮原子叙述 = 任一卡该轮记录（各卡该轮 items 相同）
-  const itemsOf = (r: number): string[] => {
-    for (const c of cards) {
-      const rnd = cardRoundsOf(c)[r - 1];
-      if (rnd) return rnd.items ?? [];
-    }
-    return [];
-  };
   return (
     <div className="guess-matrices">
       {Array.from({ length: rounds }, (_, i) => i + 1).map((r) => {
-        const items = itemsOf(r);
+        const groups = comments[r - 1] ?? [];
         return (
           <div className="guess-matrix" key={r}>
             <div className="guess-matrix__head">
               <b>第 {r} 次猜测</b>
-              <span className="muted">{items.length > 0 ? `${items.length} 条原子叙述` : "（本轮未拆出条目）"}</span>
             </div>
+            <p style={{ fontSize: 13, marginBottom: 4 }}>{history[r - 1]}</p>
+            {groups.length > 0 && (
+              <div style={{ fontSize: 13, marginBottom: 8, opacity: 0.85 }}>
+                {groups.map((g) => (
+                  <div key={g.index} style={{ marginTop: 2 }}>
+                    {g.index > 0 && <span style={{ fontWeight: 700 }}>第 {g.index} 门：</span>}
+                    {g.items.map((it, j) => (
+                      <span key={j}>
+                        「{it.text}」<span className="guess-feed__verdict">{it.verdict}</span>
+                        {j < g.items.length - 1 ? " · " : ""}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="table-wrap">
               <table className="guess-matrix__table">
                 <thead>
                   <tr>
-                    <th className="guess-matrix__corner">原子叙述 \ 奇术</th>
+                    <th className="guess-matrix__corner">奇术 \ 判定</th>
                     {cards.map((c) => (
                       <th key={c.index}>
                         <span>第 {c.index} 门</span>
@@ -110,47 +112,23 @@ function GuessMatrix({ cards }: { cards: TestGuessCard[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((atom, ai) => (
-                    <tr key={ai}>
-                      <th scope="row" className="guess-matrix__atom">{atom}</th>
-                      {cards.map((c) => {
-                        const cRounds = cardRoundsOf(c);
-                        const thisRoundPairs = cRounds[r - 1]?.pairs ?? [];
-                        // 本行原子叙述是否命中该奇术（本轮给它带来**有价值**的新增条目）；未命中则格子留空
-                        const hitThisRound = thisRoundPairs.some((p) => p.item === atom && p.snippet);
-                        // 截止到本轮累计：从第 1 轮到第 r 轮所有命中的片段
-                        const thru = cRounds.slice(0, r).flatMap((x) => x.pairs.filter((p) => p.snippet).map((p) => p.snippet));
-                        // 本轮新增
-                        const newSnippets = new Set(thisRoundPairs.filter((p) => p.snippet).map((p) => p.snippet));
-                        if (thru.length === 0 || !hitThisRound) return <td key={c.index} className="guess-matrix__cell guess-matrix__cell--empty" />;
-                        const hasNew = newSnippets.size > 0;
-                        const verify = c.verifies?.find((v) => v.round === r);
-                        const crackedHere = c.cracked && c.cracked_round != null && c.cracked_round <= r;
-                        const isOpen = openCell?.ci === c.index && openCell?.round === r;
-                        return (
-                          <td key={c.index} className={`guess-matrix__cell ${crackedHere ? "guess-matrix__cell--cracked" : ""}`}>
-                            <button
-                              type="button"
-                              className="guess-matrix__desc"
-                              disabled={!hasNew}
-                              title={hasNew ? "点击查看看破 / 未看破判定" : undefined}
-                              onClick={() => setOpenCell(isOpen ? null : { ci: c.index, round: r })}
-                            >
-                              {crackedHere && <span className="guess-matrix__crack-inline">看破</span>}
-                              {thru.map((s, i) => (
-                                <span key={i} className={newSnippets.has(s) ? "is-new" : "is-old"}>{s}</span>
-                              ))}
-                            </button>
-                            {isOpen && verify && (
-                              <div className={`guess-matrix__reason ${verify.guessed ? "is-hit" : ""}`}>
-                                <b>{verify.guessed ? "看破" : "未看破"}</b>：{verify.reason}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                  <tr>
+                    {cards.map((c) => {
+                      const crackedHere = c.cracked && c.cracked_round != null && c.cracked_round <= r;
+                      return (
+                        <td
+                          key={c.index}
+                          className={`guess-matrix__cell ${crackedHere ? "guess-matrix__cell--cracked" : ""}`}
+                        >
+                          {crackedHere ? (
+                            <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{c.name}</span>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -182,6 +160,7 @@ export default function TestArena() {
 
   // 猜词
   const [guessText, setGuessText] = useState("");
+  const [verifying, setVerifying] = useState(false);
   // 详情弹窗板块：对决 / 猜词
   const [detailTab, setDetailTab] = useState<"battle" | "guess">("battle");
 
@@ -349,6 +328,21 @@ export default function TestArena() {
       setErr(e.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // 检定：根据此前全部猜测与点评，验证各门奇术看破与否
+  async function verifyGuess() {
+    if (!selected) return;
+    setVerifying(true);
+    setErr("");
+    try {
+      await api(`/admin/test/battles/${selected.id}/guess/verify`, { method: "POST" });
+      await refreshDetail(selected.id);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -557,16 +551,23 @@ export default function TestArena() {
                 {selected.guess_total > 0 && (
                   <>
                     <GuessBoard cards={selected.guess_cards ?? []} />
-                    <GuessMatrix cards={selected.guess_cards ?? []} />
-                    {selected.guess_history.length > 0 && (
-                      <ul className="guess-feed" style={{ marginBottom: 12 }}>
-                        {selected.guess_history.map((t, i) => <li key={i}>{t}</li>)}
-                      </ul>
-                    )}
+                    <GuessMatrix
+                      cards={selected.guess_cards ?? []}
+                      history={selected.guess_history}
+                      comments={selected.comments}
+                    />
                     {selected.guess_state !== "done" && selected.guess_attempts_used < selected.guess_attempts_max ? (
                       <div className="admin-toolbar__actions">
                         <input className="input" style={{ flex: 1 }} value={guessText} onChange={(e) => setGuessText(e.target.value)} placeholder="道出你从行迹中看到的线索…" />
-                        <button className="btn btn-primary" disabled={busy || !guessText.trim()} onClick={submitGuess}>提交猜词</button>
+                        <button className="btn btn-primary" disabled={busy || verifying || !guessText.trim()} onClick={submitGuess}>提交猜词</button>
+                        <button
+                          className="btn btn-ghost"
+                          disabled={verifying || busy || !selected.can_verify}
+                          onClick={verifyGuess}
+                          title={selected.can_verify ? "依据此前全部猜测与点评，验证各门奇术看破与否" : "需先道出新猜测并得到点评，才能发起检定"}
+                        >
+                          {verifying ? "检定中…" : "检定"}
+                        </button>
                       </div>
                     ) : (
                       <p className="muted">已 {selected.guess_hit ? "看破逆转" : "揭示"}：{selected.guess_hit ? "全部命中，胜负改写" : `未全破，已用 ${selected.guess_attempts_used} 次`}。</p>

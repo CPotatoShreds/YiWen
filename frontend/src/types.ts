@@ -58,10 +58,20 @@ export interface Loadout {
   abilities: Ability[];
 }
 
+// 一条原子判定：对用户猜测中一个原子片段的四态点评（服务端已剥离内部 reason）
+export interface GuessCommentaryItem {
+  text: string; // 被单独判定的原子片段（忠实引用用户原文）
+  verdict: string; // 四态之一：是 / 否 / 半对 / 不能确定
+}
+
+// 一个点评回合对单门的原子判定组（index = 卡序号+1；旧版整轮点评 index=0）
+export interface GuessCommentaryGroup {
+  index: number;
+  items: GuessCommentaryItem[];
+}
+
 export interface GuessCard {
   index: number;
-  matched: string[];
-  progress: number;
   cracked: boolean;
   name?: string;
   effect?: string;
@@ -72,8 +82,11 @@ export interface GuessBlock {
   total: number;
   cards?: GuessCard[] | null;
   history: string[];
+  comments: GuessCommentaryGroup[][]; // 与 history 平行：每轮点评 = 逐门原子判定组列表
   attempts_used: number;
   attempts_max: number;
+  verified_round?: number | null; // 最近一次检定时的点评数
+  can_verify: boolean; // 自上次检定后又有新点评，可发起检定
   done: boolean;
   flipped: boolean;
 }
@@ -107,16 +120,15 @@ export interface GuessPathRecord {
   battle_id: number; // 对应战报（榜主己方视角打开）
   round: number; // 本场内第几次猜测（1 起）
   text: string; // 提交的猜测原文
-  clue: { name: string; fragments: string[] }[]; // 本猜词爆出的线索
+  commentary: string; // 该次猜测得到的点评文本
   cracked_after: number; // 截至目前已看破门数
   at: string; // 发生时间（ISO）
 }
 
-// 刻印单门奇术的进度卡：已看破亮出真实名/效果，未看破仅线索片段
+// 刻印单门奇术的进度卡：已看破亮出真实名/效果，未看破仅标记
 export interface BoardAbility {
   index: number;
   cracked: boolean;
-  matched: string[];
   name?: string | null;
   effect?: string | null;
 }
@@ -158,11 +170,13 @@ export interface Battle {
   guess_score?: number;
   guess_by?: string | null;
   guess_history: string[];
+  guess_comments: GuessCommentaryGroup[][]; // 与 guess_history 平行：每轮点评 = 逐门原子判定组列表
   guess_text: string;
   guess_total: number;
   guess_cards?: GuessCard[] | null;
   guess_attempts_used: number;
   guess_attempts_max: number;
+  can_verify: boolean; // 自上次检定后又有新点评，可发起检定
   revealed: boolean;
   friendly: boolean;
   my_guess?: GuessBlock | null;

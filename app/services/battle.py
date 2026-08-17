@@ -55,10 +55,12 @@ from app.models.user import User
 from app.services import economy
 from app.services.battle_stream import _get_stream
 from app.services.deduction import run_deduction
-from app.services.guess import (  # noqa: F401 - re-export FAIL_GUESS_TEXT：battles.py/admin.py 从此处取用
-    FAIL_GUESS_TEXT,
+from app.services.guess import (
     GUESS_ATTEMPTS_MAX,
-    run_guess_round,
+    VERIFY_FAIL_MISSING,
+    render_commentary_text,
+    run_guess_commentary,
+    run_guess_verification,
 )
 from app.services.llm import profile_to_llm_config
 from app.services.loadout_interpretation import ensure_loadout_interpretation
@@ -71,7 +73,7 @@ from app.services.loadouts import (
 from app.services.matchmaking import pick_opponent, pick_opponent_no_repeat
 from app.services.nodes.deducer import build_deduce_chain as _build_deduce_llm
 from app.services.nodes.discusser import build_discuss_llm as _build_discuss_llm
-from app.services.nodes.guess_matcher import build_guess_pair_llm as _build_pair_llm
+from app.services.nodes.guess_matcher import build_guess_commentary_llm as _build_commentary_llm
 from app.services.nodes.guess_matcher import build_guess_verify_llm as _build_verify_llm
 from app.services.nodes.transcribe_validator import build_repair_chain as _build_repair_chain
 from app.services.nodes.transcribe_validator import build_validate_chain as _build_validate_chain
@@ -92,7 +94,7 @@ _guess_inflight: set[tuple[int, int]] = set()
 
 # 全链路自动重试耗尽后的面向用户解释文本（说书语系）
 FAIL_BATTLE_TEXT = "铺陈中途失联，行迹未能成卷，请稍后再启程。"
-# 猜奇术规则（GUESS_ATTEMPTS_MAX / MAX_PAIRS / FAIL_GUESS_TEXT）在 app.services.guess 统一维护
+# 猜奇术规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess 统一维护
 
 
 def _ability_dict(a: Ability) -> dict:
@@ -470,8 +472,10 @@ async def rematch_battle(db: AsyncSession, original: Battle) -> Battle:
                 used_abilities=[dict(a) for a in r.used_abilities],
                 cards=[dict(c) for c in r.cards],
                 guess_history=list(r.guess_history or []),
+                comments=list(r.comments or []),
                 attempts_used=r.attempts_used,
                 attempts_max=r.attempts_max,
+                verified_round=r.verified_round,
                 flipped=r.flipped,
                 done=r.done,
             )
@@ -581,7 +585,9 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
                 progress_prefill = {
                     "cards": [dict(c) for c in (progress.cards or [])],
                     "history": list(progress.guess_history or []),
+                    "comments": list(progress.comments or []),
                     "attempts": progress.attempts_used,
+                    "verified_round": progress.verified_round,
                 }
             user_a_id, user_b_id = user_a.id, user_b.id
             board_entry_id = battle.board_entry_id
@@ -735,10 +741,22 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
         await stream.close()
 
 
+def _can_verify(guess: BattleGuess) -> bool:
+    """检定是否可发起：行未结束、未耗尽，且自上次检定后又有新的点评（can_verify 判据）。
+
+    verified_round 存「最近一次检定时的点评数」，检定后再次发起须先有新点评（点评数增大）。
+    """
+    if guess.done or guess.flipped:
+        return False
+    if guess.attempts_used >= guess.attempts_max:
+        return False
+    return len(guess.comments or []) > (guess.verified_round or 0)
+
+
 async def _guess_load(
     db: AsyncSession, battle: Battle, guesser: User, text: str
 ) -> dict:
-    """猜词读+校验（只读，不落库）：返回 run_guess_round 的入参 kwargs。
+    """点评读+校验（只读，不落库）：返回 run_guess_commentary 的入参 kwargs。
 
     与路由的同步校验镜像（校验失败 400）；校验规则与写回阶段 _guess_settle 顶部保持一致。
     """
@@ -757,32 +775,56 @@ async def _guess_load(
         raise ValueError("猜测不能为空")
 
     abilities = guess.used_abilities  # 参考基准 = 对家实际使用的奇术（真名只在服务端作判定依据，绝不进入前端）
-    # 环节一：拆分。用户以换行分隔对各奇术的猜测，后端按换行切原子条目（取消 LLM 拆分）。
-    # 环节二/三（配对匹配 → 检定）在共享猜词管道 guess.py 内跑。真实对战只持久化最小字段：
-    # rounds/verifies/cracked_round 明细仅供试验场累计描述表展示，落库前裁剪掉。
-    # run_guess_round 就地更新入参并返回同一列表，pre_cards 传给它会被污染；写回阶段的
-    # 通知对比须另取深拷贝快照（浅拷贝的 matched 列表共享）。
-    pre_cards = [dict(c) for c in guess.cards]
     profile = await db.get(LlmProfile, guesser.active_profile_id) if guesser.active_profile_id else None
     llm_config = profile_to_llm_config(profile)
     return {
         "text": text,
         "abilities": abilities,
-        "cards": pre_cards,  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
-        "round_no": guess.attempts_used + 1,
+        "cards": [dict(c) for c in guess.cards],  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
         "trace_context": {"kind": "guess", "trace_id": str(battle.id)},
-        "build_pair": _build_pair_llm,
+        "build_commentary": _build_commentary_llm,
+        "llm_config": llm_config,
+    }
+
+
+async def _verify_load(
+    db: AsyncSession, battle: Battle, guesser: User
+) -> dict:
+    """检定读+校验（只读，不落库）：返回 run_guess_verification 的入参 kwargs。
+
+    与路由的同步校验镜像；校验规则与写回阶段 _verify_settle 顶部保持一致。
+    """
+    if battle.status != "done":
+        raise ValueError("对决尚未完成")
+    rows = await _guess_rows(db, battle.id)
+    guess = _row_for(rows, guesser.id)
+    if guess is None or not guess.used_abilities:
+        raise ValueError("本场无奇术可猜")
+    if not _can_verify(guess):
+        raise ValueError("尚无新的猜测进展，暂不可检定")
+
+    abilities = guess.used_abilities
+    profile = await db.get(LlmProfile, guesser.active_profile_id) if guesser.active_profile_id else None
+    llm_config = profile_to_llm_config(profile)
+    return {
+        "history": list(guess.guess_history or []),
+        "comments": list(guess.comments or []),
+        "abilities": abilities,
+        "cards": [dict(c) for c in guess.cards],  # 重建全新 dict 触发 JSON 变更检测（沿用既有套路）
+        "round_no": len(guess.comments or []),
+        "trace_context": {"kind": "guess_verify", "trace_id": str(battle.id)},
         "build_verify": _build_verify_llm,
         "llm_config": llm_config,
     }
 
 
 async def _guess_settle(
-    db: AsyncSession, battle: Battle, guesser: User, text: str, cards: list[dict]
+    db: AsyncSession, battle: Battle, guesser: User, text: str, commentary: list[dict]
 ) -> None:
-    """猜词写回+结算：重取 rows/guess/story（与读阶段读取一致，因读阶段不落库），应用本轮
-    配对/检定结果并落库。自包含，不依赖调用方预读的 ORM 状态；顶部复检防止竞态（如用户
-    在本轮 LLM 期间收手）。
+    """点评写回+结算：重取 rows/guess/story（与读阶段读取一致，因读阶段不落库），应用本轮点评并落库。
+
+    自包含，不依赖调用方预读的 ORM 状态；顶部复检防止竞态（如用户在本轮 LLM 期间收手）。
+    点评只追加猜测原文与逐门原子判定、消耗一次机会；不改变看破状态、不重算 score。
     """
     rows = await _guess_rows(db, battle.id)
     guess = _row_for(rows, guesser.id)
@@ -793,17 +835,88 @@ async def _guess_settle(
     if guess.attempts_used >= guess.attempts_max:
         raise ValueError("猜测次数已用完")
     story = json.loads(battle.story)
-    # 本轮前各卡状态（判断是否产生新进展）
-    pre_state = [
-        {"matched": list(c.get("matched", [])), "cracked": bool(c.get("cracked", False))} for c in guess.cards
-    ]
 
-    guess.cards = [{"matched": c["matched"], "cracked": c["cracked"]} for c in cards]
-    guess.attempts_used += 1
     battle.guess_text = text
-    # 猜测原文按提交顺序落历史（新建 list 对象触发 JSON 变更检测，与 guess.cards 同套路）；
-    # 对家据此实时看到猜词者每次道出的猜测
+    # 猜测原文与逐门点评按提交顺序落历史（新建 list 对象触发 JSON 变更检测，与 guess.cards 同套路）；
+    # 对家据此实时看到猜词者每次道出的猜测与点评
     guess.guess_history = list(guess.guess_history or []) + [text]
+    guess.comments = list(guess.comments or []) + [commentary]
+    guess.attempts_used += 1
+    cracked = sum(1 for c in guess.cards if c.get("cracked"))
+
+    if guess.attempts_used >= guess.attempts_max:
+        # 次数耗尽未全破：是否揭示由被猜方（当前胜者）的设置决定
+        guess.done = True
+        if battle.guess_by is not None and battle.board_entry_id is None:
+            battle.guess_hit = False
+    elif battle.guess_by is not None:
+        battle.guess_hit = None  # 仍在猜词中
+
+    rows = await _guess_rows(db, battle.id)
+    battle.guess_state = _agg_guess_state(rows)
+    if battle.board_entry_id is not None:
+        # 点将局：本轮点评即「本猜词爆出的线索」（点评文本全量入榜，供榜主追踪猜词路径）
+        log_entry = {
+            "battle_id": battle.id,
+            "round": len(guess.guess_history),
+            "text": text,
+            "commentary": render_commentary_text(commentary),
+            "cracked_after": cracked,
+            "at": battle.created_at.isoformat(),
+        }
+        await _sync_board_progress(db, battle, guess, log_entry=log_entry)  # 点将局：回写跨场进度，揭示以进度全破为准
+    else:
+        await _recalc_reveal(db, battle, rows)
+    if battle.guess_by is None and battle.guess_state == "done":
+        await _settle_draw_outcome(db, battle, rows)
+
+    battle.story = json.dumps(story, ensure_ascii=False)
+    await db.commit()
+
+    user_a = await db.get(User, battle.user_a_id)
+    user_b = await db.get(User, battle.user_b_id)
+    _write_md(battle, user_a, user_b, story, revealed=battle.revealed)
+
+    # 通知被猜方有新的猜词进展：每次点评都通知（点评即新的窥探行为）；
+    # 点将局榜主不可查看单场，猜词进展归并到榜单，不逐场通知。
+    if battle.board_entry_id is None:
+        opponent = user_b if guesser.id == battle.user_a_id else user_a
+        with suppress(Exception):
+            await create_notification(
+                db,
+                user_id=opponent.id,
+                actor_id=guesser.id,
+                type="guess_progress",
+                title="你的奇术正被窥探",
+                body=f"「{guesser.username}」正于行迹中道出猜测，窥探你的奇术（已看破 {cracked} 门）。",
+                ref_type="battle",
+                ref_id=battle.id,
+            )
+
+
+async def _verify_settle(
+    db: AsyncSession, battle: Battle, guesser: User, cards: list[dict], round_no: int
+) -> None:
+    """检定写回+结算：应用本轮检定结果（看破/还缺什么），重算 score，触发全破逆转等结算。
+
+    检定不追加 guess_history/comments（聊天记录只含点评轮）；verified_round 记为检定时点评数，
+    can_verify = len(comments) > verified_round 由此保证「检定后须有新点评才能再检定」。
+    """
+    rows = await _guess_rows(db, battle.id)
+    guess = _row_for(rows, guesser.id)
+    if guess is None or not guess.used_abilities:
+        raise ValueError("本场无奇术可猜")
+    if not _can_verify(guess):
+        raise ValueError("尚无新的猜测进展，暂不可检定")
+    story = json.loads(battle.story)
+    pre_cracked = sum(1 for c in guess.cards if c.get("cracked"))
+
+    guess.cards = [
+        {"cracked": c["cracked"], "missing": c.get("missing") or "", "cracked_round": c.get("cracked_round")}
+        for c in cards
+    ]
+    guess.verified_round = round_no
+    guess.attempts_used += 1
 
     cracked = sum(1 for c in cards if c["cracked"])
     battle.guess_score = cracked / len(cards) if cards else 0.0
@@ -828,22 +941,7 @@ async def _guess_settle(
     rows = await _guess_rows(db, battle.id)
     battle.guess_state = _agg_guess_state(rows)
     if battle.board_entry_id is not None:
-        # 点将局：本轮新增片段即「本猜词爆出的线索」（pre_state 与 post cards 同下标对齐）
-        clue = []
-        for i, (pre, card) in enumerate(zip(pre_state, cards)):
-            pre_matched = pre.get("matched") or []
-            new_frag = list(card.get("matched") or [])[len(pre_matched) :]
-            if new_frag:
-                clue.append({"name": guess.used_abilities[i]["name"], "fragments": new_frag})
-        log_entry = {
-            "battle_id": battle.id,
-            "round": guess.attempts_used,
-            "text": text,
-            "clue": clue,
-            "cracked_after": cracked,
-            "at": battle.created_at.isoformat(),
-        }
-        await _sync_board_progress(db, battle, guess, log_entry=log_entry)  # 点将局：回写跨场进度，揭示以进度全破为准
+        await _sync_board_progress(db, battle, guess)  # 点将局：检定回写进度（新看破/还缺什么）
     else:
         await _recalc_reveal(db, battle, rows)
     if battle.guess_by is None and battle.guess_state == "done":
@@ -856,38 +954,39 @@ async def _guess_settle(
     user_b = await db.get(User, battle.user_b_id)
     _write_md(battle, user_a, user_b, story, revealed=battle.revealed)
 
-    # 通知被猜方有新的猜词进展：仅当本轮产生新片段或新看破（纯未命中不刷屏）；
+    # 通知被猜方有新的猜词进展：仅当本轮产生新看破（检定无新看破不刷屏）；
     # 点将局榜主不可查看单场，猜词进展归并到榜单，不逐场通知。
-    if battle.board_entry_id is None:
-        cracked_before = sum(1 for c in pre_state if c["cracked"])
-        has_new_match = any(
-            i < len(pre_state) and len(c["matched"]) > len(pre_state[i]["matched"])
-            for i, c in enumerate(cards)
-        )
-        if has_new_match or cracked > cracked_before:
-            opponent = user_b if guesser.id == battle.user_a_id else user_a
-            with suppress(Exception):
-                await create_notification(
-                    db,
-                    user_id=opponent.id,
-                    actor_id=guesser.id,
-                    type="guess_progress",
-                    title="你的奇术正被窥探",
-                    body=f"「{guesser.username}」正于行迹中道出猜测，窥探你的奇术（已看破 {cracked} 门）。",
-                    ref_type="battle",
-                    ref_id=battle.id,
-                )
+    if battle.board_entry_id is None and cracked > pre_cracked:
+        opponent = user_b if guesser.id == battle.user_a_id else user_a
+        with suppress(Exception):
+            await create_notification(
+                db,
+                user_id=opponent.id,
+                actor_id=guesser.id,
+                type="guess_progress",
+                title="你的奇术正被窥探",
+                body=f"「{guesser.username}」正于行迹中道出猜测，窥探你的奇术（已看破 {cracked} 门）。",
+                ref_type="battle",
+                ref_id=battle.id,
+            )
 
 
 async def submit_guess(db: AsyncSession, battle: Battle, guesser: User, text: str) -> None:
-    """猜对家奇术（迭代式）：读+校验 → LLM 配对/检定 → 写回结算。
+    """猜对家奇术（迭代式）：读+校验 → LLM 点评 → 写回结算。
 
     保持单会话语义（同一传入会话完成三阶段），供直接调用方/测试使用；后台任务
     _run_guess_task 走分段连接版（读/LLM/写各一短连接）。
     """
     ctx = await _guess_load(db, battle, guesser, text)
-    cards = await run_guess_round(**ctx)
-    await _guess_settle(db, battle, guesser, ctx["text"], cards)
+    commentary = await run_guess_commentary(**ctx)
+    await _guess_settle(db, battle, guesser, ctx["text"], commentary)
+
+
+async def verify_guess(db: AsyncSession, battle: Battle, guesser: User) -> None:
+    """主动检定对家奇术（迭代式）：读+校验 → LLM 逐卡检定 → 写回结算。同 submit_guess 会话语义。"""
+    ctx = await _verify_load(db, battle, guesser)
+    cards = await run_guess_verification(**ctx)
+    await _verify_settle(db, battle, guesser, cards, ctx["round_no"])
 
 
 async def give_up_guess(db: AsyncSession, battle: Battle, guesser: User) -> None:
@@ -928,7 +1027,7 @@ async def give_up_guess(db: AsyncSession, battle: Battle, guesser: User) -> None
 
 
 async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
-    """后台猜词：分段连接——读+校验（短连接）→ LLM 配对/检定（无连接）→ 写回落库（短连接）。
+    """后台猜词（点评）：分段连接——读+校验（短连接）→ LLM 点评（无连接）→ 写回落库（短连接）。
 
     完成后经总线推 guess_done；猜词彻底结束（guess_state == "done"）时关闭总线，
     SSE 订阅端回落到立即 done。
@@ -943,13 +1042,13 @@ async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
             if guesser is None:
                 return
             ctx = await _guess_load(db, battle, guesser, text)
-        cards = await run_guess_round(**ctx)  # 无 db 连接
+        commentary = await run_guess_commentary(**ctx)  # 无 db 连接
         async with async_session_factory() as db:
             battle = await db.get(Battle, battle_id)
             guesser = await db.get(User, guesser_id)
             if battle is None or guesser is None:
                 return
-            await _guess_settle(db, battle, guesser, ctx["text"], cards)
+            await _guess_settle(db, battle, guesser, ctx["text"], commentary)
             finished = battle.guess_state == "done"
         await stream.publish({"type": "guess_done", "battle_id": battle_id})
         if finished:
@@ -963,6 +1062,41 @@ async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
         _guess_inflight.discard((battle_id, guesser_id))
 
 
+async def _run_verify_task(battle_id: int, guesser_id: int) -> None:
+    """后台检定：分段连接——读+校验（短连接）→ LLM 逐卡检定（无连接）→ 写回落库（短连接）。
+
+    与 _run_guess_task 同构；检定不追加聊天记录，只更新逐卡看破/还缺什么并重算 score。
+    """
+    stream = _get_stream(battle_id)
+    try:
+        async with async_session_factory() as db:
+            battle = await db.get(Battle, battle_id)
+            if battle is None:
+                return
+            guesser = await db.get(User, guesser_id)
+            if guesser is None:
+                return
+            ctx = await _verify_load(db, battle, guesser)
+        cards = await run_guess_verification(**ctx)  # 无 db 连接
+        async with async_session_factory() as db:
+            battle = await db.get(Battle, battle_id)
+            guesser = await db.get(User, guesser_id)
+            if battle is None or guesser is None:
+                return
+            await _verify_settle(db, battle, guesser, cards, ctx["round_no"])
+            finished = battle.guess_state == "done"
+        await stream.publish({"type": "guess_done", "battle_id": battle_id})
+        if finished:
+            await stream.close()
+    except ValueError as e:
+        await stream.publish({"type": "guess_error", "message": str(e)})
+    except Exception as e:  # noqa: BLE001 - 后台检定任何异常都落到事件，不让任务静默死亡
+        logger.error("guess_verify_failed id=%d err=%r", battle_id, e)
+        await stream.publish({"type": "guess_error", "message": "检定失败，请稍后重试"})
+    finally:
+        _guess_inflight.discard((battle_id, guesser_id))
+
+
 def try_start_guess(battle_id: int, guesser_id: int, text: str) -> bool:
     """猜词后台任务入队（在途防重，按猜测者独立）。调用方已完成同步校验；返回 False 表示已有判定在途。"""
     key = (battle_id, guesser_id)
@@ -970,6 +1104,18 @@ def try_start_guess(battle_id: int, guesser_id: int, text: str) -> bool:
         return False
     _guess_inflight.add(key)
     task = asyncio.create_task(_run_guess_task(battle_id, guesser_id, text))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return True
+
+
+def try_start_verify(battle_id: int, guesser_id: int) -> bool:
+    """检定后台任务入队（与点评共用在途防重：同（战场, 猜测者）点评/检定互斥）。"""
+    key = (battle_id, guesser_id)
+    if key in _guess_inflight:
+        return False
+    _guess_inflight.add(key)
+    task = asyncio.create_task(_run_verify_task(battle_id, guesser_id))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return True
@@ -1014,19 +1160,25 @@ async def _build_guess_row_data(
         # 点将局：usage 下标即刻印快照下标，跨场进度按位预填；子集全已认识 → 行即结束（不翻转）
         cards = [dict(prefill["cards"][i - 1]) for i in indices]
         history = list(prefill.get("history") or [])
+        comments = list(prefill.get("comments") or [])
         attempts = prefill.get("attempts") or 0
+        verified_round = prefill.get("verified_round")
         done = bool(cards) and all(c["cracked"] for c in cards)
     else:
-        cards = [{"matched": [], "cracked": False} for _ in used]
+        cards = [{"cracked": False, "missing": None} for _ in used]
         history = []
+        comments = []
         attempts = 0
+        verified_round = None
         done = False
     return {
         "used_abilities": used,
         "cards": cards,
         "guess_history": history,
+        "comments": comments,
         "attempts_used": attempts,
         "attempts_max": GUESS_ATTEMPTS_MAX,
+        "verified_round": verified_round,
         "flipped": done,  # 点将局 flipped 仅表示「本场用术子集已全认识」（不驱动翻转/揭示）
         "done": done,
     }
@@ -1040,7 +1192,7 @@ async def _board_progress(db: AsyncSession, challenger_id: int, entry_id: int) -
         row = BoardGuessProgress(
             challenger_id=challenger_id,
             board_entry_id=entry_id,
-            cards=[{"matched": [], "cracked": False} for _ in (entry.abilities if entry else [])],
+            cards=[{"cracked": False, "missing": ""} for _ in (entry.abilities if entry else [])],
         )
         db.add(row)
         await db.flush()
@@ -1078,15 +1230,16 @@ async def _sync_board_progress(
         if card["cracked"]:
             new_cards[idx] = dict(card)
         else:
-            # 未看破门：只上卷已累计的线索片段（跨场并集），供挑战者详情页看破进度展示；
-            # 不回退（新场预填的进度可能先于另一场提交，并集而非赋值）。
-            base = list(new_cards[idx].get("matched") or [])
-            new_cards[idx]["matched"] = base + [
-                f for f in (card.get("matched") or []) if f not in base
-            ]
+            # 未看破门：只上卷最近一次检定给出的「还缺什么」（跨场并集）；不回退。
+            # 检定失联的临时文案不持久化。
+            missing = (card.get("missing") or "").strip()
+            if missing and missing != VERIFY_FAIL_MISSING:
+                new_cards[idx]["missing"] = missing
     progress.cards = new_cards
     progress.guess_history = list(guess.guess_history or [])
+    progress.comments = list(guess.comments or [])
     progress.attempts_used = max(progress.attempts_used or 0, guess.attempts_used or 0)
+    progress.verified_round = max(progress.verified_round or 0, guess.verified_round or 0)
     if log_entry is not None:
         progress.guess_log = list(progress.guess_log or []) + [log_entry]
     if new_cards and all(c["cracked"] for c in new_cards):

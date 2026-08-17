@@ -67,8 +67,8 @@ def _insert_battle_guess(battle_id: int, guesser_id: int) -> None:
     con = _sqlite()
     con.execute(
         "INSERT INTO battle_guesses (battle_id, guesser_id, used_abilities, cards, guess_history,"
-        " attempts_used, attempts_max, flipped, done)"
-        " VALUES (%s, %s, '[]', '[]', '[]', 0, 5, FALSE, TRUE)",
+        " comments, attempts_used, attempts_max, verified_round, flipped, done)"
+        " VALUES (%s, %s, '[]', '[]', '[]', '[]', 0, 5, NULL, FALSE, TRUE)",
         (battle_id, guesser_id),
     )
     con.commit()
@@ -76,24 +76,35 @@ def _insert_battle_guess(battle_id: int, guesser_id: int) -> None:
 
 
 def _insert_battle_guess_full(battle_id: int, guesser_id: int) -> None:
-    """带真实数据的猜词行：两门奇术，一门未看破一门看破。"""
+    """带真实数据的猜词行：两门奇术，一门未看破一门看破（含点评轮次与检定明细）。"""
     con = _sqlite()
     con.execute(
         "INSERT INTO battle_guesses (battle_id, guesser_id, used_abilities, cards, guess_history,"
-        " attempts_used, attempts_max, flipped, done)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, TRUE)",
+        " comments, attempts_used, attempts_max, verified_round, flipped, done)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, TRUE)",
         (
             battle_id,
             guesser_id,
             '[{"name": "焚风", "effect": "战地起火"}, {"name": "寒铁", "effect": "兵刃凝霜"}]',
             (
-                '[{"matched": ["手执兵刃"], "cracked": false},'
-                ' {"matched": ["火光冲天", "灼热难当"], "cracked": true, "cracked_round": 3,'
-                ' "rounds": [1, 2, 3], "verifies": ["看破"]}]'
+                '[{"cracked": false, "missing": "还缺关键限制", "cracked_round": null, "verifies": []},'
+                ' {"cracked": true, "missing": "", "cracked_round": 3,'
+                ' "verifies": [{"round": 3, "cracked": true, "missing": ""}]}]'
             ),
             '["第一轮猜测", "第二轮猜测"]',
+            (
+                '[['
+                ' {"index": 1, "items": [{"text": "全图范围", "verdict": "是", "reason": "该门覆盖全图"}]},'
+                ' {"index": 2, "items": [{"text": "即死", "verdict": "否", "reason": "该门非即死"}]}'
+                '],'
+                ' ['
+                ' {"index": 1, "items": [{"text": "全图冲击", "verdict": "半对", "reason": "方向沾边"}]},'
+                ' {"index": 2, "items": [{"text": "瞬移", "verdict": "是", "reason": "该门可瞬移"}]}'
+                ']]'
+            ),
             2,
             5,
+            None,
         ),
     )
     con.commit()
@@ -407,7 +418,7 @@ def test_battle_detail_guess_cards():
         cards = detail["guess_cards"]
         assert cards is not None and len(cards) == 2
         assert cards[0]["cracked"] is False
-        assert cards[0]["matched"] == ["手执兵刃"]
+        assert cards[0]["missing"] == "还缺关键限制"
         assert "name" not in cards[0]
         assert cards[1]["cracked"] is True
         assert cards[1]["name"] == "寒铁" and cards[1]["effect"] == "兵刃凝霜"
@@ -584,7 +595,7 @@ def test_test_arena_skip_battle_and_guess():
         assert body["guess_total"] == 1  # 无叙述 → 默认全部奇术被使用
         tb_id = body["id"]
 
-        # 猜词（三环节打桩默认不命中 → 无看破，次数耗尽揭示）
+        # 猜词：点评（打桩默认不命中 → 无看破），再独立检定（同样不命中 → 未结束）
         g = client.post(
             f"/api/admin/test/battles/{tb_id}/guess",
             json={"text": "能点燃一切"},
@@ -592,6 +603,10 @@ def test_test_arena_skip_battle_and_guess():
         )
         assert g.status_code == 200, g.text
         assert g.json()["guess_state"] == "guessing"
+        gv = client.post(f"/api/admin/test/battles/{tb_id}/guess/verify", headers=h)
+        assert gv.status_code == 200, gv.text
+        assert gv.json()["guess_state"] == "guessing"  # 1 门未看破，未结束
+        assert gv.json()["guess_cards"][0]["missing"] == ""  # 打桩未看破、无 missing
 
         # 玩家侧零污染：battles / battle_guesses 未新增（仅测试域落 test_* 表）
         con = _sqlite()
@@ -745,24 +760,27 @@ def test_llm_trace_recorded_for_guess_flow():
         assert r.status_code == 201, r.text
         tb_id = r.json()["id"]
 
-        # 提交猜词（拆分是纯函数无 LLM；配对打桩返回空，但仍会触发 LLM 调用并落追踪）
+        # 提交猜词（点评打桩返回空，但仍会触发 LLM 调用并落追踪）+ 独立检定（同样落追踪）
         g = client.post(
             f"/api/admin/test/battles/{tb_id}/guess",
             json={"text": "能点燃一切"},
             headers=h,
         )
         assert g.status_code == 200, g.text
+        gv = client.post(f"/api/admin/test/battles/{tb_id}/guess/verify", headers=h)
+        assert gv.status_code == 200, gv.text
 
-        # 追踪落库是异步任务，轮询等待本场 guess_pair 记录出现
+        # 追踪落库是异步任务，轮询等待本场 guess_commentary 记录出现
         con = _sqlite()
         n = _wait_for_trace_count(con, 1, kind="test_guess", trace_id=str(tb_id))
         con.close()
         assert n >= 1, "应至少有一条 llm_traces 记录"
 
-        # 管理端列表可见（带环节/场景过滤）
+        # 管理端列表可见（带环节/场景过滤）：点评 + 检定两环节都落追踪
         lst = client.get(f"/api/admin/llm-traces?kind=test_guess&trace_id={tb_id}", headers=h).json()
         ops = {t["operation"] for t in lst}
-        assert "guess_pair" in ops, f"应含 guess_pair，实际 {ops}"
+        assert "guess_commentary" in ops, f"应含 guess_commentary，实际 {ops}"
+        assert "guess_verify" in ops, f"应含 guess_verify，实际 {ops}"
         assert all(t["kind"] == "test_guess" and t["trace_id"] == str(tb_id) for t in lst)
 
         # 详情含请求输入
@@ -773,7 +791,7 @@ def test_llm_trace_recorded_for_guess_flow():
         # 统计聚合可用
         stats = client.get("/api/admin/llm-traces/stats", headers=h).json()
         assert stats["total"] >= 1
-        assert any(op["operation"] == "guess_pair" for op in stats["by_operation"])
+        assert any(op["operation"] == "guess_commentary" for op in stats["by_operation"])
 
         # 清掉测试行迹（trace 保留，不清理测试方便复盘）
         client.delete(f"/api/admin/test/battles/{tb_id}", headers=h)

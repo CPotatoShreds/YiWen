@@ -17,17 +17,18 @@ from app.models.loadout import Loadout
 from app.models.user import User
 from app.schemas.battle import BattleOut, BattleStartIn, GuessBlock, GuessIn
 from app.services.battle import (
-    FAIL_GUESS_TEXT,
     GUESS_ATTEMPTS_MAX,
+    _can_verify,
     _guess_inflight,
     disambiguate_fighters,
     try_start_guess,
+    try_start_verify,
 )
 from app.services.battle import give_up_guess as give_up_guess_service
 from app.services.battle import rematch_battle as rematch_battle_service
 from app.services.battle import start_battle as start_battle_service
 from app.services.battle_stream import _get_stream
-from app.services.nodes.guess_matcher import split_atomic_guesses
+from app.services.guess import strip_commentary_reason
 
 router = APIRouter(prefix="/battles", tags=["battles"])
 
@@ -115,9 +116,9 @@ def _guess_block(row: BattleGuess | None) -> GuessBlock | None:
     cards = [
         {
             "index": i + 1,
-            "matched": c["matched"],
-            "cracked": c["cracked"],
-            **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+            "missing": c.get("missing") or "",
+            "cracked": c.get("cracked", False),
+            **({"name": used["name"], "effect": used["effect"]} if c.get("cracked", False) else {}),
         }
         for i, (c, used) in enumerate(zip(row.cards, row.used_abilities))
     ]
@@ -125,8 +126,11 @@ def _guess_block(row: BattleGuess | None) -> GuessBlock | None:
         total=len(row.used_abilities),
         cards=cards,
         history=list(row.guess_history or []),
+        comments=strip_commentary_reason(row.comments),
         attempts_used=row.attempts_used,
         attempts_max=row.attempts_max,
+        verified_round=row.verified_round,
+        can_verify=_can_verify(row),
         done=row.done,
         flipped=row.flipped,
     )
@@ -211,16 +215,19 @@ async def _to_out(
     guess_total = len(primary.used_abilities) if primary and primary.used_abilities else 0
     guess_cards = _guess_block(primary).cards if primary and primary.used_abilities else None
     guess_history = list(primary.guess_history or []) if primary else []
+    guess_comments = strip_commentary_reason(primary.comments) if primary else []
     # 榜主看本刻印点将单场：只看自己视角、不开放任何猜词（行迹仅显示对方与胜负）
     poster_board_view = battle.board_entry_id is not None and viewer_id == battle.user_b_id
     if poster_board_view:
         opp_row = None
         primary = None
         guess_history = []
+        guess_comments = []
         guess_cards = None
         guess_total = 0
     guess_attempts_used = primary.attempts_used if primary else 0
     guess_attempts_max = primary.attempts_max if primary else GUESS_ATTEMPTS_MAX
+    can_verify = _can_verify(my_row) if my_row else False
     return BattleOut(
         id=battle.id,
         user_a=names.get(battle.user_a_id, "?"),
@@ -251,11 +258,13 @@ async def _to_out(
         guess_score=battle.guess_score,
         guess_by=names.get(battle.guess_by) if battle.guess_by else None,
         guess_history=guess_history,
+        guess_comments=guess_comments,
         guess_text=battle.guess_text if is_guesser else "",
         guess_total=guess_total,
         guess_cards=guess_cards,
         guess_attempts_used=guess_attempts_used,
         guess_attempts_max=guess_attempts_max,
+        can_verify=can_verify,
         revealed=revealed,
         friendly=battle.friendly,
         my_guess=_guess_block(my_row),
@@ -325,10 +334,39 @@ async def guess_battle(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测次数已用完")
     if not body.text.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="猜测不能为空")
-    if not split_atomic_guesses(body.text):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FAIL_GUESS_TEXT)
     if not try_start_guess(battle.id, current.id, body.text):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮猜测仍在判定中")
+    return await _to_out(db, battle, viewer_id=current.id)
+
+
+@router.post("/{battle_id}/guess/verify", response_model=BattleOut, status_code=status.HTTP_202_ACCEPTED)
+async def guess_verify(
+    battle_id: int,
+    current: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BattleOut:
+    """检定（异步受理）：对全部未看破奇术做布尔检定，同步校验后 202 受理，LLM 判定在后台任务跑。
+
+    独立于点评发起；可反复检定，但须自上次检定后又有新的点评（can_verify）。结果经 SSE guess_done 回推。
+    校验镜像 verify_guess 顶部检查，失败同步 400；判定在途再提交 → 409。
+    """
+    battle = await db.get(Battle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
+    if current.id not in (battle.user_a_id, battle.user_b_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
+    if battle.status != "done":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="对决尚未完成")
+    if battle.guess_by is not None and battle.guess_by != current.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有战败方可以猜奇术")
+    rows = await _load_guess_rows(db, battle.id)
+    guess = _row_for(rows, current.id)
+    if guess is None or not guess.used_abilities:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无奇术可猜")
+    if not _can_verify(guess):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="尚无新的猜测进展，暂不可检定")
+    if not try_start_verify(battle.id, current.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="上一轮判定仍在进行中")
     return await _to_out(db, battle, viewer_id=current.id)
 
 

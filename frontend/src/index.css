@@ -641,8 +641,6 @@ select.input { appearance: auto; }
 .guess-card__no { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--muted); flex: 1; }
 .guess-card__label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .guess-card__label--hit { color: var(--accent-strong); font-weight: 700; }
-.guess-card__matched { margin: 0; padding-left: 16px; font-size: 13px; color: var(--ink); line-height: 1.55; }
-.guess-card__matched li + li { margin-top: 5px; }
 /* 猜测原文流：败方逐次道出的猜测（双方可见，交互感拉满） */
 .guess-feed { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .guess-feed li {
@@ -655,6 +653,7 @@ select.input { appearance: auto; }
   line-height: 1.55;
 }
 .guess-feed li::before { content: "·"; color: var(--accent); font-weight: 700; margin-right: 6px; }
+.guess-feed__verdict { font-weight: 700; color: var(--accent-strong); }
 .guess-tab__meta { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
 .guess-tab .guess-board { margin-top: 12px; }
 .guess-card__name { font-family: var(--font-display); font-weight: 800; font-size: 15px; }
@@ -1259,14 +1258,7 @@ body::after {
 .trace-grid__cell.is-hit { background: var(--accent-soft); color: var(--accent-strong); }
 .trace-grid__row .trace-grid__head .trace-grid__cell { color: var(--muted); }
 
-/* 环节二 trace 配对表：正常 <table> */
-.pair-grid { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 12px; }
-.pair-grid th, .pair-grid td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; text-align: left; }
-.pair-grid thead th, .pair-grid tbody th { background: var(--ground-2); color: var(--muted); font-weight: 600; white-space: nowrap; }
-.pair-grid tbody td { min-width: 160px; color: var(--ink); line-height: 1.5; }
-.pair-grid tbody td.is-hit { background: var(--accent-soft); color: var(--accent-strong); }
-
-/* 猜词累计描述表：正常 <table>，行 = 原子叙述，列 = 奇术 */
+/* 猜词矩阵：按轮展示「猜测+点评」，列 = 奇术缺口 */
 .guess-matrices { display: flex; flex-direction: column; gap: 16px; margin: 14px 0; }
 .guess-matrix__head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 .guess-matrix__head b { font-size: 14px; }
@@ -1276,20 +1268,8 @@ body::after {
 .guess-matrix__table thead th { background: var(--ground-2); color: var(--ink); font-weight: 600; white-space: nowrap; }
 .guess-matrix__table thead th .guess-matrix__crack { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; font-weight: 700; }
 .guess-matrix__corner { color: var(--muted) !important; font-weight: 400 !important; white-space: nowrap; }
-.guess-matrix__atom { width: 18%; min-width: 150px; background: var(--ground-2); color: var(--muted); font-weight: 500; }
 .guess-matrix__cell { min-width: 200px; }
-.guess-matrix__cell--empty { background: transparent; }
 .guess-matrix__cell--cracked { background: var(--accent-soft); }
-.guess-matrix__desc { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 0; border: 0; background: transparent; font: inherit; text-align: left; }
-.guess-matrix__desc[disabled] { cursor: default; }
-.guess-matrix__desc:not([disabled]) { cursor: pointer; color: var(--accent-strong); }
-.guess-matrix__desc span { line-height: 1.55; }
-.guess-matrix__desc span.is-new { color: var(--accent); font-weight: 600; }
-.guess-matrix__desc span.is-old { color: var(--ink); }
-.guess-matrix__crack-inline { display: inline-flex; align-self: flex-start; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
-.guess-matrix__reason { margin-top: 6px; padding: 6px 8px; border-radius: 8px; background: var(--ground-2); font-size: 12px; line-height: 1.5; }
-.guess-matrix__reason.is-hit { background: var(--accent-soft); }
-.guess-matrix__reason b { color: var(--accent-strong); }
 .battle-detail > p { font-size: 14px; }
 .endpoint-list { display: grid; gap: 13px; }
 .endpoint-row__head { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 5px; color: var(--muted); font-size: 12px; }

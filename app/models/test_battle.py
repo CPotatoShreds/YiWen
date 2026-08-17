@@ -78,9 +78,11 @@ class TestBattleGuess(Base):
 
     battle_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     used_abilities: Mapped[list] = mapped_column(JSON, default=list)  # [{name, effect}]
-    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched: [str], cracked: bool}]
+    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{cracked, missing, cracked_round, verifies}]
     guess_history: Mapped[list] = mapped_column(JSON, default=list)
+    comments: Mapped[list] = mapped_column(JSON, default=list)  # 与 guess_history 平行：点评文本
     attempts_used: Mapped[int] = mapped_column(Integer, default=0)
-    attempts_max: Mapped[int] = mapped_column(Integer, default=5)
+    attempts_max: Mapped[int] = mapped_column(Integer, default=200)
+    verified_round: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 最近一次检定时的点评数（can_verify 判据）
     flipped: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -65,7 +65,8 @@ class Battle(Base):
 class BattleGuess(Base):
     """猜奇术状态（结算时预生成，一行一猜测者）：被猜侧实际使用的奇术子集 + 逐卡进度 + 猜测次数。
 
-    一张卡对应一门实际使用过的奇术：猜测者逐次道出猜测，匹配片段上卡、进度累计到看破该卡
+    一张卡对应一门实际使用过的奇术：猜测者逐次道出猜测，点评在 comments 累积（与 guess_history
+    平行、按轮对齐）；玩家主动发起「检定」才逐卡判定——完整覆盖核心机制/效果/限制即看破该卡
     （揭示真实奇术）；全部看破 → 本行 flipped（胜负逆转）。非和局一场一行（败方猜胜者）；
     和局两行（双方并行独立猜对方）。done = 本行已收手/全破/次数耗尽。
     """
@@ -75,10 +76,12 @@ class BattleGuess(Base):
     battle_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     guesser_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)  # 猜测者
     used_abilities: Mapped[list] = mapped_column(JSON, default=list)  # [{name, effect}] 被猜侧实际使用子集（服务端保密，前端只见数量）
-    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{matched: [str], cracked: bool}] 与 used_abilities 同序
+    cards: Mapped[list] = mapped_column(JSON, default=list)  # [{cracked, missing, cracked_round}] 与 used_abilities 同序
     guess_history: Mapped[list] = mapped_column(JSON, default=list)  # 猜测者每次道出的猜测原文（按提交顺序，双方可见）
+    comments: Mapped[list] = mapped_column(JSON, default=list)  # 与 guess_history 平行：每次猜测的点评文本（不判看破、不泄露新信息）
     attempts_used: Mapped[int] = mapped_column(Integer, default=0)
-    attempts_max: Mapped[int] = mapped_column(Integer, default=99)
+    attempts_max: Mapped[int] = mapped_column(Integer, default=200)
+    verified_round: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 最近一次检定时的点评数（can_verify 判据）
     flipped: Mapped[bool] = mapped_column(Boolean, default=False)  # 全破逆转
     done: Mapped[bool] = mapped_column(Boolean, default=False)  # 本行已结束（全破/收手/次数耗尽）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

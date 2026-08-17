@@ -5,19 +5,15 @@ import type { LlmTraceDetail } from "./types";
 import {
   CAT_DEDUCE,
   CAT_DISCUSS,
-  CAT_GUESS_PAIR,
-  CAT_GUESS_SPLIT,
+  CAT_GUESS_COMMENTARY,
   CAT_GUESS_VERIFY,
   CAT_REPAIR,
   CAT_TRANSCRIBE,
   CAT_USAGE,
   CAT_VALIDATE,
+  commentaryInfo,
   extractVar,
   foldPrompt,
-  pairRows,
-  promptText,
-  splitInput,
-  splitItems,
   systemContent,
   verifyInfo,
 } from "./traceParsers";
@@ -51,37 +47,6 @@ const JsonToggle = ({ label, obj }: { label: string; obj: unknown }) => (
     <pre className="pre-json">{pretty(obj)}</pre>
   </details>
 );
-
-/** 环节二：二维配对表（本场全部 pair trace 聚合）。行 = 原子条目，列 = 奇术，命中的格显 snippet。 */
-export function PairGrid({ details }: { details: LlmTraceDetail[] }) {
-  const { items, rows } = pairRows(details);
-  if (!items.length || !rows.length) {
-    return <p className="muted">（未解析到配对数据）</p>;
-  }
-  return (
-    <div className="table-wrap">
-      <table className="pair-grid">
-        <thead>
-          <tr>
-            <th>奇术 \ 条目</th>
-            {items.map((it, i) => <th key={i}>{it}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              <th scope="row">{row.ability}</th>
-              {items.map((it, ci) => {
-                const cell = row.cells.find((c) => c.itemText === it);
-                return <td key={ci} className={cell?.snippet ? "is-hit" : ""}>{cell?.snippet ?? ""}</td>;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 export function TraceView({ d }: { d: LlmTraceDetail }) {
   switch (d.operation) {
@@ -185,40 +150,22 @@ export function TraceView({ d }: { d: LlmTraceDetail }) {
       );
     }
 
-    case CAT_GUESS_SPLIT: {
-      const items = splitItems(d);
-      const raw = splitInput(d);
+    case CAT_GUESS_COMMENTARY: {
+      const info = commentaryInfo(d);
       return (
         <div className="trace-v">
           <div className="trace-v__input">
             <span className="trace-v__label">输入 · 猜测</span>
-            <span className="trace-v__text">{raw || "（无）"}</span>
+            <span className="trace-v__text">{info.text || "（无）"}</span>
           </div>
           <div className="trace-v__resp">
-            <span className="trace-v__label">原子叙述（{items.length} 条）</span>
-            <div className="trace-v__chips">
-              {items.length ? (
-                items.map((it, i) => <span key={i} className="trace-v__chip">{it}</span>)
-              ) : (
-                <span className="muted">（空）</span>
-              )}
-            </div>
+            <span className="trace-v__label">点评</span>
+            <p className="trace-v__text">{info.commentary || "（空）"}</p>
           </div>
           <JsonToggle label="查看原始请求" obj={d.request_json} />
         </div>
       );
     }
-
-    case CAT_GUESS_PAIR:
-      return (
-        <div className="trace-v">
-          <div className="trace-v__input">
-            <span className="trace-v__label">配对</span>
-            <span className="trace-v__text">{foldPrompt(promptText(d))}</span>
-          </div>
-          <JsonToggle label="查看原始请求" obj={d.request_json} />
-        </div>
-      );
 
     case CAT_GUESS_VERIFY: {
       const info = verifyInfo(d);
@@ -231,11 +178,11 @@ export function TraceView({ d }: { d: LlmTraceDetail }) {
           <div className="trace-v__resp">
             <span className="trace-v__label">判定结果</span>
             <div className="trace-v__chips">
-              <span className={`trace-v__chip ${info.guessed ? "is-used" : ""}`}>
-                {info.guessed ? "看破" : "未看破"}
+              <span className={`trace-v__chip ${info.cracked ? "is-used" : ""}`}>
+                {info.cracked ? "看破" : "未看破"}
               </span>
             </div>
-            {info.reason && <p className="trace-v__text">{info.reason}</p>}
+            {info.missing && <p className="trace-v__text">{info.missing}</p>}
           </div>
           <JsonToggle label="查看原始请求" obj={d.request_json} />
         </div>

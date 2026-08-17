@@ -20,7 +20,7 @@ import psycopg
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import PairMatch, Verification
+from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
@@ -50,26 +50,37 @@ def _transcribe(nar_a: str, nar_b: str):
     return chain
 
 
-def _guess_pipeline(pair_fn, verify_guessed):
-    pair_chain = MagicMock()
+def _guess_pipeline(verify_fn):
+    commentary_chain = MagicMock()
 
-    async def _pair_ainvoke(kwargs):
-        text = "\n".join(m.content for m in kwargs)
-        return pair_fn(text)
+    async def _commentary_ainvoke(kwargs):
+        return CommentaryRound(items=[CommentaryItem(text="收到你的猜测。", verdict="是", reason="")])
 
-    pair_chain.ainvoke = AsyncMock(side_effect=_pair_ainvoke)
+    commentary_chain.ainvoke = AsyncMock(side_effect=_commentary_ainvoke)
     verify_chain = MagicMock()
-    verify_chain.ainvoke = AsyncMock(return_value=Verification(guessed=verify_guessed, reason="检定"))
-    return pair_chain, verify_chain
+
+    async def _verify_ainvoke(kwargs):
+        text = "\n".join(m.content for m in kwargs)
+        return verify_fn(text)
+
+    verify_chain.ainvoke = AsyncMock(side_effect=_verify_ainvoke)
+    return commentary_chain, verify_chain
 
 
-def _pair_only(fragment: str, snippet: str):
-    """配对打桩：仅当奇术原文含 fragment 时才贴片段（其余卡不命中 → 不触发检定）。"""
+def _crack_fragment(fragment: str):
+    """检定打桩：仅当被检定的能力文本含 fragment 时才判看破（其余门未破 → 还缺什么）。"""
 
-    def _pair(text: str):
-        return PairMatch(snippet=snippet) if fragment in text else PairMatch(snippet="")
+    def _verify(text: str):
+        if fragment in text:
+            return Verification(cracked=True, missing="")
+        return Verification(cracked=False, missing="还缺关键限制")
 
-    return _pair
+    return _verify
+
+
+def _crack_all(_text: str) -> Verification:
+    """检定打桩：一律判看破（唯一刻印奇术或「尽数道出」场景）。"""
+    return Verification(cracked=True, missing="")
 
 
 def _mk_user(client, prefix="testprog") -> str:
@@ -148,24 +159,37 @@ def _challenge(client, entry_id, h_challenger, loadout_id, god_text, usage_indic
         return _wait_done(client, rc.json()["battle_id"], h_challenger)
 
 
-def _guess(client, battle, headers, text, pair_fn, verify_guessed):
-    """对一场点将局提交猜测（打桩配对/检定），等待落库后返回行迹 dict。
+def _post_guess(client, url, headers, text=None):
+    """POST 猜词接口（点评/检定），撞上 409「仍在判定中」时重试数次。"""
+    g = None
+    for _ in range(20):
+        kw = {"headers": headers}
+        if text is not None:
+            kw["json"] = {"text": text}
+        g = client.post(url, **kw)
+        if g.status_code != 409:
+            return g
+        time.sleep(0.2)
+    return g
 
-    attempts_used 落库先于判定锁释放：连续快速提交可能撞上 409「仍在判定中」，重试数次。
+
+def _guess(client, battle, headers, text, verify_fn):
+    """对一场点将局道出猜测（点评）→ 独立发起检定，等待落库后返回行迹 dict。
+
+    点评/检定皆为后台任务；点评落库先于判定锁释放：连续快速提交可能撞上 409，重试数次。
     """
-    pair, verify = _guess_pipeline(pair_fn, verify_guessed)
+    commentary, verify = _guess_pipeline(verify_fn)
     with (
-        patch("app.services.battle._build_pair_llm", return_value=pair),
+        patch("app.services.battle._build_commentary_llm", return_value=commentary),
         patch("app.services.battle._build_verify_llm", return_value=verify),
     ):
-        g = None
-        for _ in range(20):
-            g = client.post(f"/api/battles/{battle['id']}/guess", json={"text": text}, headers=headers)
-            if g.status_code != 409:
-                break
-            time.sleep(0.2)
+        before = battle.get("guess_attempts_used", 0)
+        g = _post_guess(client, f"/api/battles/{battle['id']}/guess", headers, text=text)
         assert g.status_code == 202, g.text
-        return _wait_guess(client, battle["id"], headers, attempts_before=battle.get("guess_attempts_used", 0))
+        gb = _wait_guess(client, battle["id"], headers, attempts_before=before)
+        v = _post_guess(client, f"/api/battles/{battle['id']}/guess/verify", headers)
+        assert v.status_code == 202, v.text
+        return _wait_guess(client, battle["id"], headers, attempts_before=gb["guess_attempts_used"])
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +250,7 @@ def test_board_progress_prefills_next_battle():
         assert b1["my_guess"]["cards"][0]["cracked"] is False
 
         # 只看破影刃（卡 0）：血咒未破 → 进度未全破，不揭示
-        g1 = _guess(client, b1, h_b, "影刃化形，遁入暗影", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        g1 = _guess(client, b1, h_b, "影刃化形，遁入暗影", _crack_fragment("以暗影凝聚"))
         assert g1["my_guess"]["cards"][0]["cracked"] is True
         assert g1["my_guess"]["cards"][0]["name"] == "影刃"
         assert g1["my_guess"]["cards"][1]["cracked"] is False
@@ -238,7 +262,14 @@ def test_board_progress_prefills_next_battle():
         assert b2["my_guess"]["cards"][0]["name"] == "影刃"
         assert b2["my_guess"]["cards"][1]["cracked"] is False
         assert b2["my_guess"]["history"] == ["影刃化形，遁入暗影"]
-        assert b2["my_guess"]["attempts_used"] == 1
+        assert b2["my_guess"]["comments"] == [
+            [
+                {"index": 1, "items": [{"text": "收到你的猜测。", "verdict": "是"}]},
+                {"index": 2, "items": [{"text": "收到你的猜测。", "verdict": "是"}]},
+            ]
+        ]  # 点评同样跨场带入（两门并行点评一组）
+        assert b2["my_guess"]["attempts_used"] == 2  # 点评 + 检定各一次
+        assert b2["my_guess"]["verified_round"] == 1
         assert b2["can_guess"] is True
 
 
@@ -259,7 +290,7 @@ def test_board_subset_crack_does_not_early_reveal_or_flip():
         # 本场仅用影刃+血咒（usage 下标 1、2）；全部看破这 2 门
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}", usage_indices=[1, 2])
         assert b1["guess_total"] == 2
-        g1 = _guess(client, b1, h_b, "影刃与血咒尽数", lambda kw: PairMatch(snippet="命中"), True)
+        g1 = _guess(client, b1, h_b, "影刃与血咒尽数", _crack_all)
         assert g1["my_guess"]["cards"][0]["cracked"] is True
         assert g1["my_guess"]["cards"][1]["cracked"] is True
         assert g1["my_guess"]["done"] is True
@@ -292,7 +323,7 @@ def test_board_full_crack_skips_guess_and_unlocks_story():
 
         # 场 1：一次全破唯一刻印奇术 → 本行结束，但不翻转胜负（猜词是研究不是反杀）
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        g1 = _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        g1 = _guess(client, b1, h_b, "影刃化形", _crack_all)
         assert g1["my_guess"]["flipped"] is True and g1["my_guess"]["done"] is True
         assert g1["winner"] == name_b  # 全破不逆转
         assert g1["guess_hit"] is None
@@ -328,7 +359,7 @@ def test_board_list_shows_cracked_flag():
 
         # 挑战者全破唯一刻印奇术 → 该挑战者看榜单：此刻印标「已看破」
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "影刃化形", _crack_all)
         rows_b = client.get("/api/board", headers=h_b).json()
         assert next(r for r in rows_b if r["id"] == eid)["cracked"] is True
 
@@ -352,7 +383,7 @@ def test_board_give_up_keeps_progress():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        g1 = _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        g1 = _guess(client, b1, h_b, "影刃化形", _crack_fragment("以暗影凝聚"))
         rj = client.post(f"/api/battles/{g1['id']}/give-up", headers=h_b).json()
         assert rj["my_guess"]["done"] is True
         assert rj["my_guess"]["flipped"] is False
@@ -379,7 +410,7 @@ def test_board_progress_not_shared_across_entries():
         eid2 = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid1, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        g1 = _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        g1 = _guess(client, b1, h_b, "影刃化形", _crack_all)
         assert g1["unlocked"] is True
 
         b2 = _challenge(client, eid2, h_b, ld_b["id"], f"{GOD} 胜者：{name_a}")
@@ -429,7 +460,7 @@ def test_board_poster_passive_and_rewards():
         assert pv["guess_total"] == 0
         assert pv["guess_cards"] is None
         assert pv["guess_attempts_used"] == 0
-        assert pv["guess_attempts_max"] == 99
+        assert pv["guess_attempts_max"] == 200
         assert pv["guess_text"] == ""
         assert pv["story"]["narration_b"]  # 自己视角叙述
         assert "narration_a" not in pv["story"]  # 对方视角不展示
@@ -487,7 +518,7 @@ def test_admin_delete_user_clears_challenger_progress():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "影刃化形", _crack_all)
 
         con = _sqlite()
         cur = con.execute(
@@ -529,7 +560,7 @@ def test_take_off_board_cascades_progress():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形", lambda kw: PairMatch(snippet="影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "影刃化形", _crack_all)
 
         con = _sqlite()
         cur = con.execute(
@@ -568,19 +599,20 @@ def test_board_detail_progress_and_battles():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形，遁入暗影", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "影刃化形，遁入暗影", _crack_fragment("以暗影凝聚"))
         b2 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
 
         d = client.get(f"/api/board/{eid}", headers=h_b).json()
         assert d["mine"] is False
         assert d["ability_count"] == 2
         assert d["challenge_count"] == 2
-        # 已看破卡亮出真实名/效果，未看破保密
+        # 已看破卡亮出真实名/效果（还缺什么为空），未看破保密但给出还缺什么
         assert d["progress"][0]["cracked"] is True
         assert d["progress"][0]["name"] == "影刃"
         assert d["progress"][0]["effect"] == "以暗影凝聚利刃斩杀敌人"
-        assert d["progress"][0]["matched"]  # 线索片段保留
+        assert d["progress"][0]["missing"] == ""
         assert d["progress"][1]["cracked"] is False
+        assert d["progress"][1]["missing"] == "还缺关键限制"
         assert d["progress"][1]["name"] is None
         assert d["progress"][1]["effect"] is None
         # 对局记录：自己的点将局，倒序
@@ -602,7 +634,7 @@ def test_board_detail_fresh_viewer_all_hidden():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
+        _guess(client, b1, h_b, "影刃化形", _crack_fragment("以暗影凝聚"))
 
         d = client.get(f"/api/board/{eid}", headers=h_c).json()
         assert d["mine"] is False
@@ -665,21 +697,21 @@ def test_board_stats_win_rate_and_avg_crack():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         assert next(x for x in client.get("/api/board", headers=h_b).json() if x["id"] == eid)["win_rate"] is None
-        # 场 1：挑战者胜（刻印负），三次猜测看破两门（首猜未命中 → 总花费 3）
+        # 场 1：挑战者胜（刻印负），三轮「点评+检定」看破两门（首轮检定未命中 → 共 6 次花费）
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "暗影潜行", _pair_only("绝无此术", "无"), False)
-        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
-        _guess(client, b1, h_b, "血咒献祭", _pair_only("以自身鲜血", "血咒以血为引"), True)
+        _guess(client, b1, h_b, "暗影潜行", _crack_fragment("绝无此术"))
+        _guess(client, b1, h_b, "影刃化形", _crack_fragment("以暗影凝聚"))
+        _guess(client, b1, h_b, "血咒献祭", _crack_fragment("以自身鲜血"))
         # 场 2：刻印胜（两门已全破 → 无猜词阶段）
         _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_a}")
 
         e = next(x for x in client.get("/api/board", headers=h_b).json() if x["id"] == eid)
         assert e["challenge_count"] == 2
         assert e["win_rate"] == 0.5
-        assert e["avg_crack_attempts"] == 1.5
+        assert e["avg_crack_attempts"] == 3.0  # 6 次花费（点评+检定各 3）÷ 2 门
         d = client.get(f"/api/board/{eid}", headers=h_b).json()
         assert d["win_rate"] == 0.5
-        assert d["avg_crack_attempts"] == 1.5
+        assert d["avg_crack_attempts"] == 3.0
 
 
 def test_board_poster_tracks_challenger_guess_path():
@@ -697,8 +729,8 @@ def test_board_poster_tracks_challenger_guess_path():
         eid = _board_entry(client, h_a, ld_a["id"])
 
         b1 = _challenge(client, eid, h_b, ld_b["id"], f"{GOD} 胜者：{name_b}")
-        _guess(client, b1, h_b, "影刃化形", _pair_only("以暗影凝聚", "影刃以暗影凝刃"), True)
-        _guess(client, b1, h_b, "血咒献祭", _pair_only("以自身鲜血", "血咒以血为引"), True)
+        _guess(client, b1, h_b, "影刃化形", _crack_fragment("以暗影凝聚"))
+        _guess(client, b1, h_b, "血咒献祭", _crack_fragment("以自身鲜血"))
 
         # 非榜主不可追踪
         assert client.get(f"/api/board/{eid}/tracking/challengers", headers=h_c).status_code == 403
@@ -717,17 +749,16 @@ def test_board_poster_tracks_challenger_guess_path():
         assert client.get(f"/api/board/{eid}/tracking/challengers?search=不存在的人", headers=h_a).json() == []
         assert len(client.get(f"/api/board/{eid}/tracking/challengers", headers=h_a).json()) == 1
 
-        # 猜词路径：按时间升序，含文本/线索/看破数/对应战报
+        # 猜词路径：按时间升序，含文本/点评/看破数/对应战报（看破数记「该轮点评时」已看破门数，检定随后推进）
         path = client.get(f"/api/board/{eid}/tracking/challengers/{user_b_id}/guess-path", headers=h_a).json()
         assert len(path) == 2
         assert path[0]["battle_id"] == b1["id"]
         assert path[0]["round"] == 1
         assert path[0]["text"] == "影刃化形"
-        assert path[0]["cracked_after"] == 1
-        assert path[0]["clue"][0]["name"] == "影刃"
-        assert path[0]["clue"][0]["fragments"] == ["影刃以暗影凝刃"]
+        assert path[0]["commentary"] == "「收到你的猜测。」是；「收到你的猜测。」是"  # 两门未破 → 逐门两条原子点评
+        assert path[0]["cracked_after"] == 0  # 该轮点评后检定尚未看破任何门
         assert path[1]["battle_id"] == b1["id"]
         assert path[1]["round"] == 2
         assert path[1]["text"] == "血咒献祭"
-        assert path[1]["cracked_after"] == 2
-        assert path[1]["clue"][0]["name"] == "血咒"
+        assert path[1]["commentary"] == "「收到你的猜测。」是"  # 上一轮检定已破影刃 → 仅剩一门
+        assert path[1]["cracked_after"] == 1  # 上一轮检定已看破影刃

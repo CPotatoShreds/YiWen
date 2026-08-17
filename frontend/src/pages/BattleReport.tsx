@@ -6,7 +6,7 @@ import MatchCard from "../components/MatchCard";
 import { CheckIcon, ClockIcon, EyeIcon, LockIcon, RefreshIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
 import { Brush } from "../components/Ornaments";
 import { streamEvents } from "../sse";
-import type { Battle, GuessCard } from "../types";
+import type { Battle, GuessCard, GuessCommentaryGroup } from "../types";
 
 // SSE 重连退避参数：3s → 6s → 12s → … → 上限 30s，最多 10 次（耗尽显示「连接中断」手动续接）
 const RETRY_BASE = 3000;
@@ -44,8 +44,8 @@ function AbilityList({ title, list, me }: { title: string; list?: AbilityLite[];
   );
 }
 
-// 猜词空白卡片网格：进度条 + 线索片段 + 看破揭示（败方与赢家观战共用同一渲染）。
-// 败方视角的片段由服务端按身份下发；赢家同样可见（双方看到的卡片数据一致）。
+// 猜词空白卡片网格：看破揭示；未看破仅标记（不展示检定缺口——避免服务端提示词给额外线索）。
+// 败方视角的缺口由服务端按身份下发；赢家同样可见（双方看到的卡片数据一致）。
 function GuessBoard({ cards }: { cards: GuessCard[] }) {
   return (
     <div className="guess-board" style={{ marginBottom: 14 }}>
@@ -69,15 +69,9 @@ function GuessBoard({ cards }: { cards: GuessCard[] }) {
               <p className="guess-card__effect">{card.effect}</p>
             </div>
           ) : (
-            <>
-              {card.matched.length > 0 && (
-                <ul className="guess-card__matched">
-                  {card.matched.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              )}
-            </>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              尚未看破
+            </p>
           )}
         </div>
       ))}
@@ -85,14 +79,44 @@ function GuessBoard({ cards }: { cards: GuessCard[] }) {
   );
 }
 
-// 猜测原文流：败方逐次道出的猜测（败方看自己的，赢家看对家的——交互感拉满）
-function GuessFeed({ guesses }: { guesses: string[] }) {
+// 猜测与点评流：败方逐次道出的猜测 + 逐门原子点评成对展示（败方看自己的，赢家看对家的——交互感拉满）。
+// 点评原子按当前未看破卡分组（已看破的门不再回看其点评）；旧版整轮点评（index=0）原样展示。
+function GuessFeed({
+  guesses,
+  comments,
+  cards,
+}: {
+  guesses: string[];
+  comments?: GuessCommentaryGroup[][];
+  cards?: GuessCard[];
+}) {
   if (!guesses.length) return null;
+  const uncracked = new Set((cards ?? []).filter((c) => !c.cracked).map((c) => c.index));
   return (
     <ul className="guess-feed" style={{ marginBottom: 12 }}>
-      {guesses.map((t, i) => (
-        <li key={i}>{t}</li>
-      ))}
+      {guesses.map((t, i) => {
+        const groups = (comments?.[i] ?? []).filter((g) => g.index === 0 || uncracked.has(g.index));
+        return (
+          <li key={i}>
+            <div>{t}</div>
+            {groups.length > 0 && (
+              <div style={{ opacity: 0.75, fontSize: 13, marginTop: 4 }}>
+                {groups.map((g) => (
+                  <div key={g.index} style={{ marginTop: 2 }}>
+                    {g.index > 0 && <span style={{ fontWeight: 700 }}>第 {g.index} 门：</span>}
+                    {g.items.map((it, j) => (
+                      <span key={j}>
+                        「{it.text}」<span className="guess-feed__verdict">{it.verdict}</span>
+                        {j < g.items.length - 1 ? " · " : ""}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -127,6 +151,7 @@ export default function BattleReport() {
   const [err, setErr] = useState("");
   const [guessText, setGuessText] = useState("");
   const [guessing, setGuessing] = useState(false);
+  const [verifying, setVerifying] = useState(false); // 检定进行中：锁输入，等 SSE guess_done 回推
   const [liveSegments, setLiveSegments] = useState<string[]>([]);
   const [stage, setStage] = useState<"unknown" | "dueling" | "recounting">("unknown"); // SSE 推演进度：推演中（无标题）→ 正在对决中 → 胜负已分+奇人回归转写
   const [retry, setRetry] = useState(0); // 第几次重连（指数退避：3s→6s→…→上限30s）
@@ -222,11 +247,13 @@ export default function BattleReport() {
             setLiveSegments((s) => [...s, ev.narration as string]);
           } else if (ev.type === "guess_done") {
             setGuessing(false); // 后台判定已落库：解锁输入，重拉含最新进度的行迹
+            setVerifying(false);
             refresh();
             reload();
           } else if (ev.type === "guess_error") {
             setGuessing(false);
-            setErr((ev.message as string) || "猜测判定失败，请稍后重试");
+            setVerifying(false);
+            setErr((ev.message as string) || "判定失败，请稍后重试");
             reload();
           } else if (ev.type === "done" || ev.type === "error") {
             settledRef.current = true; // 已收尾 → 不再触发重连保活（避免 done 过渡期的重复订阅/快照重播）
@@ -264,7 +291,7 @@ export default function BattleReport() {
     setGuessing(true);
     setErr("");
     try {
-      // 后端只做同步校验+受理（202），LLM 判定在后台任务跑，结果经 SSE guess_done 回推——
+      // 后端只做同步校验+受理（202），LLM 点评在后台任务跑，结果经 SSE guess_done 回推——
       // 短超时只等受理，不再像旧版同步链路那样被长判定掐断。
       await api<Battle>(`/battles/${id}/guess`, {
         method: "POST",
@@ -274,7 +301,7 @@ export default function BattleReport() {
       setGuessText("");
     } catch (e: any) {
       if (e instanceof ApiError && e.status === 409) {
-        // 上一轮仍在判定中：静默忽略，等 SSE 回推
+        // 上一轮点评/检定仍在进行：静默忽略，等 SSE 回推
         return;
       }
       setErr(e.message);
@@ -282,6 +309,27 @@ export default function BattleReport() {
     }
     // 兜底：若流中断没收到 guess_done，120s 后解锁输入，用户可重试
     window.setTimeout(() => setGuessing(false), 120000);
+  }
+
+  // 检定：根据此前全部猜测与点评，验证各门奇术看破与否（未看破 → 指还缺什么 / 看破 → 揭示该门）
+  async function verifyGuess() {
+    setErr("");
+    setVerifying(true);
+    try {
+      await api<Battle>(`/battles/${id}/guess/verify`, {
+        method: "POST",
+        timeout: 10000,
+      });
+    } catch (e: any) {
+      if (e instanceof ApiError && e.status === 409) {
+        // 上一轮点评/检定仍在进行：静默忽略，等 SSE 回推
+        return;
+      }
+      setErr(e.message);
+      setVerifying(false);
+    }
+    // 兜底：若流中断没收到 guess_done，120s 后解锁输入，用户可重试
+    window.setTimeout(() => setVerifying(false), 120000);
   }
 
   async function rematch() {
@@ -577,18 +625,14 @@ export default function BattleReport() {
                 </div>
                 <p className="muted" style={{ marginBottom: 12 }}>
                   对家共动用 <b>{myGuess.total}</b> 门奇术。逐次道出你从行迹中看到的线索（允许意译），
-                  命中内容会落到对应卡片上；卡片被完整看透即看破该门奇术，全部看破即可逆转胜负。
+                  每次猜测都会得到一段点评；是否看破由你主动发起「检定」来验证，检定会指出还缺什么或直接看破。
                 </p>
 
-                <GuessFeed guesses={myGuess.history} />
+                <GuessFeed guesses={myGuess.history} comments={myGuess.comments} cards={myGuess.cards ?? []} />
                 <GuessBoard cards={myGuess.cards ?? []} />
 
                 {b.can_guess ? (
                   <>
-                    <p className="muted" style={{ marginBottom: 10 }}>
-                      已用 <b>{myGuess.attempts_used}</b> / {myGuess.attempts_max} 次机会，已看破{" "}
-                      {(myGuess.cards ?? []).filter((c) => c.cracked).length} / {myGuess.total} 门。
-                    </p>
                     <div className="field">
                       <textarea
                         className="textarea"
@@ -601,18 +645,32 @@ export default function BattleReport() {
                         placeholder="如：他似乎能操控火焰，还能在近身时冻结我的兵刃……"
                       />
                     </div>
-                    <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-                      支持同时对多个奇术进行猜测，请通过换行来分隔你对不同奇术的猜测。
-                    </p>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <button className="btn btn-primary" onClick={submitGuess} disabled={guessing || !guessText.trim()}>
+                      <button
+                        className="btn btn-primary"
+                        onClick={submitGuess}
+                        disabled={guessing || verifying || !guessText.trim()}
+                      >
                         <TargetIcon size={16} />
-                        {guessing ? "思量中…" : "道出猜测"}
+                        {guessing ? "点评中…" : "道出猜测"}
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={verifyGuess}
+                        disabled={verifying || guessing || !myGuess.can_verify}
+                        title={
+                          myGuess.can_verify
+                            ? "依据此前全部猜测与点评，验证各门奇术看破与否"
+                            : "需先道出新猜测并得到点评，才能发起检定"
+                        }
+                      >
+                        <CheckIcon size={15} />
+                        {verifying ? "检定中…" : "检定"}
                       </button>
                       <button
                         className={`btn ${confirmGiveUp ? "btn-danger" : "btn-ghost"}`}
                         onClick={() => (confirmGiveUp ? giveUp() : setConfirmGiveUp(true))}
-                        disabled={guessing}
+                        disabled={guessing || verifying}
                         title="未看破即结束本轮猜词，之后不可再猜"
                       >
                         <XIcon size={15} />
@@ -636,10 +694,10 @@ export default function BattleReport() {
                 </div>
                 <p className="muted" style={{ marginBottom: 12 }}>
                   {b.guessed
-                    ? `对家道尽猜测：已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
-                    : `对家正逐次道出猜测，看破你的奇术即揭示该门。已用 ${oppGuess.attempts_used} / ${oppGuess.attempts_max} 次机会，已看破 ${oppCracked} / ${oppGuess.total} 门。`}
+                    ? `对家道尽猜测：看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
+                    : `对家正逐次道出猜测，看破你的奇术即揭示该门。已看破 ${oppCracked} / ${oppGuess.total} 门。`}
                 </p>
-                <GuessFeed guesses={oppGuess.history} />
+                <GuessFeed guesses={oppGuess.history} comments={oppGuess.comments} cards={oppGuess.cards ?? []} />
                 <GuessBoard cards={oppGuess.cards ?? []} />
               </div>
             )}

@@ -5,7 +5,8 @@
 
 - run_test_deduction：真实一次性推演（复用 run_deduction），SSE 事件进本地收集器，不发布到全局总线。
 - resolve_test_battle：结算一场测试对战（写 TestBattle + TestBattleGuess + TestUser 名望）。
-- submit_test_guess：复用 guess.py 共享猜词管道（拆分→配对→检定），只更新 TestBattle/TestBattleGuess。
+- submit_test_guess：复用 guess.py 共享猜词管道（点评），只更新 TestBattle/TestBattleGuess。
+- verify_test_guess：复用 guess.py 检定管道（独立检定），只更新 TestBattle/TestBattleGuess。
 
 指定胜负（skip）无战斗叙述时，猜词判定默认赢家全部奇术都被使用（不走 usage 节点）。
 """
@@ -22,15 +23,15 @@ from app.models.ability import Ability
 from app.models.test_battle import TestBattle, TestBattleGuess, TestUser
 from app.services import economy
 from app.services.deduction import run_deduction
-from app.services.guess import GUESS_ATTEMPTS_MAX, run_guess_round
+from app.services.guess import GUESS_ATTEMPTS_MAX, run_guess_commentary, run_guess_verification
 from app.services.nodes.discusser import build_discuss_llm
-from app.services.nodes.guess_matcher import build_guess_pair_llm, build_guess_verify_llm
+from app.services.nodes.guess_matcher import build_guess_commentary_llm, build_guess_verify_llm
 from app.services.nodes.usage_judge import USAGE_TEMPLATE, build_usage_llm
 from app.services.reliability import ainvoke_with_reliability
 
 logger = get_logger("test_battle")
 
-# 猜词规则（GUESS_ATTEMPTS_MAX / MAX_PAIRS / FAIL_GUESS_TEXT）在 app.services.guess 统一维护
+# 猜词规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess 统一维护
 
 class _EventCollector:
     """本地 SSE 事件收集器：run_deduction 只 publish 到这里，不触碰全局事件总线。"""
@@ -150,7 +151,7 @@ async def _build_test_guess(
             battle_id=battle.id,
             used_abilities=used,
             cards=[
-                {"matched": [], "cracked": False, "cracked_round": None, "rounds": [], "verifies": []}
+                {"cracked": False, "cracked_round": None, "missing": None, "verifies": []}
                 for _ in used
             ],
             attempts_max=GUESS_ATTEMPTS_MAX,
@@ -312,9 +313,9 @@ async def _resolve_test_battle_from_deduction(
 
 
 async def submit_test_guess(db: AsyncSession, battle: TestBattle, guesser: TestUser, text: str) -> None:
-    """败方猜对家奇术（测试域）：复用三环节节点，只更新 TestBattle/TestBattleGuess。
+    """败方猜对家奇术（测试域）：点评一次（只追加猜测/点评、消耗机会，不改看破状态）。
 
-    全破 → 测试域内胜负逆转 + 名望重算；次数耗尽 → 直接揭示（测试工具便于检验全流程）。
+    全破 / 次数耗尽在检定中处理；本函数只负责点评。失败时异常上抛由路由转成可读错误。
     """
     if battle.status != "done":
         raise ValueError("对决尚未完成")
@@ -331,22 +332,62 @@ async def submit_test_guess(db: AsyncSession, battle: TestBattle, guesser: TestU
     if not text:
         raise ValueError("猜测不能为空")
 
-    abilities = guess.used_abilities  # 参考基准 = 对家实际使用的奇术
-    guess_trace = {"kind": "test_guess", "trace_id": str(battle.id)}
-    # 三环节（拆分→配对→检定）在共享猜词管道 guess.py 内跑；试验场持久化完整卡片（累计描述表明细）
-    cards = await run_guess_round(
+    commentary = await run_guess_commentary(
         text=text,
-        abilities=abilities,
+        abilities=guess.used_abilities,  # 参考基准 = 对家实际使用的奇术（真名只在服务端作判定依据）
         cards=[dict(c) for c in guess.cards],
-        round_no=guess.attempts_used + 1,
-        trace_context=guess_trace,
-        build_pair=build_guess_pair_llm,
+        trace_context={"kind": "test_guess", "trace_id": str(battle.id)},
+        build_commentary=build_guess_commentary_llm,
+    )
+    guess.guess_history = list(guess.guess_history or []) + [text]
+    guess.comments = list(guess.comments or []) + [commentary]
+    guess.attempts_used += 1
+    battle.guess_state = "guessing"
+
+    if guess.attempts_used >= guess.attempts_max:
+        # 次数耗尽未全破：测试工具直接揭示（便于检验全流程）
+        battle.guess_state = "done"
+        battle.guess_hit = False
+        battle.revealed = True
+    else:
+        battle.guess_hit = None
+
+    await db.commit()
+
+
+async def verify_test_guess(db: AsyncSession, battle: TestBattle, guesser: TestUser) -> None:
+    """主动检定对家奇术（测试域）：对未看破卡并发检定，更新逐卡看破/还缺什么并重算 score。
+
+    检定不追加聊天记录；可反复发起，但须自上次检定后又有新点评（can_verify 判据）。
+    全破 → 测试域内胜负逆转 + 名望重算；次数耗尽 → 直接揭示（测试工具便于检验全流程）。
+    """
+    if battle.status != "done":
+        raise ValueError("对决尚未完成")
+    if battle.guess_by != guesser.id:
+        raise ValueError("只有战败方可以猜奇术")
+    guess = await db.get(TestBattleGuess, battle.id)
+    if guess is None or not guess.used_abilities:
+        raise ValueError("本场无奇术可猜")
+    if battle.guess_state == "done":
+        raise ValueError("猜测已结束")
+    if guess.attempts_used >= guess.attempts_max:
+        raise ValueError("猜测次数已用完")
+    if len(guess.comments or []) <= (guess.verified_round or 0):
+        raise ValueError("尚无新的猜测进展，暂不可检定")
+
+    round_no = len(guess.comments or [])
+    cards = await run_guess_verification(
+        history=list(guess.guess_history or []),
+        comments=list(guess.comments or []),
+        abilities=guess.used_abilities,
+        cards=[dict(c) for c in guess.cards],
+        round_no=round_no,
+        trace_context={"kind": "test_guess", "trace_id": str(battle.id)},
         build_verify=build_guess_verify_llm,
     )
     guess.cards = cards
+    guess.verified_round = round_no
     guess.attempts_used += 1
-    guess.guess_history = list(guess.guess_history or []) + [text]
-    battle.guess_state = "guessing"
 
     cracked = sum(1 for c in cards if c["cracked"])
     battle.guess_score = cracked / len(cards) if cards else 0.0

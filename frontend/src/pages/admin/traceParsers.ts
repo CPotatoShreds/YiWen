@@ -17,10 +17,6 @@ export const fmtDt = (iso: string) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
 
-function norm(s: string): string {
-  return s.replace(/\s+/g, "").replace(/[，。；：、,.;：]/g, "");
-}
-
 /** 消息数组里的 system 提示词原文（battle 环节的 dict 形态无提示词）。 */
 export function systemContent(d: LlmTraceDetail): string {
   const req = d.request_json as unknown;
@@ -31,23 +27,10 @@ export function systemContent(d: LlmTraceDetail): string {
   return "";
 }
 
-/** 消息数组里的最后一条 human 消息（配对/检定环节为单条消息：整段提示词即该消息）。 */
+/** 消息数组里的最后一条 human 消息（点评/检定环节为单条消息：整段提示词即该消息）。 */
 export function humanContent(d: LlmTraceDetail): string {
   const req = d.request_json as unknown;
   if (!Array.isArray(req)) return "";
-  for (let i = req.length - 1; i >= 0; i--) {
-    const m = req[i] as Record<string, unknown> | null;
-    if (m && m["type"] === "human" && typeof m["content"] === "string") return m["content"];
-  }
-  return "";
-}
-
-/** 单条消息形态（配对/检定）取整段提示词；dict 形态（battle 环节）取 system。 */
-export function promptText(d: LlmTraceDetail): string {
-  const req = d.request_json as unknown;
-  if (!Array.isArray(req)) return "";
-  const sys = req.find((m) => m && m["type"] === "system" && typeof m["content"] === "string");
-  if (sys && typeof sys["content"] === "string") return sys["content"];
   for (let i = req.length - 1; i >= 0; i--) {
     const m = req[i] as Record<string, unknown> | null;
     if (m && m["type"] === "human" && typeof m["content"] === "string") return m["content"];
@@ -73,7 +56,7 @@ export const CAT_TRANSCRIBE = "transcribe";
 export const CAT_VALIDATE = "validate";
 export const CAT_REPAIR = "repair";
 export const CAT_USAGE = "usage";
-export const CAT_GUESS_SPLIT = "guess_split";
+export const CAT_GUESS_COMMENTARY = "guess_commentary";
 export const CAT_GUESS_PAIR = "guess_pair";
 export const CAT_GUESS_VERIFY = "guess_verify";
 export const CAT_RAW = "raw";
@@ -86,7 +69,7 @@ export function categorize(op: string): string {
     case "validate": return CAT_VALIDATE;
     case "repair": return CAT_REPAIR;
     case "usage": return CAT_USAGE;
-    case "guess_split": return CAT_GUESS_SPLIT;
+    case "guess_commentary": return CAT_GUESS_COMMENTARY;
     case "guess_pair": return CAT_GUESS_PAIR;
     case "guess_verify": return CAT_GUESS_VERIFY;
     default: return CAT_RAW;
@@ -100,73 +83,32 @@ export const CAT_LABEL: Record<string, string> = {
   [CAT_VALIDATE]: "校验",
   [CAT_REPAIR]: "修复",
   [CAT_USAGE]: "奇术使用判定",
-  [CAT_GUESS_SPLIT]: "猜词 · 环节一（拆分）",
-  [CAT_GUESS_PAIR]: "猜词 · 环节二（配对）",
-  [CAT_GUESS_VERIFY]: "猜词 · 环节三（检定）",
+  [CAT_GUESS_COMMENTARY]: "猜词 · 点评",
+  [CAT_GUESS_PAIR]: "猜词 · 配对（旧链路）",
+  [CAT_GUESS_VERIFY]: "猜词 · 检定",
   [CAT_RAW]: "原始链路",
 };
 
-// ---------- 环节一：拆分 ----------
-/** 败方本轮道出的原始猜测文本（从提示词变量提取）。 */
-export function splitInput(d: LlmTraceDetail): string {
+// ---------- 点评 ----------
+export function commentaryInfo(d: LlmTraceDetail): { text: string; commentary: string } {
   const sys = systemContent(d);
-  return sys.match(/败方本轮道出的猜测文本：\s*\n?([^\n]+)/)?.[1]?.trim() ?? "";
+  const text = sys.match(/用户的猜测：\s*\n?([^\n]+)/)?.[1]?.trim() || "";
+  const resp = (d.response_json ?? {}) as Record<string, unknown>;
+  return { text, commentary: String(resp.commentary ?? "") };
 }
 
-/** 环节一输出：拆分出的原子叙述条目。 */
-export function splitItems(d: LlmTraceDetail): string[] {
-  const resp = (d.response_json ?? {}) as { items?: { text?: string }[] };
-  return (resp.items ?? []).map((it) => it.text ?? "").filter(Boolean);
-}
-
-// ---------- 环节二：配对 ----------
-export interface PairRow {
-  ability: string; // 对家实际使用的奇术（原文）
-  cells: { itemText: string; snippet: string }[];
-}
-
-export function pairRows(details: LlmTraceDetail[]): { items: string[]; rows: PairRow[] } {
-  const items: string[] = [];
-  const seenItem = new Set<string>();
-  const rows: PairRow[] = [];
-  const rowByAbility = new Map<string, PairRow>();
-
-  for (const d of details) {
-    if (d.operation !== "guess_pair") continue;
-    const sys = promptText(d);
-    const itemText = sys.match(/用户的猜测：\s*\n?([^\n]+)/)?.[1]?.trim() || "";
-    const ability = sys.match(/人物实际使用的能力：\s*\n?([^\n]+)/)?.[1]?.trim() || "";
-    if (!itemText || !ability) continue;
-    if (!seenItem.has(norm(itemText))) {
-      seenItem.add(norm(itemText));
-      items.push(itemText);
-    }
-    let row = rowByAbility.get(ability);
-    if (!row) {
-      row = { ability, cells: [] };
-      rowByAbility.set(ability, row);
-      rows.push(row);
-    }
-    const resp = (d.response_json ?? {}) as Record<string, unknown>;
-    row.cells.push({ itemText, snippet: String(resp.snippet ?? "") });
-  }
-  return { items, rows };
-}
-
-// ---------- 环节三：检定 ----------
+// ---------- 检定 ----------
 export interface VerifyInfo {
   ability: string;
-  matched: string[];
-  guessed: boolean;
-  reason: string;
+  cracked: boolean;
+  missing: string;
 }
 
 export function verifyInfo(d: LlmTraceDetail): VerifyInfo {
-  const sys = promptText(d);
+  const sys = systemContent(d);
   const ability = sys.match(/人物实际使用的能力：\s*\n?([^\n]+)/)?.[1]?.trim() || "";
-  const matched = [...(sys.match(/用户已积累的全部线索：\n((?:- .*\n?)*)/)?.[1]?.matchAll(/- (.*)/g) ?? [])].map((m) => m[1]);
   const resp = (d.response_json ?? {}) as Record<string, unknown>;
-  return { ability, matched, guessed: Boolean(resp.guessed), reason: String(resp.reason ?? "") };
+  return { ability, cracked: Boolean(resp.cracked), missing: String(resp.missing ?? "") };
 }
 
 // ---------- 汇总：usage 实际使用奇术编号 ----------

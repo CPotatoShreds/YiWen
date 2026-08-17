@@ -22,11 +22,11 @@ class BoardEntryOut(BaseModel):
 
 
 class BoardAbilityOut(BaseModel):
-    """刻印单门奇术的进度卡：已看破 → 亮出真实名/效果；未看破 → 仅线索片段，保密。"""
+    """刻印单门奇术的进度卡：已看破 → 亮出真实名/效果；未看破 → 最近检定给出的「还缺什么」，保密。"""
 
     index: int  # 第几门（1 起）
     cracked: bool = False  # 查看者是否已看破（榜主视角全亮）
-    matched: list[str] = []  # 已积累的猜测线索片段（未看破时展示，追踪进度）
+    missing: str = ""  # 最近一次检定指出的「还缺什么」（未看破时展示，追踪进度）
     name: str | None = None  # 已看破才下发
     effect: str | None = None  # 已看破才下发
 
@@ -47,7 +47,7 @@ class GuessPathRecordOut(BaseModel):
     battle_id: int  # 对应战报（榜主己方视角打开）
     round: int  # 本场内第几次猜测（1 起）
     text: str  # 提交的猜测原文
-    clue: list[dict] = []  # 本猜词爆出的线索 [{name, fragments: [str]}]
+    commentary: str = ""  # 该次猜测得到的点评文本
     cracked_after: int = 0  # 截至目前已看破门数
     at: str = ""  # 发生时间（ISO）
 

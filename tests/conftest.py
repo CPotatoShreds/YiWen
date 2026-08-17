@@ -109,19 +109,19 @@ def _no_real_discuss_llm():
 
 @pytest.fixture(autouse=True)
 def _no_real_test_arena_guess_nodes():
-    """试验场猜词配对/检定打桩：返回空匹配，瞬时完成。
+    """试验场猜词点评/检定打桩：返回空点评 + 未看破，瞬时完成。
 
     test_battle.submit_test_guess 直接 import 节点构造器（不走 battle 层别名），需单独打桩。
-    拆分环节为纯函数 split_atomic_guesses（无 LLM）。具体行为由测试自行 override。
+    具体行为由测试自行 override。
     """
-    from app.services.nodes.guess_matcher import PairMatch, Verification
+    from app.services.nodes.guess_matcher import CommentaryRound, Verification
 
-    pair_chain = MagicMock()
-    pair_chain.ainvoke = AsyncMock(return_value=PairMatch(snippet=""))
+    commentary_chain = MagicMock()
+    commentary_chain.ainvoke = AsyncMock(return_value=CommentaryRound(items=[]))
     verify_chain = MagicMock()
-    verify_chain.ainvoke = AsyncMock(return_value=Verification(guessed=False, reason=""))
+    verify_chain.ainvoke = AsyncMock(return_value=Verification(cracked=False, missing=""))
     with (
-        patch("app.services.test_battle.build_guess_pair_llm", return_value=pair_chain),
+        patch("app.services.test_battle.build_guess_commentary_llm", return_value=commentary_chain),
         patch("app.services.test_battle.build_guess_verify_llm", return_value=verify_chain),
     ):
         yield

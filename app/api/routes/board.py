@@ -177,7 +177,7 @@ async def board_detail(
                 BoardAbilityOut(
                     index=i + 1,
                     cracked=cracked,
-                    matched=list(card.get("matched") or []),
+                    missing=card.get("missing") or "",
                     name=a["name"] if cracked else None,
                     effect=a["effect"] if cracked else None,
                 )

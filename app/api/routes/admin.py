@@ -76,12 +76,14 @@ from app.schemas.admin import (
 )
 from app.services.ability_understanding import ensure_ability_understanding
 from app.services.battle import GUESS_ATTEMPTS_MAX
+from app.services.guess import strip_commentary_reason
 from app.services.prompt_debug import rerun_battle
 from app.services.test_battle import (
     generate_test_discuss_report,
     resolve_test_battle,
     resolve_test_battle_from_deduction,
     submit_test_guess,
+    verify_test_guess,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -555,12 +557,11 @@ async def admin_battle_detail(
         guess_cards = [
             {
                 "index": i + 1,
-                "matched": c["matched"],
-                "cracked": c["cracked"],
+                "missing": c.get("missing") or "",
+                "cracked": c.get("cracked", False),
                 "cracked_round": c.get("cracked_round"),
-                "rounds": c.get("rounds") or [],
                 "verifies": c.get("verifies") or [],
-                **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+                **({"name": used["name"], "effect": used["effect"]} if c.get("cracked", False) else {}),
             }
             for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
         ]
@@ -1097,12 +1098,11 @@ async def _test_battle_out_full(db: AsyncSession, battle: TestBattle) -> TestBat
         guess_cards = [
             {
                 "index": i + 1,
-                "matched": c["matched"],
-                "cracked": c["cracked"],
+                "missing": c.get("missing") or "",
+                "cracked": c.get("cracked", False),
                 "cracked_round": c.get("cracked_round"),
-                "rounds": c.get("rounds") or [],
                 "verifies": c.get("verifies") or [],
-                **({"name": used["name"], "effect": used["effect"]} if c["cracked"] else {}),
+                **({"name": used["name"], "effect": used["effect"]} if c.get("cracked", False) else {}),
             }
             for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
         ]
@@ -1127,10 +1127,19 @@ async def _test_battle_out_full(db: AsyncSession, battle: TestBattle) -> TestBat
         guess_score=battle.guess_score,
         revealed=battle.revealed,
         guess_history=list(guess.guess_history) if guess else [],
+        comments=strip_commentary_reason(guess.comments) if guess else [],
         guess_total=guess_total,
         guess_cards=guess_cards,
         guess_attempts_used=guess.attempts_used if guess else 0,
         guess_attempts_max=guess.attempts_max if guess else GUESS_ATTEMPTS_MAX,
+        verified_round=guess.verified_round if guess else None,
+        can_verify=bool(
+            guess
+            and guess.used_abilities
+            and battle.guess_state != "done"
+            and guess.attempts_used < guess.attempts_max
+            and len(guess.comments or []) > (guess.verified_round or 0)
+        ),
         created_at=battle.created_at,
     )
 
@@ -1250,7 +1259,7 @@ async def admin_test_guess(
     admin: Annotated[User, Depends(get_current_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TestBattleOut:
-    """对测试行迹猜奇术（复用三环节，只更新 test_* 表）。"""
+    """对测试行迹猜奇术（复用点评，只更新 test_* 表）。"""
     battle = await db.get(TestBattle, battle_id)
     if battle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试行迹不存在")
@@ -1259,6 +1268,26 @@ async def admin_test_guess(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无败方可猜")
     try:
         await submit_test_guess(db, battle, guesser, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return await _test_battle_out_full(db, battle)
+
+
+@router.post("/test/battles/{battle_id}/guess/verify", response_model=TestBattleOut)
+async def admin_test_guess_verify(
+    battle_id: int,
+    admin: Annotated[User, Depends(get_current_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestBattleOut:
+    """对测试行迹主动检定（复用独立检定，只更新 test_* 表）。"""
+    battle = await db.get(TestBattle, battle_id)
+    if battle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试行迹不存在")
+    guesser = await db.get(TestUser, battle.guess_by or 0)
+    if guesser is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="本场无败方可猜")
+    try:
+        await verify_test_guess(db, battle, guesser)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return await _test_battle_out_full(db, battle)

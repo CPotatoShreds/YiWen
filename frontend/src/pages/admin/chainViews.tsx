@@ -7,7 +7,6 @@ import Markdown from "../../components/Markdown";
 import { CheckIcon, LockIcon } from "../../components/icons";
 import type { AdminBattle, LlmTrace, LlmTraceDetail } from "./types";
 import {
-  CAT_GUESS_PAIR,
   CAT_LABEL,
   buildSummary,
   categorize,
@@ -15,7 +14,7 @@ import {
   fmtMs,
   statusLabel,
 } from "./traceParsers";
-import { PairGrid, TraceView } from "./TraceViews";
+import { TraceView } from "./TraceViews";
 
 const emptyStory = "（无叙述，指定胜负跳过）";
 
@@ -131,7 +130,7 @@ export function TracePanel({
     }
   }
 
-  // 环节顺序：讨论 → 推演 → 转写 → 校验/修复 → usage → 猜词三环节
+  // 环节顺序：讨论 → 推演 → 转写 → 校验/修复 → usage → 猜词（点评/配对/检定）
   const ORDER = [
     "discuss",
     "deduce",
@@ -139,7 +138,7 @@ export function TracePanel({
     "validate",
     "repair",
     "usage",
-    "guess_split",
+    "guess_commentary",
     "guess_pair",
     "guess_verify",
   ];
@@ -185,16 +184,12 @@ export function TracePanel({
         </div>
       )}
       {groups.map(([cat, rows]) => {
-        const isPair = cat === CAT_GUESS_PAIR;
         return (
           <div key={cat} className="trace-group">
             <div className="trace-group__head">
               <b>{CAT_LABEL[cat] ?? cat}</b>
               <span className="muted">{rows.length} 次</span>
             </div>
-            {isPair && rows.length > 1 && (
-              <PairGrid details={rows.map((r) => details[r.id]).filter(Boolean) as LlmTraceDetail[]} />
-            )}
             {rows.map((t) => (
               <div className={`trace-row ${open === t.id ? "is-open" : ""}`} key={t.id}>
                 <button className="trace-row__main" onClick={() => toggleDetail(t)}>
@@ -270,13 +265,9 @@ export function GuessPanel({ battle }: { battle: AdminBattle }) {
                 <p className="guess-card__effect">{card.effect}</p>
               </div>
             ) : (
-              card.matched.length > 0 && (
-                <ul className="guess-card__matched">
-                  {card.matched.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              )
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                尚未看破
+              </p>
             )}
           </div>
         ))}
