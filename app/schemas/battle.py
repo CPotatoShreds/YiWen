@@ -78,6 +78,7 @@ class BattleOut(BaseModel):
     guess_attempts_used: int = 0  # 已用猜测次数
     guess_attempts_max: int = 200  # 总猜测次数上限（后端硬上限，前端不显式展示）
     can_verify: bool = False  # 当前查看者是否可发起检定（自上次检定后又有新点评）
+    guess_in_flight: bool = False  # 当前查看者是否有一条后台判定在途（猜词期轮询驱动）
     revealed: bool = False  # 双方奇术是否已看破
     friendly: bool = False  # 切磋局（不计名望）
     my_guess: GuessBlock | None = None  # 查看者自己的猜词行（和局双方各一；非和局为败方行或 None）

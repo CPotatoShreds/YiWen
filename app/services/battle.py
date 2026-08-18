@@ -71,13 +71,13 @@ from app.services.loadouts import (
     pick_battle_loadout,
 )
 from app.services.matchmaking import pick_opponent, pick_opponent_no_repeat
+from app.services.nodes.ability_pairs import build_pair_judge_chain as _build_pair_judge_chain
 from app.services.nodes.deducer import build_deduce_chain as _build_deduce_llm
-from app.services.nodes.discusser import build_discuss_llm as _build_discuss_llm
 from app.services.nodes.guess_matcher import build_guess_commentary_llm as _build_commentary_llm
 from app.services.nodes.guess_matcher import build_guess_verify_llm as _build_verify_llm
 from app.services.nodes.transcribe_validator import build_repair_chain as _build_repair_chain
 from app.services.nodes.transcribe_validator import build_validate_chain as _build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_chain as _build_transcribe_chain
+from app.services.nodes.transcriber import build_transcribe_side_chain as _build_transcribe_side_chain
 from app.services.nodes.usage_judge import USAGE_TEMPLATE
 from app.services.nodes.usage_judge import build_usage_llm as _build_usage_llm
 from app.services.notifications import create_notification
@@ -605,9 +605,9 @@ async def _resolve_battle(battle_id: int, friendly: bool) -> None:
             tactic_b=tactic_b,
             style_a=style_a,
             style_b=style_b,
-            build_discuss=_build_discuss_llm,
+            build_pair_judge=_build_pair_judge_chain,
             build_deduce=_build_deduce_llm,
-            build_transcribe=_build_transcribe_chain,
+            build_transcribe_side=_build_transcribe_side_chain,
             build_validate=_build_validate_chain,
             build_repair=_build_repair_chain,
             llm_config=llm_config,
@@ -1019,20 +1019,12 @@ async def give_up_guess(db: AsyncSession, battle: Battle, guesser: User) -> None
     user_b = await db.get(User, battle.user_b_id)
     _write_md(battle, user_a, user_b, story, revealed=battle.revealed)
 
-    # 收手同步完成：经总线推 guess_done，对方打开的 SSE 流据此刷新；全部结束则关闭总线
-    stream = _get_stream(battle.id)
-    await stream.publish({"type": "guess_done", "battle_id": battle.id})
-    if battle.guess_state == "done":
-        await stream.close()
-
 
 async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
     """后台猜词（点评）：分段连接——读+校验（短连接）→ LLM 点评（无连接）→ 写回落库（短连接）。
 
-    完成后经总线推 guess_done；猜词彻底结束（guess_state == "done"）时关闭总线，
-    SSE 订阅端回落到立即 done。
+    完成信号由前端 500ms 轮询探测（attempts_used 增量 + guess_in_flight 标志），不再经总线推送。
     """
-    stream = _get_stream(battle_id)
     try:
         async with async_session_factory() as db:
             battle = await db.get(Battle, battle_id)
@@ -1049,15 +1041,10 @@ async def _run_guess_task(battle_id: int, guesser_id: int, text: str) -> None:
             if battle is None or guesser is None:
                 return
             await _guess_settle(db, battle, guesser, ctx["text"], commentary)
-            finished = battle.guess_state == "done"
-        await stream.publish({"type": "guess_done", "battle_id": battle_id})
-        if finished:
-            await stream.close()
-    except ValueError as e:
-        await stream.publish({"type": "guess_error", "message": str(e)})
-    except Exception as e:  # noqa: BLE001 - 后台猜词任何异常都落到事件，不让任务静默死亡
+    except ValueError:
+        pass  # 同步校验已拦截大部分；后台残余校验失败静默清在途，前端按无增量超时兜底
+    except Exception as e:  # noqa: BLE001 - 后台猜词异常不能静默吞掉，留日志供排查
         logger.error("guess_failed id=%d err=%r", battle_id, e)
-        await stream.publish({"type": "guess_error", "message": "猜测判定失败，请稍后重试"})
     finally:
         _guess_inflight.discard((battle_id, guesser_id))
 
@@ -1067,7 +1054,6 @@ async def _run_verify_task(battle_id: int, guesser_id: int) -> None:
 
     与 _run_guess_task 同构；检定不追加聊天记录，只更新逐卡看破/还缺什么并重算 score。
     """
-    stream = _get_stream(battle_id)
     try:
         async with async_session_factory() as db:
             battle = await db.get(Battle, battle_id)
@@ -1084,15 +1070,10 @@ async def _run_verify_task(battle_id: int, guesser_id: int) -> None:
             if battle is None or guesser is None:
                 return
             await _verify_settle(db, battle, guesser, cards, ctx["round_no"])
-            finished = battle.guess_state == "done"
-        await stream.publish({"type": "guess_done", "battle_id": battle_id})
-        if finished:
-            await stream.close()
-    except ValueError as e:
-        await stream.publish({"type": "guess_error", "message": str(e)})
-    except Exception as e:  # noqa: BLE001 - 后台检定任何异常都落到事件，不让任务静默死亡
+    except ValueError:
+        pass  # 同步校验已拦截大部分；后台残余校验失败静默清在途，前端按无增量超时兜底
+    except Exception as e:  # noqa: BLE001 - 后台检定异常不能静默吞掉，留日志供排查
         logger.error("guess_verify_failed id=%d err=%r", battle_id, e)
-        await stream.publish({"type": "guess_error", "message": "检定失败，请稍后重试"})
     finally:
         _guess_inflight.discard((battle_id, guesser_id))
 

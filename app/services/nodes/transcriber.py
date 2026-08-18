@@ -71,3 +71,15 @@ def build_transcribe_chain(llm_config: dict | None = None, system_prompt: str | 
         narration_a=_branch("viewer_name_a"),
         narration_b=_branch("viewer_name_b"),
     )
+
+
+def build_transcribe_side_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
+    """单侧转写链：对完整上帝叙述做一次转写，输出该视角人物第一人称讲述（纯文本）。
+
+    调用方直接传 `{"info": ..., "god": ..., "viewer_name": ...}` 单侧输入；同一链实例可并发复用
+    （Runnable 无状态）。供逐字流式使用（astream 产出字符串块）；整体批式场景仍用
+    `build_transcribe_chain`（RunnableParallel，A/B 各一分支并发）。
+    """
+    llm = build_chat_model(thinking=False, llm_config=llm_config)
+    template = with_system_override(TRANSCRIBE_TEMPLATE, system_prompt)
+    return template | llm | StrOutputParser()

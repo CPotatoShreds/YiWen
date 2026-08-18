@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.nodes.ability_pairs import PairVerdict
 from app.services.nodes.transcribe_validator import TranscribeVerdict
 from app.services.reliability import ChainFailure, ainvoke_with_reliability
 
@@ -32,23 +33,23 @@ def _repair_builder(text: str):
     return build
 
 
-def _discuss_builder(report: str):
-    """讨论节点打桩：返回固定讨论报告文本。"""
+def _pair_judge_builder(verdict: PairVerdict):
+    """能力对比节点打桩：返回固定判定。每次调用返回全新 chain，无共享状态。"""
 
     def build(llm_config=None):
         chain = MagicMock()
-        chain.ainvoke = AsyncMock(return_value=report)
+        chain.ainvoke = AsyncMock(return_value=verdict)
         return chain
 
     return build
 
 
 def _empty_transcribe_builder():
-    """转写打桩：返回空 dict → 两侧回退上帝正文（校验短路原样保留），只测推演链路。"""
+    """转写打桩：返回空字符串 → 两侧回退上帝正文（校验短路原样保留），只测推演链路。"""
 
     def build(llm_config=None):
         chain = MagicMock()
-        chain.ainvoke = AsyncMock(return_value={})
+        chain.ainvoke = AsyncMock(return_value="")
         return chain
 
     return build
@@ -78,7 +79,8 @@ def test_exhausted_raises_chain_failure():
 
 def test_run_deduction_one_shot():
     """一次性推演：deduce 输出含结尾句「胜者：血影」→ winner B；推演信息只含奇人名字（异闻师名字不进 LLM 上下文）；
-    视角身份注入奇人名字；校验通过保留原文；SSE 沿链路推进度（dueling → recounting → segment(round 0)）。"""
+    视角身份注入奇人名字；能力对比节点先于推演产出报告；校验通过保留原文；SSE 沿链路推进度
+    （compare → dueling → god_chunk → recounting → narration_chunk×2 → segment(round 0)）。"""
     from app.services.deduction import run_deduction
 
     user_a = SimpleNamespace(id=1, username="异闻师甲")
@@ -91,7 +93,7 @@ def test_run_deduction_one_shot():
         def __init__(self):
             self.events = []
 
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             self.events.append(ev)
 
     captured = {}
@@ -107,15 +109,14 @@ def test_run_deduction_one_shot():
         llm.ainvoke = AsyncMock(side_effect=_ainvoke)
         return llm
 
-    def _transcribe_chain(llm_config=None):
+    def _transcribe_side(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
             captured["god"] = kwargs["god"]
-            captured["viewer_a"] = kwargs["viewer_name_a"]
-            captured["viewer_b"] = kwargs["viewer_name_b"]
+            captured.setdefault("viewers", []).append(kwargs["viewer_name"])
             captured["keys"] = set(kwargs)
-            return {"narration_a": "新A", "narration_b": "新B"}
+            return "新A" if kwargs["viewer_name"] == "青锋" else "新B"
 
         chain.ainvoke = AsyncMock(side_effect=_ainvoke)
         return chain
@@ -135,8 +136,17 @@ def test_run_deduction_one_shot():
             style_a="暗杀流",
             style_b="潜行流",
             build_deduce=_deduce_llm,
-            build_discuss=_discuss_builder("金身可挡精神冲击，但若先被信息定位再偷袭则破。"),
-            build_transcribe=_transcribe_chain,
+            build_pair_judge=_pair_judge_builder(
+                PairVerdict(
+                    ability_a="影刃",
+                    ability_b="血咒",
+                    conflict=True,
+                    interaction="攻击×防御",
+                    winner="B",
+                    reasoning="血咒以自身鲜血为代价，果相之力更大。",
+                )
+            ),
+            build_transcribe_side=_transcribe_side,
             build_validate=_pass_validate_builder(),  # 校验恒通过 → 原样保留转写叙述
             build_repair=_repair_builder("（不应被调用）"),
         )
@@ -150,22 +160,29 @@ def test_run_deduction_one_shot():
     assert "青锋" in captured["info"] and "血影" in captured["info"]
     assert "战斗风格：暗杀流" in captured["info"] and "战斗风格：潜行流" in captured["info"]
     assert "异闻师甲" not in captured["info"] and "异闻师乙" not in captured["info"]
-    # 讨论报告在推演前生成，作为推演输入传入 deduce
-    assert captured["discuss_report"] == "金身可挡精神冲击，但若先被信息定位再偷袭则破。"
-    # 转写恰 1 次，拿到完整上帝全文（开场白 + 推演段），视角身份注入奇人名字；不再注入系统固定首尾
+    # 能力对比报告在推演前生成，作为推演输入传入 deduce
+    assert "影刃 × 血咒" in captured["discuss_report"]
+    assert "冲突" in captured["discuss_report"]
+    # 转写恰两侧各 1 次，拿到完整上帝全文，视角身份注入奇人名字；不再注入系统固定首尾
     assert captured["god"] == res.god
     # 上帝视角 = 模型完整输出：不再服务端前置开场白（信任模型按模板已输出开场白）
     assert res.god == "血影以血咒反噬，青锋倒下。胜者：血影"
-    assert captured["viewer_a"] == "青锋" and captured["viewer_b"] == "血影"
+    assert set(captured["viewers"]) == {"青锋", "血影"}
     assert "pov_opening" not in captured["keys"] and "pov_closing" not in captured["keys"]
     assert res.narration_a == "新A"
     assert res.narration_b == "新B"
-    # SSE 沿链路推进度：对决中 → 胜负已分/奇人回归 → 单条转写正文（round 0，双视角成对发布）
-    assert stream.events == [
+    # SSE 沿链路推进度：奇术对比 → 对决中（看破者收上帝逐字流）→ 胜负已分/奇人回归 → 双视角
+    # 逐字流 → 单条转写正文（round 0，双视角成对发布）
+    stages = [e for e in stream.events if e["type"] != "narration_chunk"]
+    assert stages == [
+        {"type": "stage", "stage": "compare"},
         {"type": "stage", "stage": "dueling"},
+        {"type": "god_chunk", "text": res.god},
         {"type": "stage", "stage": "recounting", "fighter_a": "青锋", "fighter_b": "血影"},
         {"type": "segment", "round": 0, "narration_a": res.narration_a, "narration_b": res.narration_b},
     ]
+    chunks = [e for e in stream.events if e["type"] == "narration_chunk"]
+    assert sorted(c["side"] for c in chunks) == ["a", "b"]
 
 
 def test_run_deduction_transcribe_failure_degrades():
@@ -182,7 +199,7 @@ def test_run_deduction_transcribe_failure_degrades():
         def __init__(self):
             self.events = []
 
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             self.events.append(ev)
 
     def _deduce_llm(llm_config=None):
@@ -190,7 +207,7 @@ def test_run_deduction_transcribe_failure_degrades():
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")
         return llm
 
-    def _transcribe_chain(llm_config=None):
+    def _transcribe_side(llm_config=None):
         chain = MagicMock()
         chain.ainvoke = AsyncMock(side_effect=TimeoutError("转写僵死"))
         return chain
@@ -208,8 +225,8 @@ def test_run_deduction_transcribe_failure_degrades():
                 tactic_a="",
                 tactic_b="",
                 build_deduce=_deduce_llm,
-                build_discuss=_discuss_builder("报告"),
-                build_transcribe=_transcribe_chain,
+                build_pair_judge=_pair_judge_builder(PairVerdict(ability_a="影刃", ability_b="血咒", conflict=False)),
+                build_transcribe_side=_transcribe_side,
                 build_validate=_pass_validate_builder(),
                 build_repair=_repair_builder("（不应被调用）"),
             )
@@ -234,7 +251,7 @@ def test_run_deduction_repairs_leaked_ability():
         return SimpleNamespace(name=name, effect=effect, detail="", understanding="", tactic="")
 
     class FakeStream:
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             pass
 
     def _deduce_llm(llm_config=None):
@@ -242,14 +259,13 @@ def test_run_deduction_repairs_leaked_ability():
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")  # 上帝视角：无影刃表现
         return llm
 
-    def _transcribe_chain(llm_config=None):
+    def _transcribe_side(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
-            return {
-                "narration_a": "青锋的合格讲述",
-                "narration_b": "我见他掌中凝出影刃，寒光一闪。",  # 泄露对家异能名「影刃」
-            }
+            if kwargs["viewer_name"] == "青锋":
+                return "青锋的合格讲述"
+            return "我见他掌中凝出影刃，寒光一闪。"  # 泄露对家异能名「影刃」
 
         chain.ainvoke = AsyncMock(side_effect=_ainvoke)
         return chain
@@ -298,8 +314,8 @@ def test_run_deduction_repairs_leaked_ability():
             tactic_a="",
             tactic_b="",
             build_deduce=_deduce_llm,
-            build_discuss=_discuss_builder("报告"),
-            build_transcribe=_transcribe_chain,
+            build_pair_judge=_pair_judge_builder(PairVerdict(ability_a="影刃", ability_b="血咒", conflict=False)),
+            build_transcribe_side=_transcribe_side,
             build_validate=_content_validate_builder(),
             build_repair=_repair_builder(),
         )
@@ -322,7 +338,7 @@ def test_run_deduction_validation_fail_keeps_original():
         return SimpleNamespace(name=name, effect=effect, detail="", understanding="", tactic="")
 
     class FakeStream:
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             pass
 
     def _deduce_llm(llm_config=None):
@@ -330,9 +346,13 @@ def test_run_deduction_validation_fail_keeps_original():
         llm.ainvoke = AsyncMock(return_value="血影以血咒反噬，青锋倒下。胜者：血影")
         return llm
 
-    def _transcribe_chain(llm_config=None):
+    def _transcribe_side(llm_config=None):
         chain = MagicMock()
-        chain.ainvoke = AsyncMock(return_value={"narration_a": "A叙述", "narration_b": "B叙述"})
+
+        async def _ainvoke(kwargs):
+            return "A叙述" if kwargs["viewer_name"] == "青锋" else "B叙述"
+
+        chain.ainvoke = AsyncMock(side_effect=_ainvoke)
         return chain
 
     def _always_fail_builder():
@@ -363,8 +383,8 @@ def test_run_deduction_validation_fail_keeps_original():
             tactic_a="",
             tactic_b="",
             build_deduce=_deduce_llm,
-            build_discuss=_discuss_builder("报告"),
-            build_transcribe=_transcribe_chain,
+            build_pair_judge=_pair_judge_builder(PairVerdict(ability_a="影刃", ability_b="血咒", conflict=False)),
+            build_transcribe_side=_transcribe_side,
             build_validate=_always_fail_builder(),
             build_repair=_repair_builder(),
         )
@@ -374,8 +394,8 @@ def test_run_deduction_validation_fail_keeps_original():
     assert res.narration_b == "B叙述"
 
 
-def test_run_discussion_node_before_deduce():
-    """讨论节点先于推演：拿到双方信息（含异能/战术）生成报告，输出作为 discuss_report 传入推演 LLM。"""
+def test_run_pair_analysis_before_deduce():
+    """能力对比节点先于推演：逐对拿到双方信息（含异能/战术/风格）并发判定，汇总报告作为 discuss_report 传入推演 LLM。"""
     from app.services.deduction import run_deduction
 
     user_a = SimpleNamespace(id=1, username="异闻师甲")
@@ -385,17 +405,24 @@ def test_run_discussion_node_before_deduce():
         return SimpleNamespace(name=name, effect=effect, detail="", understanding="", tactic="")
 
     class FakeStream:
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             pass
 
-    discuss_inputs = []
+    pair_inputs = []
 
-    def _discuss_llm(llm_config=None):
+    def _pair_judge_llm(llm_config=None):
         chain = MagicMock()
 
         async def _ainvoke(kwargs):
-            discuss_inputs.append(kwargs["info"])
-            return "【结论】金身可挡精神冲击，但先被信息定位再偷袭则破。"
+            pair_inputs.append(kwargs["info"])
+            return PairVerdict(
+                ability_a="影刃",
+                ability_b="血咒",
+                conflict=True,
+                interaction="攻击×防御",
+                winner="A",
+                reasoning="影刃契相受限、需近身，显相路径完整，三相之和占优。",
+            )
 
         chain.ainvoke = AsyncMock(side_effect=_ainvoke)
         return chain
@@ -425,25 +452,26 @@ def test_run_discussion_node_before_deduce():
             tactic_b="潜行伏击",
             style_a="暗杀流",
             style_b="潜行流",
-            build_discuss=_discuss_llm,
+            build_pair_judge=_pair_judge_llm,
             build_deduce=_deduce_llm,
-            build_transcribe=_empty_transcribe_builder(),
+            build_transcribe_side=_empty_transcribe_builder(),
             build_validate=_pass_validate_builder(),
             build_repair=_repair_builder(""),
         )
     )
 
-    # 讨论节点恰好 1 次、先于推演拿到双方信息（异能 + 战术 + 风格）
-    assert len(discuss_inputs) == 1
-    assert "青锋" in discuss_inputs[0] and "血影" in discuss_inputs[0]
-    assert "影刃" in discuss_inputs[0] and "血咒" in discuss_inputs[0]
-    assert "先手突袭" in discuss_inputs[0] and "潜行伏击" in discuss_inputs[0]
-    # 讨论输出作为 discuss_report 传给推演 LLM
-    assert captured["discuss_report"] == "【结论】金身可挡精神冲击，但先被信息定位再偷袭则破。"
+    # 对比节点恰好 1 次（1 对）、先于推演拿到双方信息（异能 + 战术 + 风格）
+    assert len(pair_inputs) == 1
+    assert "青锋" in pair_inputs[0] and "血影" in pair_inputs[0]
+    assert "影刃" in pair_inputs[0] and "血咒" in pair_inputs[0]
+    assert "先手突袭" in pair_inputs[0] and "潜行伏击" in pair_inputs[0]
+    # 对比输出作为 discuss_report 传给推演 LLM
+    assert "影刃 × 血咒" in captured["discuss_report"]
+    assert "冲突" in captured["discuss_report"]
 
 
-def test_discuss_failure_degrades_to_direct_deduce():
-    """讨论节点抛异常（重试耗尽）→ 降级为仅用双方信息推演，战斗不废场、结果与无讨论时一致。"""
+def test_pair_analysis_failure_degrades_to_direct_deduce():
+    """能力对比节点抛异常（重试耗尽）→ 降级为仅用双方信息推演，战斗不废场、结果与无对比时一致。"""
     from app.services.deduction import run_deduction
 
     user_a = SimpleNamespace(id=1, username="异闻师甲")
@@ -453,12 +481,12 @@ def test_discuss_failure_degrades_to_direct_deduce():
         return SimpleNamespace(name=name, effect=effect, detail="", understanding="", tactic="")
 
     class FakeStream:
-        async def publish(self, ev):
+        async def publish(self, ev, replay: bool = True):
             pass
 
-    def _discuss_llm(llm_config=None):
+    def _pair_judge_llm(llm_config=None):
         chain = MagicMock()
-        chain.ainvoke = AsyncMock(side_effect=TimeoutError("讨论僵死"))
+        chain.ainvoke = AsyncMock(side_effect=TimeoutError("对比僵死"))
         return chain
 
     captured = {}
@@ -485,15 +513,15 @@ def test_discuss_failure_degrades_to_direct_deduce():
                 abilities_b=[_ability("血咒", "诅咒")],
                 tactic_a="",
                 tactic_b="",
-                build_discuss=_discuss_llm,
+                build_pair_judge=_pair_judge_llm,
                 build_deduce=_deduce_llm,
-                build_transcribe=_empty_transcribe_builder(),
+                build_transcribe_side=_empty_transcribe_builder(),
                 build_validate=_pass_validate_builder(),
                 build_repair=_repair_builder(""),
             )
         )
 
-    # 讨论失败被捕获，推演照常进行并产出结果；discuss_report 为空（未污染推演输入）
+    # 对比失败被捕获，推演照常进行并产出结果；discuss_report 为空（未污染推演输入）
     assert res.winner_side == "B"
     assert res.result == "血影"
     assert captured["discuss_report"] == ""

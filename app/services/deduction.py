@@ -1,4 +1,4 @@
-"""推演链路模块：把 LLM 节点（推演者 / 转写者 / 转写质检员）编排为一场对战的完整推演。
+"""推演链路模块：把 LLM 节点（对比者 / 推演者 / 转写者 / 转写质检员）编排为一场对战的完整推演。
 
 输入：对战双方奇人名字 + 异能 + 打法；异闻师（用户）名字只用于服务端日志，**不进任何 LLM
 上下文**。输出：上帝视角全文、A/B 视角全文、胜负判定。与 battle.py 解耦——battle 只管对战
@@ -6,15 +6,19 @@
 胜负解析 / 视角转写身份 / 校验视角）。
 
 推演方式：一次性推演。推演 LLM 以开场白开头、以三选一固定结尾句收尾，一口气输出完整
-对战（不再分轮、不再由判定 LLM 裁断）；胜负从结尾句解析（解析失败保守判和局）。随后对
-完整上帝叙述做一次并发转写（A/B 各一个视角分支）：转写 LLM 扮演该视角奇人，以第一人称
-向自己的异闻师讲述这场战斗的经历，结果由角色自然交代（不再注入系统固定首尾）。转写后经
-**校验节点**逐侧定稿：校验 → 合格直接用；不合格 → 修复一次再校验；仍不合格或修复失败 →
-退回原文稿件（原文再差也是第一人称，上帝视角第三人称不作兜底；仅转写完全失败才降级上帝正文）。
+对战（不再分轮、不再由判定 LLM 裁断）；胜负从结尾句解析（解析失败保守判和局）。推演前由
+**能力对比节点**把双方奇术两两配对（上限 MAX_ABILITY_PAIRS 对），逐对并发判断冲突、依三相
+共鸣理论分判高下，汇总为对比报告作为推演输入（暂时替代讨论节点）。随后对完整上帝叙述做
+**逐字流式**双视角转写（A/B 各一个视角分支并发）：转写 LLM 扮演该视角奇人，以第一人称向
+自己的异闻师讲述这场战斗的经历，结果由角色自然交代。流式输出经**流内审查**遮蔽对家异能名
+逐字上屏；全文流完后经**校验节点**逐侧定稿：校验 → 合格直接用；不合格 → 修复一次再校验；
+仍不合格或修复失败 → 退回原文稿件（原文再差也是第一人称，上帝视角第三人称不作兜底；仅
+转写完全失败才降级上帝正文）。
 
-SSE 进度事件沿推演链路实时外发：dueling（上帝视角生成中，前端「正在对决中」）→ recounting
-（上帝视角完成、奇人回归、开始转写，前端「胜负已分，xxx回到了你的异闻录中」）→ segment
-（转写正文）。
+SSE 进度事件沿推演链路实时外发：compare（奇术对比中）→ dueling（上帝视角生成中，前端
+「正在对决中」，**已看破场景逐字流式上帝正文**）→ recounting（上帝视角完成、奇人回归、开始
+转写，前端「胜负已分，xxx回到了你的异闻录中」）→ narration_chunk（转写逐字流）→ segment
+（定稿正文）。
 
 所有 LLM 调用统一走可靠性层（超时 + 指数退避重试，见 services/reliability.py）：
 - 推演失败（重试耗尽）向上抛 ChainFailure，由 battle 层标记 failed 并输出解释文本；
@@ -26,26 +30,28 @@ from __future__ import annotations
 import asyncio
 import random
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 from langchain_core.runnables import Runnable
 
 from app.core.logger import get_logger
 from app.models.ability import Ability
+from app.models.loadout import MAX_LOADOUT_ABILITIES
 from app.models.user import User
+from app.services.nodes.ability_pairs import MAX_ABILITY_PAIRS, PairVerdict, build_pair_judge_chain, render_pair_report
 from app.services.nodes.deducer import OPENINGS, build_deduce_chain, build_endings
-from app.services.nodes.discusser import build_discuss_llm
+from app.services.nodes.leak_filter import build_denylist, mask_stream_chunks
 from app.services.nodes.transcribe_validator import build_repair_chain, build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_chain
-from app.services.reliability import ainvoke_with_reliability
+from app.services.nodes.transcriber import build_transcribe_side_chain
+from app.services.reliability import ainvoke_with_reliability, astream_with_reliability
 
 logger = get_logger("deduction")
 
 
 @dataclass
 class DeductionResult:
-    """一场推演的产出：上帝视角全文、A/B 视角全文、胜负判定、战前讨论报告。"""
+    """一场推演的产出：上帝视角全文、A/B 视角全文、胜负判定、战前分析报告。"""
 
     god: str
     narration_a: str
@@ -53,7 +59,7 @@ class DeductionResult:
     winner_side: str  # "A" | "B" | "draw"
     winner_id: int | None
     result: str  # 胜者奇人名字或"和局"
-    discuss_report: str = ""  # 讨论节点产出（可能为空：外部未传且讨论失败降级）
+    discuss_report: str = ""  # 能力对比报告（可能为空：外部未传且对比失败降级）
 
 
 def _render_ability(a: Ability) -> str:
@@ -226,6 +232,100 @@ async def _settle_side(
     return narration
 
 
+async def _run_pair_analysis(
+    abilities_a: list[Ability],
+    abilities_b: list[Ability],
+    info: str,
+    build_pair_judge: Callable[..., Runnable],
+    llm_config: dict | None = None,
+    trace_context: dict | None = None,
+) -> str:
+    """能力对比节点：双方奇术两两配对（各取前 MAX_LOADOUT_ABILITIES，共上限 MAX_ABILITY_PAIRS 对）
+    并发判断是否存在冲突效果，有冲突则依三相共鸣理论分判高下，汇总为对比报告。
+
+    专用 asyncio.Semaphore(4) 限流（对比对本身很多，全局 LLM 信号量管在途总量、这里管这一节点的
+    并发，避免一次性打爆服务商配额）。单对失败跳过；全部失败返回空报告，推演照旧（对比是增强、
+    不是必需，同讨论节点降级语义）。
+    """
+    pairs = [
+        (a, b) for a in abilities_a[:MAX_LOADOUT_ABILITIES] for b in abilities_b[:MAX_LOADOUT_ABILITIES]
+    ][:MAX_ABILITY_PAIRS]
+    if not pairs:
+        return ""
+    judge = build_pair_judge(llm_config=llm_config)
+    sem = asyncio.Semaphore(4)
+
+    async def _judge(a: Ability, b: Ability) -> PairVerdict | None:
+        try:
+            async with sem:
+                return await ainvoke_with_reliability(
+                    judge,
+                    {"info": info, "ability_a": _render_ability(a), "ability_b": _render_ability(b)},
+                    operation="ability_pair",
+                    trace_context=trace_context,
+                )
+        except Exception:  # noqa: BLE001 - 单对失败跳过，不因对比废掉整场
+            return None
+
+    verdicts = await asyncio.gather(*(_judge(a, b) for a, b in pairs))
+    verdicts = [v for v in verdicts if v is not None]
+    if not verdicts:
+        logger.warning("pair_analysis_unavailable -> fallback to direct deduce")
+        return ""
+    return render_pair_report(verdicts)
+
+
+async def _stream_transcribe_side(
+    *,
+    stream,
+    side: str,
+    info: str,
+    god: str,
+    viewer_name: str,
+    opponent_abilities: list[Ability],
+    transcribe_side_chain: Runnable,
+    build_validate: Callable[..., Runnable],
+    build_repair: Callable[..., Runnable],
+    llm_config: dict | None = None,
+    trace_context: dict | None = None,
+) -> str:
+    """单侧转写逐字流：转写 LLM 流式讲述该视角经历，流内经审查遮蔽对家异能名逐字上屏
+    （narration_chunk，replay=False），全文流完后按**未遮蔽原文**进校验节点定稿。
+
+    流失败（重试耗尽）降级为上帝正文兜底（同现状）。发布的 narration_chunk 用遮蔽文本，落库/
+    定稿用原文——遮蔽只影响上屏瞬间，事后校验修复的是权威正文。
+    """
+    raw_parts: list[str] = []
+
+    async def _collect_raw() -> AsyncIterator[str]:
+        async for chunk in astream_with_reliability(
+            transcribe_side_chain,
+            {"info": info, "god": god, "viewer_name": viewer_name},
+            operation=f"transcribe_{side}",
+            trace_context=trace_context,
+        ):
+            raw_parts.append(chunk)
+            yield chunk
+
+    try:
+        async for masked in mask_stream_chunks(_collect_raw(), build_denylist(opponent_abilities)):
+            await stream.publish({"type": "narration_chunk", "side": side, "text": masked}, replay=False)
+    except Exception:  # noqa: BLE001 - 转写失败（已重试耗尽）：降级为上帝正文兜底
+        logger.warning("transcribe_unavailable side=%s -> fallback to god", side)
+        return god
+    raw = "".join(raw_parts).strip() or god
+    return await _settle_side(
+        build_validate=build_validate,
+        build_repair=build_repair,
+        info=info,
+        god=god,
+        viewer_name=viewer_name,
+        narration=raw,
+        llm_config=llm_config,
+        trace_context=trace_context,
+    )
+
+
 async def run_deduction(
     *,
     stream,
@@ -239,9 +339,9 @@ async def run_deduction(
     tactic_b: str,
     style_a: str = "",
     style_b: str = "",
-    build_discuss: Callable[..., Runnable] = build_discuss_llm,
+    build_pair_judge: Callable[..., Runnable] = build_pair_judge_chain,
     build_deduce: Callable[..., Runnable] = build_deduce_chain,
-    build_transcribe: Callable[..., Runnable] = build_transcribe_chain,
+    build_transcribe_side: Callable[..., Runnable] = build_transcribe_side_chain,
     build_validate: Callable[..., Runnable] = build_validate_chain,
     build_repair: Callable[..., Runnable] = build_repair_chain,
     opening: str | None = None,
@@ -249,19 +349,19 @@ async def run_deduction(
     llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> DeductionResult:
-    """一次性推演一场对战并转写双视角，转写经校验节点定稿。
+    """一次性推演一场对战并逐字流式转写双视角，转写经校验节点定稿。
 
-    流程：选开场（随机或显式）→ 建三选一结尾模板（奇人名字）→ **讨论节点先对双方异能与战术
-    做分析报告**（能力理论模拟 + 实战拉片式推演，失败降级跳过，推演照旧）→ 推演 LLM 以
-    「双方信息 + 讨论报告」为输入一口气输出完整对战（含结尾句）→ 解析胜负 → 对完整上帝叙述
-    做一次并发转写（转写 LLM 扮演该视角奇人、第一人称向自己异闻师讲述经历，结果由角色自然
-    交代）→ 校验节点逐侧定稿（校验 → 修复一次 → 再校验 → 原文稿件兜底）→ 发布单条 SSE
-    segment。推演 LLM 重试耗尽抛 ChainFailure 向上，由调用方标记 failed；讨论/转写失败降级
-    不废场。
+    流程：选开场（随机或显式）→ 建三选一结尾模板（奇人名字）→ **能力对比节点先把双方奇术
+    两两配对做对比报告**（冲突判定 + 三相共鸣理论分判高下，失败降级跳过，推演照旧）→ 推演 LLM
+    以「双方信息 + 对比报告」为输入流式输出完整对战（含结尾句，上帝正文逐字流给已看破者）→
+    解析胜负 → 对完整上帝叙述做逐字流式双视角转写（转写 LLM 扮演该视角奇人、第一人称向自己
+    异闻师讲述经历，结果由角色自然交代；流内经审查遮蔽对家异能名逐字上屏）→ 校验节点逐侧
+    定稿（校验 → 修复一次 → 再校验 → 原文稿件兜底）→ 发布单条 SSE segment。推演 LLM 重试耗尽
+    抛 ChainFailure 向上，由调用方标记 failed；对比/转写失败降级不废场。
 
-    推演过程沿 SSE 实时推送进度：dueling（上帝视角生成中）→ recounting（上帝视角完成、
-    奇人回归、开始转写）→ segment（转写正文）。讨论在后台进行，不占用 SSE 事件面。LLM 上下文
-    只含奇人名字，异闻师名字仅服务端日志。
+    推演过程沿 SSE 实时推送进度：compare（奇术对比中）→ dueling（上帝视角生成中，已看破者
+    收 god_chunk 逐字流）→ recounting（上帝视角完成、奇人回归、开始转写）→ narration_chunk
+    （转写逐字流）→ segment（定稿正文）。LLM 上下文只含奇人名字，异闻师名字仅服务端日志。
     """
     opening, map_name = _pick_opening(opening)
     info = _combat_info(
@@ -270,24 +370,17 @@ async def run_deduction(
     endings = build_endings(map_name, fighter_a, fighter_b)
 
     deduce_llm = build_deduce(llm_config=llm_config)
-    transcribe_chain = build_transcribe(llm_config=llm_config)
+    transcribe_side_chain = build_transcribe_side(llm_config=llm_config)
 
-    # 讨论节点：推演前先产出双方异能/战术分析报告（能力理论模拟 + 实战拉片），作为推演输入。
-    # 报告由外部传入（discuss_report）时直接复用；否则调讨论 LLM 生成。失败降级为仅用 info
-    # 推演（讨论是增强、不是必需），绝不因讨论失败废掉整场对决。
+    # 能力对比节点：推演前先把双方奇术两两配对（并发）判断冲突、依三相共鸣理论分判高下，
+    # 汇总为对比报告作为推演输入。报告由外部传入（discuss_report）时直接复用；否则跑对比。
+    # 失败降级为仅用 info 推演（对比是增强、不是必需），绝不因对比失败废掉整场对决。
     if not discuss_report:
-        try:
-            discuss_report = str(
-                await ainvoke_with_reliability(
-                    build_discuss(llm_config=llm_config),
-                    {"info": info},
-                    operation="discuss",
-                    trace_context=trace_context,
-                )
-            )
-        except Exception:  # noqa: BLE001 - 讨论失败降级：推演照旧用双方信息
-            logger.warning("discuss_unavailable -> fallback to direct deduce")
-            discuss_report = ""
+        await stream.publish({"type": "stage", "stage": "compare"})
+        discuss_report = await _run_pair_analysis(
+            abilities_a, abilities_b, info, build_pair_judge,
+            llm_config=llm_config, trace_context=trace_context,
+        )
 
     logger.info(
         "battle_start a=%s(%s) b=%s(%s) abilities=%d/%d",
@@ -298,9 +391,10 @@ async def run_deduction(
         len(abilities_a),
         len(abilities_b),
     )
-    # SSE 进度：上帝视角生成中（前端「正在对决中」）
+    # SSE 进度：上帝视角生成中（前端「正在对决中」）；看破者逐字流收 god_chunk。
     await stream.publish({"type": "stage", "stage": "dueling"})
-    seg = await ainvoke_with_reliability(
+    seg_parts: list[str] = []
+    async for chunk in astream_with_reliability(
         deduce_llm,
         {
             "info": info,
@@ -311,11 +405,15 @@ async def run_deduction(
             "ending_draw": endings["draw"],
         },
         operation="deduce",
+        max_retries=2,
         trace_context=trace_context,
-    )
+    ):
+        seg_parts.append(chunk)
+        await stream.publish({"type": "god_chunk", "text": chunk}, replay=False)
     # 上帝视角 = 模型完整输出：开场白已由模型按模板输出，服务端不再前置（避免开场白重复）。
     # 模型偶发未输出开场白时，上帝视角以模型输出为准（不展示给玩家，仅存储/试验场可见）。
-    god = seg.strip()
+    seg = "".join(seg_parts).strip()
+    god = seg
 
     # 胜负从结尾句解析；解析不到（LLM 未按模板收尾）保守判和局
     winner_side = _parse_winner(seg, endings, fighter_a, fighter_b) or "draw"
@@ -329,41 +427,33 @@ async def run_deduction(
     # SSE 进度：上帝视角完成，奇人回归、开始转写视角讲述（前端「胜负已分，xxx回到了你的异闻录中」）
     await stream.publish({"type": "stage", "stage": "recounting", "fighter_a": fighter_a, "fighter_b": fighter_b})
     logger.info("god_done winner=%s god_len=%d", winner_side, len(god))
-    try:
-        tr = await ainvoke_with_reliability(
-            transcribe_chain,
-            {
-                "info": info,
-                "god": god,
-                "viewer_name_a": fighter_a,
-                "viewer_name_b": fighter_b,
-            },
-            operation="transcribe",
-            trace_context=trace_context,
-        )
-    except Exception:  # noqa: BLE001 - 转写失败（已重试耗尽）：两侧降级为上帝正文兜底
-        tr = None
-    raw_a = (tr or {}).get("narration_a") or god
-    raw_b = (tr or {}).get("narration_b") or god
-    # 校验节点逐侧定稿（A/B 并发）：校验 → 修复一次 → 再校验 → 原文稿件兜底
+    # 转写改为双单侧逐字流（A/B 并发）：转写 LLM 流式讲述该视角经历，流内经审查遮蔽对家异能名
+    # 逐字上屏（narration_chunk），全文流完后逐侧进校验节点定稿（校验 → 修复一次 → 再校验 →
+    # 原文稿件兜底）
     nar_a, nar_b = await asyncio.gather(
-        _settle_side(
-            build_validate=build_validate,
-            build_repair=build_repair,
+        _stream_transcribe_side(
+            stream=stream,
+            side="a",
             info=info,
             god=god,
             viewer_name=fighter_a,
-            narration=raw_a,
+            opponent_abilities=abilities_b,
+            transcribe_side_chain=transcribe_side_chain,
+            build_validate=build_validate,
+            build_repair=build_repair,
             llm_config=llm_config,
             trace_context=trace_context,
         ),
-        _settle_side(
-            build_validate=build_validate,
-            build_repair=build_repair,
+        _stream_transcribe_side(
+            stream=stream,
+            side="b",
             info=info,
             god=god,
             viewer_name=fighter_b,
-            narration=raw_b,
+            opponent_abilities=abilities_a,
+            transcribe_side_chain=transcribe_side_chain,
+            build_validate=build_validate,
+            build_repair=build_repair,
             llm_config=llm_config,
             trace_context=trace_context,
         ),

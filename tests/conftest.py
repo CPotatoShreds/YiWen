@@ -92,16 +92,33 @@ def _no_real_usage_llm():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_discuss_llm():
-    """讨论节点打桩：返回空报告（推演退化为仅用双方信息），全测试生效，避免触发真实 LLM。
+def _no_real_pair_judge_llm():
+    """能力对比节点打桩：返回无冲突判定（推演退化为仅用双方信息），全测试生效，避免触发真实 LLM。
 
-    run_deduction 默认 build_discuss=build_discuss_llm 在 def 时绑定，测试 arena（test_battle
-    直接调 run_deduction）需单独打桩 test_battle.build_discuss_llm。具体报告行为由测试 override。
+    battle.py 的 _build_pair_judge_chain 别名与 test_battle 直接 import 的构建器都要打桩
+    （对比节点在 run_deduction 编排内，两入口都会触达）。具体冲突判定行为由测试 override。
+    """
+    from app.services.nodes.ability_pairs import PairVerdict
+
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(return_value=PairVerdict(ability_a="", ability_b="", conflict=False))
+    with (
+        patch("app.services.battle._build_pair_judge_chain", return_value=chain),
+        patch("app.services.test_battle.build_pair_judge_chain", return_value=chain),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_discuss_llm():
+    """讨论节点打桩：返回空报告，全测试生效，避免触发真实 LLM。
+
+    讨论节点已脱离推演编排（能力对比节点暂时替代），battle.py 不再引用；仅 admin 试验场
+    generate_test_discuss_report 仍直接 import，故保留 test_battle 侧打桩。具体报告行为由测试 override。
     """
     chain = MagicMock()
     chain.ainvoke = AsyncMock(return_value="")
     with (
-        patch("app.services.battle._build_discuss_llm", return_value=chain),
         patch("app.services.test_battle.build_discuss_llm", return_value=chain),
     ):
         yield

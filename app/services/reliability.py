@@ -12,6 +12,7 @@ LLM 链路追踪：所有 LLM 调用统一收口在本层。调用方传入 `tra
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.runnables import Runnable
@@ -207,6 +208,103 @@ async def ainvoke_with_reliability(
                     latency_ms=latency,
                 )
             if attempt < max_retries:
+                delay = base_delay * (2**attempt)
+                logger.info("llm_retry op=%s attempt=%d wait=%.1fs", operation, attempt, delay)
+                await asyncio.sleep(delay)
+                continue
+            raise ChainFailure(operation, attempt + 1, e) from e
+
+
+async def astream_with_reliability(
+    chain,
+    kwargs: dict,
+    *,
+    operation: str,
+    max_retries: int = 0,
+    base_delay: float = 1.0,
+    trace_context: dict | None = None,
+) -> AsyncIterator[object]:
+    """流式调用 LLM 链：超时保护 + 仅零产出时重试 + 日志埋点，逐块产出。
+
+    `chain.astream(kwargs)` 每轮包 `asyncio.timeout(LLM_TIMEOUT_SECONDS)` 硬上限；非 langchain
+    Runnable（测试桩等）回退一次 `chain.ainvoke(kwargs)` 整体产出（块内字符串拼接交给调用方）。
+    **重试仅在尚未产出任何块时进行**——已流出的部分输出无法回滚重放；中途失败直接抛 ChainFailure。
+    `trace_context`（含 kind / trace_id）非空时，请求输入与成败异步落库 `llm_traces`（输出为流式
+    拼接全文）。
+    """
+    kind = (trace_context or {}).get("kind", "background")
+    trace_id = (trace_context or {}).get("trace_id")
+    request_json = _safe_serialize(kwargs)
+    capture = _UsageCaptureCallback()  # 每次调用一个；重试时后一次 on_llm_end 覆盖前一次
+    for attempt in range(max_retries + 1):
+        emitted = 0
+        collected: list[object] = []
+        start = time.monotonic()
+        try:
+            async with llm_semaphore:  # 在途并发超限即排队等待，不额外占配额
+                if isinstance(chain, Runnable):
+                    agen = chain.astream(kwargs, config={"callbacks": [capture]})
+                else:
+                    # 测试桩等非 langchain 对象：保持原签名调用，整块产出
+                    async def _single() -> AsyncIterator[object]:
+                        yield await chain.ainvoke(kwargs)
+
+                    agen = _single()
+                async with asyncio.timeout(LLM_TIMEOUT_SECONDS):
+                    async for chunk in agen:
+                        if chunk is None:
+                            continue
+                        emitted += 1
+                        collected.append(chunk)
+                        yield chunk
+            latency = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "llm_ok op=%s attempt=%d dur=%.2fs chunks=%d",
+                operation,
+                attempt,
+                latency / 1000,
+                emitted,
+            )
+            if trace_context:
+                if collected and all(isinstance(c, str) for c in collected):
+                    response_json = "".join(collected)  # type: ignore[arg-type]
+                else:
+                    response_json = _safe_serialize(collected)
+                _spawn_trace(
+                    kind=kind,
+                    operation=operation,
+                    status="ok",
+                    trace_id=trace_id,
+                    request_json=request_json,
+                    response_json=response_json,
+                    error=None,
+                    latency_ms=latency,
+                    tokens_input=capture.tokens_input,
+                    tokens_output=capture.tokens_output,
+                )
+            return
+        except Exception as e:
+            latency = int((time.monotonic() - start) * 1000)
+            logger.warning(
+                "llm_fail op=%s attempt=%d dur=%.2fs type=%s err=%.200s",
+                operation,
+                attempt,
+                latency / 1000,
+                type(e).__name__,
+                str(e),
+            )
+            if trace_context:
+                _spawn_trace(
+                    kind=kind,
+                    operation=operation,
+                    status="fail",
+                    trace_id=trace_id,
+                    request_json=request_json,
+                    response_json=None,
+                    error=str(e)[:500],
+                    latency_ms=latency,
+                )
+            if emitted == 0 and attempt < max_retries:
                 delay = base_delay * (2**attempt)
                 logger.info("llm_retry op=%s attempt=%d wait=%.1fs", operation, attempt, delay)
                 await asyncio.sleep(delay)

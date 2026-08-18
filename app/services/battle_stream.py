@@ -45,10 +45,16 @@ class BattleStream:
         if self._closed and not self._subscribers:
             _registry.pop(self.battle_id, None)
 
-    async def publish(self, event: dict) -> None:
+    async def publish(self, event: dict, replay: bool = True) -> None:
+        """发布一个事件；replay=False 时只实时入队、不进 `_emitted` 快照。
+
+        逐字流式的 chunk 事件频率高、体积随文本线性增长，入快照会让迟到订阅者拿到无限膨胀的
+        历史；这类事件用 replay=False，最终 segment/done 等结构性事件仍入快照供重连补发。
+        """
         if self._closed:
             return
-        self._emitted.append(event)
+        if replay:
+            self._emitted.append(event)
         for q in list(self._subscribers):
             q.put_nowait(event)
 

@@ -18,6 +18,31 @@ interface AbilityLite {
   effect: string;
 }
 
+// SSE 推演阶段：compare（奇术比对）→ dueling（上帝推演，看破者收逐字流）→ recounting（个人视角转写）。
+// 单调游标：重连快照重播旧阶段一律忽略，不闪回。
+type Stage = "unknown" | "compare" | "dueling" | "recounting";
+const STAGE_ORDER: Record<Stage, number> = { unknown: 0, compare: 1, dueling: 2, recounting: 3 };
+
+// 四步阶段指示器文案（成卷为定稿/收尾）
+const STEPS = ["奇术比对", "上帝推演", "个人视角", "成卷"];
+
+function DeductionStepper({ active }: { active: number }) {
+  return (
+    <div className="stepper" aria-label="推演进度">
+      {STEPS.map((label, i) => {
+        const n = i + 1;
+        const cls = n < active ? "is-done" : n === active ? "is-active" : "";
+        return (
+          <div key={label} className={`stepper__step ${cls}`}>
+            <span className="stepper__dot">{n}</span>
+            <span className="stepper__label">{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AbilityList({ title, list, me }: { title: string; list?: AbilityLite[]; me?: boolean }) {
   return (
     <div className="panel">
@@ -121,7 +146,7 @@ function GuessFeed({
   );
 }
 
-// 连接中断横幅：SSE 重连耗尽时出现，点「续接」重置退避重新订阅（推演期与猜词期共用）
+// 连接中断横幅：SSE 重连耗尽时出现，点「续接」重置退避重新订阅（推演期使用）
 function DisconnectBanner({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="banner banner--info" style={{ marginTop: 12 }}>
@@ -151,18 +176,21 @@ export default function BattleReport() {
   const [err, setErr] = useState("");
   const [guessText, setGuessText] = useState("");
   const [guessing, setGuessing] = useState(false);
-  const [verifying, setVerifying] = useState(false); // 检定进行中：锁输入，等 SSE guess_done 回推
-  const [liveSegments, setLiveSegments] = useState<string[]>([]);
-  const [stage, setStage] = useState<"unknown" | "dueling" | "recounting">("unknown"); // SSE 推演进度：推演中（无标题）→ 正在对决中 → 胜负已分+奇人回归转写
+  const [verifying, setVerifying] = useState(false); // 检定进行中：锁输入，轮询判定落定
+  const [roundPoll, setRoundPoll] = useState(0); // 猜词轮询序号：递增即启动/重启一轮（500ms 轮询等判定落定）
+  const [liveNarration, setLiveNarration] = useState(""); // 本侧流式转写（逐字上屏，segment 定稿后替换）
+  const [liveGod, setLiveGod] = useState(""); // 看破者：上帝正文逐字流
+  const [settled, setSettled] = useState(false); // 已收 segment 定稿 → 四步指示器进入「成卷」
+  const [stage, setStage] = useState<Stage>("unknown"); // SSE 推演进度：奇术比对 → 正在对决中 → 胜负已分+奇人回归转写
   const [retry, setRetry] = useState(0); // 第几次重连（指数退避：3s→6s→…→上限30s）
   const [disconnected, setDisconnected] = useState(false); // 重连耗尽 → 显示「连接中断」+ 手动续接
   const [rematchBusy, setRematchBusy] = useState(false);
   const [confirmGiveUp, setConfirmGiveUp] = useState(false); // 收手二次确认：首次点击变「确认收手？」再点才提交
   const [viewTab, setViewTab] = useState<"own" | "god" | "opp">("own"); // 行迹视角标签：己方 / 上帝 / 对方
   const [contentTab, setContentTab] = useState<"abilities" | "guess">("abilities"); // 奇术与猜词标签
-  const liveRoundRef = useRef(-1); // 已收最大分段轮次（断点去重：跨重连保留，服务端快照重播不重复）
-  const stageRef = useRef<"unknown" | "dueling" | "recounting">("unknown"); // 进度单调游标：到「胜负已分」后不回退（重连快照会把 dueling 再重播一遍）
+  const stageRef = useRef<Stage>("unknown"); // 进度单调游标：到「胜负已分」后不回退（重连快照会把旧阶段再重播一遍）
   const settledRef = useRef(false); // 已收 done/error → 不再重连保活，等 reload 拉完整话本
+  const roundSnapshotRef = useRef(0); // 猜词轮询起始时 my_guess.attempts_used（增量即一轮完成）
   const prevIdRef = useRef(id); // 上次加载的战场 id：切战场才清流式状态（StrictMode 双挂载/同 id 重访时不闪断已铺陈的内容）
 
   // 首次加载（推演中状态由下方流式 effect 接管；流失败时回退轮询刷新）
@@ -171,10 +199,11 @@ export default function BattleReport() {
     // 仅当 id 真的变了才清（StrictMode 双挂载 / 同 id 重访时不闪断已铺陈的内容）
     if (prevIdRef.current !== id) {
       prevIdRef.current = id;
-      liveRoundRef.current = -1;
       stageRef.current = "unknown";
       settledRef.current = false;
-      setLiveSegments([]);
+      setLiveNarration("");
+      setLiveGod("");
+      setSettled(false);
       setStage("unknown");
       setDisconnected(false);
       setRetry(0);
@@ -193,19 +222,12 @@ export default function BattleReport() {
   }, [id]);
 
   // 推演中 → SSE 流式拉取自己视角的分段转写；done/error 后重拉完整话本。
-  // 断点续连：重连后服务端重播快照/续推，本地按轮次去重（liveRoundRef），不重复不丢段；
+  // 断点续连：重连后服务端重播结构事件快照（stage/segment），逐字 chunk 不入快照不重复；
+  // 进度游标 stageRef 单调不回退，重播旧阶段不闪回。
   // 连接中断按指数退避重连，耗尽则显示「连接中断」横幅等手动续接。
+  // 猜词阶段不走 SSE，由下方 500ms 轮询驱动。
   useEffect(() => {
-    if (!b) return;
-    // 猜词阶段 = 已落定但有可猜的败方（guess_total>0 且未揭完）：与推演期共用总线，等 guess_done 回推
-    const guessActive = b.status === "done" && (b.guess_total ?? 0) > 0 && !b.guessed;
-    if (b.status !== "pending" && !guessActive) return;
-    // 从推演期进入猜词阶段：推演已收尾标记作废，重连保活让位给猜词流
-    if (guessActive && settledRef.current) {
-      settledRef.current = false;
-      setDisconnected(false);
-      setRetry(0);
-    }
+    if (!b || b.status !== "pending") return;
     let alive = true;
     const ctrl = new AbortController();
     let timer: number | undefined;
@@ -232,29 +254,19 @@ export default function BattleReport() {
       {
         onEvent: (ev) => {
           if (ev.type === "stage") {
-            if (ev.stage === "recounting") {
-              stageRef.current = "recounting";
-              setStage("recounting");
-            } else if (ev.stage === "dueling" && stageRef.current !== "recounting") {
-              // 进度单调：已「胜负已分」后，重连快照重播的 dueling 一律忽略，不闪回「对决中」
-              stageRef.current = "dueling";
-              setStage("dueling");
+            const s = ev.stage as Stage;
+            if (STAGE_ORDER[s] > STAGE_ORDER[stageRef.current]) {
+              // 进度单调：重连快照重播的旧阶段一律忽略，不闪回
+              stageRef.current = s;
+              setStage(s);
             }
+          } else if (ev.type === "god_chunk") {
+            setLiveGod((g) => g + (ev.text as string));
+          } else if (ev.type === "narration_chunk") {
+            setLiveNarration((n) => n + (ev.text as string));
           } else if (ev.type === "segment") {
-            const round = ev.round as number;
-            if (round <= liveRoundRef.current) return; // 断点去重：快照重播/重复段跳过
-            liveRoundRef.current = round;
-            setLiveSegments((s) => [...s, ev.narration as string]);
-          } else if (ev.type === "guess_done") {
-            setGuessing(false); // 后台判定已落库：解锁输入，重拉含最新进度的行迹
-            setVerifying(false);
-            refresh();
-            reload();
-          } else if (ev.type === "guess_error") {
-            setGuessing(false);
-            setVerifying(false);
-            setErr((ev.message as string) || "判定失败，请稍后重试");
-            reload();
+            setLiveNarration(ev.narration as string); // 定稿文本替换流式草稿（权威全文）
+            setSettled(true);
           } else if (ev.type === "done" || ev.type === "error") {
             settledRef.current = true; // 已收尾 → 不再触发重连保活（避免 done 过渡期的重复订阅/快照重播）
             refresh(); // 结算后同步名望/见闻：导航栏数值即时浮出 ±N
@@ -270,10 +282,70 @@ export default function BattleReport() {
       ctrl.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [id, b?.status, b?.guess_total, b?.guessed, retry, refresh]);
+  }, [id, b?.status, retry, refresh]);
+
+  // 猜词阶段 → 500ms 轮询：POST 受理（202）或发现已有判定在途（409 / 载入时 guess_in_flight）触发。
+  // 以 attempts_used 增量判一轮完成；在途标志消失但无增量 → 本轮失败；60s 未落定 → 超时兜底。
+  // /battles/ 路径的 GET 已豁免客户端缓存，轮询每次拿新数据。
+  useEffect(() => {
+    if (roundPoll === 0) return;
+    let alive = true;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+    const finish = (d?: Battle, msg?: string) => {
+      if (d) setB(d);
+      setGuessing(false);
+      setVerifying(false);
+      if (msg) setErr(msg);
+    };
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const d = await api<Battle>(`/battles/${id}`);
+        if (!alive) return;
+        const attempts = d.my_guess?.attempts_used ?? 0;
+        if (attempts > roundSnapshotRef.current) {
+          finish(d); // 判定已落库：更新行迹并解锁输入
+          refresh();
+          return;
+        }
+        if (d.guessed) {
+          finish(d); // 猜词已了结（对家收手等）：静默结束，不报错
+          refresh();
+          return;
+        }
+        if (!d.guess_in_flight) {
+          finish(d, "本轮判定未能完成，请稍后重试");
+          return;
+        }
+        if (Date.now() - startedAt > 60000) {
+          finish(undefined, "判定超时，请稍后重试");
+          return;
+        }
+      } catch {
+        // 网络抖动：忽略本轮，下一轮再试
+      }
+      timer = window.setTimeout(tick, 500);
+    };
+    timer = window.setTimeout(tick, 0);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [id, roundPoll, refresh]);
+
+  // 载入/重进页面时若判定在途（刷新或半途进入）：锁输入并轮询，等本轮落定自愈
+  useEffect(() => {
+    if (!b || b.status !== "done") return;
+    if (b.guess_in_flight && !guessing && !verifying) {
+      roundSnapshotRef.current = b.my_guess?.attempts_used ?? 0;
+      setGuessing(true);
+      setRoundPoll((n) => n + 1);
+    }
+  }, [b, guessing, verifying]);
 
   // 标签页默认值：战场首次落定为 done 时设一次——我方可猜 → 落在「猜词」方便连续道出，否则「双方奇术」；
-  // 同场重载（SSE 快照/guess_done 重拉）不重置用户手选；切换战场再按新场设默认。
+  // 同场重载（SSE 快照/轮询完成重拉）不重置用户手选；切换战场再按新场设默认。
   const tabInitKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!b || b.status !== "done") return;
@@ -285,30 +357,35 @@ export default function BattleReport() {
     setViewTab("own");
   }, [b?.id, b?.status, b?.can_guess, b?.my_guess?.total]);
 
+  // 启动一轮猜词轮询：以提交时的 attempts_used 为基线，轮询到增量判一轮完成
+  const startGuessPoll = () => {
+    roundSnapshotRef.current = b?.my_guess?.attempts_used ?? 0;
+    setRoundPoll((n) => n + 1);
+  };
+
   async function submitGuess() {
     if (!guessText.trim()) return;
     setConfirmGiveUp(false);
     setGuessing(true);
     setErr("");
     try {
-      // 后端只做同步校验+受理（202），LLM 点评在后台任务跑，结果经 SSE guess_done 回推——
-      // 短超时只等受理，不再像旧版同步链路那样被长判定掐断。
+      // 后端只做同步校验+受理（202），LLM 点评在后台任务跑，前端 500ms 轮询等判定落库
       await api<Battle>(`/battles/${id}/guess`, {
         method: "POST",
         body: JSON.stringify({ text: guessText.trim() }),
         timeout: 10000,
       });
       setGuessText("");
+      startGuessPoll();
     } catch (e: any) {
       if (e instanceof ApiError && e.status === 409) {
-        // 上一轮点评/检定仍在进行：静默忽略，等 SSE 回推
+        // 上一轮点评/检定仍在途：静默进入轮询，等它落定
+        startGuessPoll();
         return;
       }
       setErr(e.message);
       setGuessing(false);
     }
-    // 兜底：若流中断没收到 guess_done，120s 后解锁输入，用户可重试
-    window.setTimeout(() => setGuessing(false), 120000);
   }
 
   // 检定：根据此前全部猜测与点评，验证各门奇术看破与否（未看破 → 指还缺什么 / 看破 → 揭示该门）
@@ -320,16 +397,16 @@ export default function BattleReport() {
         method: "POST",
         timeout: 10000,
       });
+      startGuessPoll();
     } catch (e: any) {
       if (e instanceof ApiError && e.status === 409) {
-        // 上一轮点评/检定仍在进行：静默忽略，等 SSE 回推
+        // 上一轮点评/检定仍在途：静默进入轮询，等它落定
+        startGuessPoll();
         return;
       }
       setErr(e.message);
       setVerifying(false);
     }
-    // 兜底：若流中断没收到 guess_done，120s 后解锁输入，用户可重试
-    window.setTimeout(() => setVerifying(false), 120000);
   }
 
   async function rematch() {
@@ -390,6 +467,11 @@ export default function BattleReport() {
 
   if (b.status === "pending") {
     const myFighter = mySide ? b.fighter_a : b.fighter_b;
+    // 看破者（点将局全破解挑战者 / revealed 对战）：上帝正文直接流式，跳过双视角
+    const godView = !!b.unlocked || !!b.revealed;
+    // 四步指示器当前步：成卷定稿 → 4；奇术比对 → 1；上帝推演 → 2；个人视角 → 3（看破者无个人视角，直接成卷）
+    const activeStep = settled ? 4 : stage === "compare" ? 1 : stage === "dueling" ? 2 : godView ? 4 : 3;
+    const liveText = godView ? liveGod : liveNarration;
     return (
       <>
         <MatchCard userA={b.fighter_a} userB={b.fighter_b} subA={b.user_a} subB={b.user_b} status="pending" variant="hero" />
@@ -410,6 +492,11 @@ export default function BattleReport() {
                 <h3>正在对决中</h3>
                 <p>双方奇人正于战场中对阵，胜负未分……</p>
               </>
+            ) : stage === "compare" ? (
+              <>
+                <h3>奇术比对</h3>
+                <p>正在逐一比对双方奇术的冲突与高下……</p>
+              </>
             ) : (
               <p>书场初开，墨笔未落定前，先让故事铺陈一二……</p>
             )}
@@ -423,9 +510,10 @@ export default function BattleReport() {
             }}
           />
         )}
-        {liveSegments.length > 0 && (
+        <DeductionStepper active={activeStep} />
+        {liveText && (
           <div className="panel narration" style={{ marginTop: 16 }}>
-            {liveSegments.join("\n\n")}
+            {liveText}
           </div>
         )}
       </>

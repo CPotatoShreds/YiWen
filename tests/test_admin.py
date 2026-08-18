@@ -862,9 +862,9 @@ def _wait_for_run_status(run_id: int, timeout: float = 6.0) -> str | None:
 # 重跑打桩：直接 patch prompt_debug 模块命名空间里的节点构建器（_stage_builder 经 globals()
 # 运行时动态解析，patch 模块属性即生效——对齐 battle.py 的 _build_* 打桩缝）。
 _BUILDER_ATTR = {
-    "discuss": "build_discuss_llm",
+    "discuss": "build_pair_judge_chain",
     "deduce": "build_deduce_chain",
-    "transcribe": "build_transcribe_chain",
+    "transcribe": "build_transcribe_side_chain",
     "validate": "build_validate_chain",
     "repair": "build_repair_chain",
 }
@@ -872,30 +872,31 @@ _BUILDER_ATTR = {
 
 def _stub_prompt_debug_builders(stack: ExitStack):
     """打桩 5 个推演段构建器；返回 (builder_mocks, deduce 输入捕获 dict)。"""
+    from app.services.nodes.ability_pairs import PairVerdict
     from app.services.nodes.transcribe_validator import TranscribeVerdict
 
     captured: dict = {}
     builder_mocks: dict[str, MagicMock] = {}
 
-    async def _discuss(_):
-        return ""
+    def _pair_judge(kwargs):
+        return PairVerdict(ability_a="甲", ability_b="乙", conflict=False)
 
     async def _deduce(kwargs):
         captured.update(kwargs)
         # 以推演输入里的 A 结尾句原文收尾 → _parse_winner 判甲胜；覆盖是否生效经 captured 断言
         return f"白光落下，一番激战。{kwargs['ending_a']}"
 
-    async def _transcribe(_):
-        return {"narration_a": "甲视角：潜行逼近，斩落对手。", "narration_b": "乙视角：措手不及，被一击击倒。"}
+    def _transcribe(kwargs):
+        return f"{kwargs['viewer_name']}视角：潜行逼近，斩落对手。"
 
-    async def _validate(_):
+    def _validate(_):
         return TranscribeVerdict(passes=True)
 
-    async def _repair(_):
+    def _repair(_):
         return ""
 
     impls = {
-        "discuss": _discuss,
+        "discuss": _pair_judge,
         "deduce": _deduce,
         "transcribe": _transcribe,
         "validate": _validate,
@@ -1003,7 +1004,7 @@ def test_prompt_debug_rerun_flow():
         con.close()
         story = json.loads(row[0])
         assert story["narration"] and story["narration_a"] and story["narration_b"]
-        assert row[1] == ""  # 讨论桩返回空
+        assert row[1] and "无直接冲突" in row[1]  # 能力对比桩返回无冲突报告
         assert row[2] == "A"
         assert row[3] is None
 

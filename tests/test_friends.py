@@ -1,5 +1,6 @@
 """好友系统测试：申请 / 接受 / 列表 / 切磋（切磋局不计名望）。"""
 
+import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -17,7 +18,15 @@ def _deduce(text):
 
 def _transcribe(a: str, b: str):
     chain = MagicMock()
-    chain.ainvoke = AsyncMock(return_value={"narration_a": a, "narration_b": b})
+
+    async def _ainvoke(kwargs):
+        m_a = re.search(r"发起方奇人：([^\n【】]+)", kwargs.get("info", ""))
+        m_b = re.search(r"对手奇人：([^\n【】]+)", kwargs.get("info", ""))
+        name_a = (m_a.group(1).strip() if m_a else "") or "甲"
+        name_b = (m_b.group(1).strip() if m_b else "") or "乙"
+        return a if kwargs.get("viewer_name") == name_a else b
+
+    chain.ainvoke = AsyncMock(side_effect=_ainvoke)
     return chain
 
 
@@ -78,7 +87,7 @@ def test_friends_and_challenge():
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：双方周旋，A 击杀 B。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe("A 视角……", "B 视角……")),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("A 视角……", "B 视角……")),
         ):
             r = client.post(f"/api/battles/challenge/{id_b}", headers=h_a)
             assert r.status_code == 200

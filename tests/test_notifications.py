@@ -1,7 +1,7 @@
 """通知系统测试：三类通知触发（点将挑战/新战报/猜词进展）+ 已读接口 + SSE 实时流。
 
 打桩方式与 test_board_progress.py 一致：conftest 全局打桩 usage/validate/discuss/理解，
-推演（_build_deduce_llm）与转写（_build_transcribe_chain）、猜词点评/检定
+推演（_build_deduce_llm）与转写（_build_transcribe_side_chain）、猜词点评/检定
 （_build_commentary/verify_llm）在此按测试作用域打桩。
 
 覆盖语义：
@@ -12,6 +12,7 @@
 - SSE 开流后新通知落库 → 流内收到 notification 事件（客户端据此重拉对账）。
 """
 
+import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -36,7 +37,11 @@ def _transcribe(nar_a: str, nar_b: str):
     chain = MagicMock()
 
     async def _ainvoke(kwargs):
-        return {"narration_a": nar_a, "narration_b": nar_b}
+        m_a = re.search(r"发起方奇人：([^\n【】]+)", kwargs.get("info", ""))
+        m_b = re.search(r"对手奇人：([^\n【】]+)", kwargs.get("info", ""))
+        name_a = (m_a.group(1).strip() if m_a else "") or "甲"
+        name_b = (m_b.group(1).strip() if m_b else "") or "乙"
+        return nar_a if kwargs.get("viewer_name") == name_a else nar_b
 
     chain.ainvoke = AsyncMock(side_effect=_ainvoke)
     return chain
@@ -138,7 +143,7 @@ def _challenge(client, entry_id, h_challenger, loadout_id, god_text):
     """点将挑战（打桩推演/转写），等待落定后返回行迹 dict。"""
     with (
         patch("app.services.battle._build_deduce_llm", return_value=_deduce(god_text)),
-        patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
     ):
         rc = client.post(f"/api/board/{entry_id}/challenge", json={"loadout_id": loadout_id}, headers=h_challenger)
         assert rc.status_code == 200, rc.text
@@ -150,7 +155,7 @@ def _mk_battle(client, h_a, h_b, name_a):
     user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
     with (
         patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-        patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
     ):
         r = client.post("/api/battles", headers=h_a)

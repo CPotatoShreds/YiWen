@@ -1,6 +1,5 @@
 """启程路由：启程 / 猜奇术 / 收手 / 再战 / 查看行迹 / 历史。"""
 
-import asyncio
 import json
 from typing import Annotated
 
@@ -31,11 +30,6 @@ from app.services.battle_stream import _get_stream
 from app.services.guess import strip_commentary_reason
 
 router = APIRouter(prefix="/battles", tags=["battles"])
-
-# 猜词阶段流闲置超时（秒）：订阅方在等"下一轮判定"事件，但当前无在途判定任务、
-# 也无法判断订阅方是否已离开页面（空闲流不写数据，服务端无断开信号）。超时后主动收流，
-# 释放连接/DB 会话；前端 onClose 视为断连自动重连，误伤由重连兜底。
-GUESS_PHASE_IDLE_SECONDS = 60
 
 
 def _filter_story(
@@ -265,6 +259,7 @@ async def _to_out(
         guess_attempts_used=guess_attempts_used,
         guess_attempts_max=guess_attempts_max,
         can_verify=can_verify,
+        guess_in_flight=bool(viewer_id and (battle.id, viewer_id) in _guess_inflight),
         revealed=revealed,
         friendly=battle.friendly,
         my_guess=_guess_block(my_row),
@@ -310,7 +305,7 @@ async def guess_battle(
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BattleOut:
-    """猜奇术（异步受理）：同步校验后 202 受理，LLM 判定在后台任务跑，结果经 SSE guess_done 回推。
+    """猜奇术（异步受理）：同步校验后 202 受理，LLM 判定在后台任务跑，前端 500ms 轮询等判定落库。
 
     非和局仅败方可猜；和局双方各自并行独立猜。校验镜像 submit_guess 顶部检查，失败同步 400；
     判定在途再提交 → 409。
@@ -347,7 +342,7 @@ async def guess_verify(
 ) -> BattleOut:
     """检定（异步受理）：对全部未看破奇术做布尔检定，同步校验后 202 受理，LLM 判定在后台任务跑。
 
-    独立于点评发起；可反复检定，但须自上次检定后又有新的点评（can_verify）。结果经 SSE guess_done 回推。
+    独立于点评发起；可反复检定，但须自上次检定后又有新的点评（can_verify）。判定落库同样由前端轮询探测。
     校验镜像 verify_guess 顶部检查，失败同步 400；判定在途再提交 → 409。
     """
     battle = await db.get(Battle, battle_id)
@@ -427,11 +422,12 @@ async def get_battle(
     return await _to_out(db, battle, viewer_id=current.id)
 
 
-def _filter_for_viewer(ev: dict, viewer_id: int, a_id: int, b_id: int) -> dict | None:
-    """SSE 事件按观看者身份过滤：segment 只透传自己一侧的叙述，其余事件原样透传。
+def _filter_for_viewer(ev: dict, viewer_id: int, a_id: int, b_id: int, god_access: bool = False) -> dict | None:
+    """SSE 事件按观看者身份过滤：segment 只透传自己一侧的叙述；god_chunk 只给已看破者（跳过
+    双视角等待、直接收上帝逐字流）；narration_chunk 只给非看破者自己一侧；其余事件原样透传。
 
-    上帝叙述从不进入事件（转写管线只 publish narration_a/b）；这里确保对面一侧的
-    叙述也不离开服务器。
+    上帝叙述从不进入事件（转写管线只 publish narration_a/b）；这里确保对面一侧的叙述
+    也不离开服务器。
     """
     if ev.get("type") == "segment":
         side = "a" if viewer_id == a_id else "b"
@@ -439,6 +435,13 @@ def _filter_for_viewer(ev: dict, viewer_id: int, a_id: int, b_id: int) -> dict |
         if not narration:
             return None
         return {"type": "segment", "round": ev.get("round", 0), "narration": narration}
+    if ev.get("type") == "god_chunk":
+        return ev if god_access else None
+    if ev.get("type") == "narration_chunk":
+        if god_access:
+            return None  # 看破者跳过双视角，不需要单侧转写流
+        side = "a" if viewer_id == a_id else "b"
+        return ev if ev.get("side") == side else None
     return ev
 
 
@@ -447,57 +450,45 @@ async def battle_stream(
     battle_id: int,
     current: Annotated[User, Depends(get_current_user)],
 ) -> StreamingResponse:
-    """推演/猜词实时流（SSE）：推送观看者自己视角的分段转写，结束后推 done/error。仅参战双方可订阅。
+    """推演实时流（SSE）：推送观看者自己视角的分段转写，结束后推 done/error。仅参战双方可订阅。
 
-    status 为 pending 或猜词阶段（done + 有猜词行未结束）时订阅事件总线，逐段推送；
-    其余已结束状态立即回一个 done/error 事件。
+    status 为 pending 时订阅事件总线，逐段推送；其余已结束状态立即回一个 done/error 事件。
+    （猜词阶段由前端 500ms 轮询驱动，不再走 SSE。）
     """
     async with async_session_factory() as db:
         battle = await db.get(Battle, battle_id)
         if battle is None or current.id not in (battle.user_a_id, battle.user_b_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行迹不存在")
         a_id, b_id, status_ = battle.user_a_id, battle.user_b_id, battle.status
-        guess_state_ = battle.guess_state
         story_json = battle.story  # 已结束战斗的错误信息存于 story.error_message
+        # 看破者（点将局已全破解的挑战者 / 对战已 revealed）跳过双视角、直收上帝逐字流
+        god_access = bool(battle.revealed) or await _board_unlocked(db, battle, current.id)
 
     def _encode(ev: dict) -> str:
         return f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
     async def gen():
-        # 猜词阶段 = 已落定且有未结束的猜词行（guess_state "guessing"）：流保持开放，
-        # 猜词后台任务/收手经总线推 guess_done。无猜词行（"none"）或已全结束（"done"）→ 短接。
-        guess_phase = status_ == "done" and guess_state_ == "guessing"
         if status_ == "failed":
             msg = "铺陈推演失败"
             if story_json:
                 msg = json.loads(story_json).get("error_message", msg)
             yield _encode({"type": "error", "message": msg})
             return
-        if status_ != "pending" and not guess_phase:
+        if status_ != "pending":
             yield _encode({"type": "done", "status": status_})
             return
-        # 猜词阶段但无在途判定任务：没有事件会在近期到来，且服务端感知不到订阅方是否已离开。
-        # 给 q.get() 加闲置超时，超时即收流（不发终止事件，前端按断连重连），避免连接永久泄漏。
-        idle_timeout = (
-            GUESS_PHASE_IDLE_SECONDS
-            if guess_phase and not any(k[0] == battle_id for k in _guess_inflight)
-            else None
-        )
         stream = _get_stream(battle_id)
         q, snapshot = stream.subscribe()
         try:
             for ev in snapshot:  # 补发此前已发出的分段（中途订阅不漏段）
-                payload = _filter_for_viewer(ev, current.id, a_id, b_id)
+                payload = _filter_for_viewer(ev, current.id, a_id, b_id, god_access)
                 if payload:
                     yield _encode(payload)
             while True:
-                try:
-                    ev = await asyncio.wait_for(q.get(), timeout=idle_timeout)
-                except TimeoutError:
-                    return  # 闲置超时主动收流（frontend onClose:reconnect 自愈）
+                ev = await q.get()
                 if ev is None:  # 关闭哨兵
                     break
-                payload = _filter_for_viewer(ev, current.id, a_id, b_id)
+                payload = _filter_for_viewer(ev, current.id, a_id, b_id, god_access)
                 if payload:
                     yield _encode(payload)
         finally:

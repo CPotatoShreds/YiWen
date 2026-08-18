@@ -1,10 +1,11 @@
 """七项新功能测试：奇人榜（上榜/点将挑战）、启程不匹配、行迹再战、和局双方猜词结算。
 
 对局/猜词打桩方式与 test_battles.py 一致：conftest 全局打桩 usage/validate/discuss/理解，
-推演（_build_deduce_llm）与转写（_build_transcribe_chain）、猜词点评/检定（_build_commentary/verify_llm）
+推演（_build_deduce_llm）与转写（_build_transcribe_side_chain）、猜词点评/检定（_build_commentary/verify_llm）
 在此按测试作用域打桩。
 """
 
+import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -29,7 +30,11 @@ def _transcribe(nar_a: str, nar_b: str):
     chain = MagicMock()
 
     async def _ainvoke(kwargs):
-        return {"narration_a": nar_a, "narration_b": nar_b}
+        m_a = re.search(r"发起方奇人：([^\n【】]+)", kwargs.get("info", ""))
+        m_b = re.search(r"对手奇人：([^\n【】]+)", kwargs.get("info", ""))
+        name_a = (m_a.group(1).strip() if m_a else "") or "甲"
+        name_b = (m_b.group(1).strip() if m_b else "") or "乙"
+        return nar_a if kwargs.get("viewer_name") == name_a else nar_b
 
     chain.ainvoke = AsyncMock(side_effect=_ainvoke)
     return chain
@@ -119,7 +124,7 @@ def _mk_draw_battle(client, h_a, h_b):
     user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
     with (
         patch("app.services.battle._build_deduce_llm", return_value=_deduce("双方僵持周旋，谁也没有彻底失去作战能力。平局")),
-        patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
     ):
         r = client.post("/api/battles", headers=h_a)
@@ -171,7 +176,7 @@ def test_board_put_on_list_challenge_take_off():
         # B 点将挑战 A 的刻印 → 切磋局（friendly、不计名望）
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         ):
             rc = client.post(f"/api/board/{eid}/challenge", json={"loadout_id": ld_b["id"]}, headers=h_b)
             assert rc.status_code == 200
@@ -210,7 +215,7 @@ def test_no_repeat_matchmaking_avoids_repeat_pair():
         # 第一场：A×B（具体配对 LA1×LB1）
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
             patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
@@ -223,7 +228,7 @@ def test_no_repeat_matchmaking_avoids_repeat_pair():
 
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
             patch("app.services.battle.pick_opponent", new=AsyncMock(side_effect=_fail)),
         ):
             r2 = client.post("/api/battles", json={"no_repeat": True}, headers=h_a)
@@ -251,7 +256,7 @@ def test_rematch_copies_snapshot_and_guess_state():
 
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
             patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
@@ -275,7 +280,7 @@ def test_rematch_copies_snapshot_and_guess_state():
         # A 发起再战
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         ):
             rm = client.post(f"/api/battles/{orig['id']}/rematch", headers=h_a)
             assert rm.status_code == 200

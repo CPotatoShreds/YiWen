@@ -24,6 +24,7 @@ from app.models.test_battle import TestBattle, TestBattleGuess, TestUser
 from app.services import economy
 from app.services.deduction import run_deduction
 from app.services.guess import GUESS_ATTEMPTS_MAX, run_guess_commentary, run_guess_verification
+from app.services.nodes.ability_pairs import build_pair_judge_chain
 from app.services.nodes.discusser import build_discuss_llm
 from app.services.nodes.guess_matcher import build_guess_commentary_llm, build_guess_verify_llm
 from app.services.nodes.usage_judge import USAGE_TEMPLATE, build_usage_llm
@@ -39,7 +40,7 @@ class _EventCollector:
     def __init__(self) -> None:
         self.events: list[dict] = []
 
-    async def publish(self, event: dict) -> None:
+    async def publish(self, event: dict, replay: bool = True) -> None:
         self.events.append(event)
 
     async def close(self) -> None:
@@ -76,7 +77,7 @@ async def run_test_deduction(
         tactic_b="",
         style_a=style_a,
         style_b=style_b,
-        build_discuss=build_discuss_llm,
+        build_pair_judge=build_pair_judge_chain,
         trace_context=trace_context,
     )
     return r.god, r.narration_a, r.narration_b, r.winner_side, r.winner_id, r.discuss_report

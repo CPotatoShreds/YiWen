@@ -177,6 +177,7 @@ export interface Battle {
   guess_attempts_used: number;
   guess_attempts_max: number;
   can_verify: boolean; // 自上次检定后又有新点评，可发起检定
+  guess_in_flight?: boolean; // 当前查看者是否有一条后台判定在途（猜词期轮询驱动）
   revealed: boolean;
   friendly: boolean;
   my_guess?: GuessBlock | null;

@@ -1,5 +1,6 @@
 """异能配置测试：默认配置 / 启用切换 / 装配异能 / 对战抽选 / 匹配排除。"""
 
+import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -17,7 +18,15 @@ def _deduce(text):
 
 def _transcribe(a: str, b: str):
     chain = MagicMock()
-    chain.ainvoke = AsyncMock(return_value={"narration_a": a, "narration_b": b})
+
+    async def _ainvoke(kwargs):
+        m_a = re.search(r"发起方奇人：([^\n【】]+)", kwargs.get("info", ""))
+        m_b = re.search(r"对手奇人：([^\n【】]+)", kwargs.get("info", ""))
+        name_a = (m_a.group(1).strip() if m_a else "") or "甲"
+        name_b = (m_b.group(1).strip() if m_b else "") or "乙"
+        return a if kwargs.get("viewer_name") == name_a else b
+
+    chain.ainvoke = AsyncMock(side_effect=_ainvoke)
     return chain
 
 
@@ -191,7 +200,7 @@ def test_battle_uses_only_chosen_loadout():
 
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe("甲视角……", "乙视角……")),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
             patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
@@ -279,7 +288,7 @@ def test_delete_loadout_unlinks_battle_snapshot():
 
         with (
             patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_chain", return_value=_transcribe("甲视角……", "乙视角……")),
+            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
             patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)

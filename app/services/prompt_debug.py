@@ -31,10 +31,10 @@ from app.models.user import User
 from app.services.battle import _resolve_loadout_inputs
 from app.services.deduction import run_deduction
 from app.services.llm import profile_to_llm_config
+from app.services.nodes.ability_pairs import build_pair_judge_chain
 from app.services.nodes.deducer import build_deduce_chain
-from app.services.nodes.discusser import build_discuss_llm
 from app.services.nodes.transcribe_validator import build_repair_chain, build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_chain
+from app.services.nodes.transcriber import build_transcribe_side_chain
 
 logger = get_logger("prompt_debug")
 
@@ -44,10 +44,12 @@ _background_tasks: set[asyncio.Task] = set()
 # 值存「模块属性名」，_scheme_builders 运行时经 globals() 解析——测试可直接
 # patch 本模块的节点构建器（对齐 battle.py 的 _build_* 打桩缝）。
 # usage/guess_pair/guess_verify 不在内（模板在调用方构造，v1 仅存储）。
+# "discuss" 槽现指向能力对比节点构建器（分析节点暂时替代讨论节点），字段名保持
+# discuss_prompt 不迁移 schema，语义转为「对比/分析节点提示词」。
 _DEDUCE_STAGES: dict[str, tuple[str, str]] = {
-    "discuss": ("build_discuss_llm", "discuss_prompt"),
+    "discuss": ("build_pair_judge_chain", "discuss_prompt"),
     "deduce": ("build_deduce_chain", "deduce_prompt"),
-    "transcribe": ("build_transcribe_chain", "transcribe_prompt"),
+    "transcribe": ("build_transcribe_side_chain", "transcribe_prompt"),
     "validate": ("build_validate_chain", "validate_prompt"),
     "repair": ("build_repair_chain", "repair_prompt"),
 }
@@ -79,7 +81,7 @@ class _Collector:
     def __init__(self) -> None:
         self.events: list[dict] = []
 
-    async def publish(self, event: dict) -> None:
+    async def publish(self, event: dict, replay: bool = True) -> None:
         self.events.append(event)
 
     async def close(self) -> None:
@@ -168,9 +170,9 @@ async def _do_rerun(run_id: int) -> None:
             tactic_b=tactic_b,
             style_a=style_a,
             style_b=style_b,
-            build_discuss=builders["discuss"],
+            build_pair_judge=builders["discuss"],
             build_deduce=builders["deduce"],
-            build_transcribe=builders["transcribe"],
+            build_transcribe_side=builders["transcribe"],
             build_validate=builders["validate"],
             build_repair=builders["repair"],
             opening=opening,

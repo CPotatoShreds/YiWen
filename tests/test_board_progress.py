@@ -6,11 +6,12 @@
 被挑战次数。
 
 打桩方式与 test_seven_features.py 一致：conftest 全局打桩 usage/validate/discuss/理解，
-推演（_build_deduce_llm）与转写（_build_transcribe_chain）、猜词配对/检定
+推演（_build_deduce_llm）与转写（_build_transcribe_side_chain）、猜词配对/检定
 （_build_pair/verify_llm）在此按测试作用域打桩。直连库用 psycopg（同 test_admin.py）。
 """
 
 import os
+import re
 import time
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -44,7 +45,11 @@ def _transcribe(nar_a: str, nar_b: str):
     chain = MagicMock()
 
     async def _ainvoke(kwargs):
-        return {"narration_a": nar_a, "narration_b": nar_b}
+        m_a = re.search(r"发起方奇人：([^\n【】]+)", kwargs.get("info", ""))
+        m_b = re.search(r"对手奇人：([^\n【】]+)", kwargs.get("info", ""))
+        name_a = (m_a.group(1).strip() if m_a else "") or "甲"
+        name_b = (m_b.group(1).strip() if m_b else "") or "乙"
+        return nar_a if kwargs.get("viewer_name") == name_a else nar_b
 
     chain.ainvoke = AsyncMock(side_effect=_ainvoke)
     return chain
@@ -143,7 +148,7 @@ def _challenge(client, entry_id, h_challenger, loadout_id, god_text, usage_indic
     """点将挑战（打桩推演/转写/可选 usage 子集），等待落定后返回行迹 dict。"""
     patches = [
         patch("app.services.battle._build_deduce_llm", return_value=_deduce(god_text)),
-        patch("app.services.battle._build_transcribe_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
     ]
     if usage_indices is not None:
         from app.services.nodes.usage_judge import UsedAbilities
