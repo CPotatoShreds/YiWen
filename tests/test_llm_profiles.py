@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.deduction import DeductionResult
+from app.services.battle.deduction import DeductionResult
 
 
 def _encrypt_transit(plain: str) -> str:
@@ -17,7 +17,7 @@ def _encrypt_transit(plain: str) -> str:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import padding
 
-    from app.services import profile_crypto
+    from app.services.llm import profile_crypto
 
     pub = serialization.load_pem_public_key(profile_crypto.get_public_key_pem().encode())
     return base64.b64encode(pub.encrypt(plain.encode(), padding.PKCS1v15())).decode()
@@ -190,7 +190,7 @@ def test_test_endpoint_hits_real_inference():
 
 def test_build_chat_model_override():
     """build_chat_model 用 llm_config 覆盖 api_key/base_url/model；空字段/未配回退 env 默认。"""
-    from app.services import llm
+    from app.services.llm import client as llm
 
     s = llm.get_settings()
     with patch.object(llm, "ChatOpenAI", return_value="client") as mock:
@@ -215,8 +215,8 @@ def test_build_chat_model_override():
 
 
 def test_profile_to_llm_config():
-    from app.services import profile_crypto
-    from app.services.llm import profile_to_llm_config
+    from app.services.llm import profile_crypto
+    from app.services.llm.client import profile_to_llm_config
 
     assert profile_to_llm_config(None) is None
 
@@ -236,7 +236,7 @@ def test_api_key_encrypted_at_rest():
 
     from app.db.base import async_session_factory
     from app.models.llm_profile import LlmProfile
-    from app.services import profile_crypto
+    from app.services.llm import profile_crypto
 
     async def _stored_key(profile_id: int) -> str:
         async with async_session_factory() as session:
@@ -311,8 +311,8 @@ def test_battle_uses_challenger_active_profile():
         assert p["is_active"] is True
 
         with (
-            patch("app.services.battle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             assert r.status_code == 200
@@ -339,8 +339,8 @@ def test_battle_falls_back_when_no_profile():
         user_a_id = client.get("/api/auth/me", headers=h_a).json()["id"]
 
         with (
-            patch("app.services.battle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             assert r.status_code == 200

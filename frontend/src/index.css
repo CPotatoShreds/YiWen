@@ -654,10 +654,17 @@ select.input { appearance: auto; }
 }
 .guess-feed li::before { content: "·"; color: var(--accent); font-weight: 700; margin-right: 6px; }
 .guess-feed__verdict { font-weight: 700; color: var(--accent-strong); }
+.guess-feedback { margin: 8px 0 0; color: var(--ink); font-size: 13px; }
 .guess-tab__meta { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
 .guess-tab .guess-board { margin-top: 12px; }
 .guess-card__name { font-family: var(--font-display); font-weight: 800; font-size: 15px; }
 .guess-card__effect { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.guess-card__clues { margin-top: 2px; padding-top: 9px; border-top: 1px solid var(--line); }
+.guess-card__clues ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.guess-card__clues li { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.5; }
+.guess-card__clue-text { min-width: 0; overflow-wrap: anywhere; }
+.guess-card__clue-verdict { white-space: nowrap; }
+.guess-card__clue-verdict--yes { color: var(--accent-strong); }
 
 .chip {
   display: inline-flex;

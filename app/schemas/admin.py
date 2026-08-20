@@ -69,6 +69,7 @@ class AdminBattleOut(BaseModel):
     guess_hit: bool | None = None
     guess_score: float | None = None
     guess_history: list[str] = []
+    guess_comments: list[list[GuessCommentaryGroup]] = []
     guess_total: int = 0
     guess_cards: list[dict] | None = None
     guess_attempts_used: int = 0

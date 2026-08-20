@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 
 USAGE_JUDGE_PROMPT = """你是异能对战的说书人裁断。摆场已落幕，你需要在上帝视角叙述中确认：赢家装配的奇术里，哪些**实际使用过**。
 

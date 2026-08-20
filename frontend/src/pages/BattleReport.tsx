@@ -3,10 +3,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useAuth } from "../auth";
 import MatchCard from "../components/MatchCard";
+import { GuessClueCards } from "../components/GuessClueCards";
 import { CheckIcon, ClockIcon, EyeIcon, LockIcon, RefreshIcon, SwordIcon, TargetIcon, TrophyIcon, XIcon } from "../components/icons";
 import { Brush } from "../components/Ornaments";
 import { streamEvents } from "../sse";
-import type { Battle, GuessCard, GuessCommentaryGroup } from "../types";
+import type { Battle, GuessCommentaryGroup } from "../types";
 
 // SSE 重连退避参数：3s → 6s → 12s → … → 上限 30s，最多 10 次（耗尽显示「连接中断」手动续接）
 const RETRY_BASE = 3000;
@@ -71,56 +72,19 @@ function AbilityList({ title, list, me }: { title: string; list?: AbilityLite[];
 
 // 猜词空白卡片网格：看破揭示；未看破仅标记（不展示检定缺口——避免服务端提示词给额外线索）。
 // 败方视角的缺口由服务端按身份下发；赢家同样可见（双方看到的卡片数据一致）。
-function GuessBoard({ cards }: { cards: GuessCard[] }) {
-  return (
-    <div className="guess-board" style={{ marginBottom: 14 }}>
-      {cards.map((card) => (
-        <div key={card.index} className={`guess-card ${card.cracked ? "guess-card--cracked" : ""}`}>
-          <div className="guess-card__head">
-            <span className="guess-card__no">第 {card.index} 门</span>
-            {card.cracked ? (
-              <span className="guess-card__label guess-card__label--hit">
-                <CheckIcon size={13} /> 已看破
-              </span>
-            ) : (
-              <span className="guess-card__label">
-                <LockIcon size={13} /> 未知奇术
-              </span>
-            )}
-          </div>
-          {card.cracked ? (
-            <div>
-              <div className="guess-card__name">{card.name}</div>
-              <p className="guess-card__effect">{card.effect}</p>
-            </div>
-          ) : (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              尚未看破
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// 猜测与点评流：败方逐次道出的猜测 + 逐门原子点评成对展示（败方看自己的，赢家看对家的——交互感拉满）。
-// 点评原子按当前未看破卡分组（已看破的门不再回看其点评）；旧版整轮点评（index=0）原样展示。
+// 猜测流展示逐次道出的原文；可归属到具体奇术的点评已聚合到卡片，旧版整轮点评（index=0）仍在这里展示。
 function GuessFeed({
   guesses,
   comments,
-  cards,
 }: {
   guesses: string[];
   comments?: GuessCommentaryGroup[][];
-  cards?: GuessCard[];
 }) {
   if (!guesses.length) return null;
-  const uncracked = new Set((cards ?? []).filter((c) => !c.cracked).map((c) => c.index));
   return (
     <ul className="guess-feed" style={{ marginBottom: 12 }}>
       {guesses.map((t, i) => {
-        const groups = (comments?.[i] ?? []).filter((g) => g.index === 0 || uncracked.has(g.index));
+        const groups = (comments?.[i] ?? []).filter((g) => g.index === 0);
         return (
           <li key={i}>
             <div>{t}</div>
@@ -177,6 +141,7 @@ export default function BattleReport() {
   const [guessText, setGuessText] = useState("");
   const [guessing, setGuessing] = useState(false);
   const [verifying, setVerifying] = useState(false); // 检定进行中：锁输入，轮询判定落定
+  const [guessFeedback, setGuessFeedback] = useState("");
   const [roundPoll, setRoundPoll] = useState(0); // 猜词轮询序号：递增即启动/重启一轮（500ms 轮询等判定落定）
   const [liveNarration, setLiveNarration] = useState(""); // 本侧流式转写（逐字上屏，segment 定稿后替换）
   const [liveGod, setLiveGod] = useState(""); // 看破者：上帝正文逐字流
@@ -191,6 +156,8 @@ export default function BattleReport() {
   const stageRef = useRef<Stage>("unknown"); // 进度单调游标：到「胜负已分」后不回退（重连快照会把旧阶段再重播一遍）
   const settledRef = useRef(false); // 已收 done/error → 不再重连保活，等 reload 拉完整话本
   const roundSnapshotRef = useRef(0); // 猜词轮询起始时 my_guess.attempts_used（增量即一轮完成）
+  const roundKindRef = useRef<"guess" | "verify">("guess");
+  const verifyCrackedBeforeRef = useRef(0);
   const prevIdRef = useRef(id); // 上次加载的战场 id：切战场才清流式状态（StrictMode 双挂载/同 id 重访时不闪断已铺陈的内容）
 
   // 首次加载（推演中状态由下方流式 effect 接管；流失败时回退轮询刷新）
@@ -293,10 +260,27 @@ export default function BattleReport() {
     let timer: number | undefined;
     const startedAt = Date.now();
     const finish = (d?: Battle, msg?: string) => {
-      if (d) setB(d);
+      if (d) {
+        if (roundKindRef.current === "verify" && d.my_guess) {
+          const cracked = d.my_guess.cards?.filter((card) => card.cracked).length ?? 0;
+          const total = d.my_guess.total ?? 0;
+          const delta = cracked - verifyCrackedBeforeRef.current;
+          setGuessFeedback(
+            cracked >= total && total > 0
+              ? "已看破全部奇术"
+              : delta > 0
+                ? `本次检定看破了 ${delta} 门奇术`
+                : "本次检定未能看破任何奇术",
+          );
+        }
+        setB(d);
+      }
       setGuessing(false);
       setVerifying(false);
-      if (msg) setErr(msg);
+      if (msg) {
+        setGuessFeedback("");
+        setErr(msg);
+      }
     };
     const tick = async () => {
       if (!alive) return;
@@ -358,7 +342,8 @@ export default function BattleReport() {
   }, [b?.id, b?.status, b?.can_guess, b?.my_guess?.total]);
 
   // 启动一轮猜词轮询：以提交时的 attempts_used 为基线，轮询到增量判一轮完成
-  const startGuessPoll = () => {
+  const startGuessPoll = (kind: "guess" | "verify" = "guess") => {
+    roundKindRef.current = kind;
     roundSnapshotRef.current = b?.my_guess?.attempts_used ?? 0;
     setRoundPoll((n) => n + 1);
   };
@@ -368,6 +353,7 @@ export default function BattleReport() {
     setConfirmGiveUp(false);
     setGuessing(true);
     setErr("");
+    setGuessFeedback("");
     try {
       // 后端只做同步校验+受理（202），LLM 点评在后台任务跑，前端 500ms 轮询等判定落库
       await api<Battle>(`/battles/${id}/guess`, {
@@ -391,17 +377,19 @@ export default function BattleReport() {
   // 检定：根据此前全部猜测与点评，验证各门奇术看破与否（未看破 → 指还缺什么 / 看破 → 揭示该门）
   async function verifyGuess() {
     setErr("");
+    setGuessFeedback("");
+    verifyCrackedBeforeRef.current = b?.my_guess?.cards?.filter((card) => card.cracked).length ?? 0;
     setVerifying(true);
     try {
       await api<Battle>(`/battles/${id}/guess/verify`, {
         method: "POST",
         timeout: 10000,
       });
-      startGuessPoll();
+      startGuessPoll("verify");
     } catch (e: any) {
       if (e instanceof ApiError && e.status === 409) {
         // 上一轮点评/检定仍在途：静默进入轮询，等它落定
-        startGuessPoll();
+        startGuessPoll("verify");
         return;
       }
       setErr(e.message);
@@ -441,6 +429,7 @@ export default function BattleReport() {
     setConfirmGiveUp(false);
     setGuessing(true);
     setErr("");
+    setGuessFeedback("");
     try {
       const d = await api<Battle>(`/battles/${id}/give-up`, { method: "POST" });
       setB(d);
@@ -716,8 +705,8 @@ export default function BattleReport() {
                   每次猜测都会得到一段点评；是否看破由你主动发起「检定」来验证，检定会指出还缺什么或直接看破。
                 </p>
 
-                <GuessFeed guesses={myGuess.history} comments={myGuess.comments} cards={myGuess.cards ?? []} />
-                <GuessBoard cards={myGuess.cards ?? []} />
+                <GuessFeed guesses={myGuess.history} comments={myGuess.comments} />
+                <GuessClueCards cards={myGuess.cards ?? []} comments={myGuess.comments} />
 
                 {b.can_guess ? (
                   <>
@@ -771,6 +760,7 @@ export default function BattleReport() {
                     {myGuess.flipped ? "你已看破全部奇术，胜负逆转。" : "你已收手或机会用尽，未能尽数看破。"}
                   </p>
                 )}
+                {guessFeedback && <p className="guess-feedback" role="status">{guessFeedback}</p>}
                 {err && <p className="err">{err}</p>}
               </div>
             )}
@@ -785,8 +775,8 @@ export default function BattleReport() {
                     ? `对家道尽猜测：看破 ${oppCracked} / ${oppGuess.total} 门。${oppGuess.flipped ? "全破逆转，胜负改写！" : "未能全破。"}`
                     : `对家正逐次道出猜测，看破你的奇术即揭示该门。已看破 ${oppCracked} / ${oppGuess.total} 门。`}
                 </p>
-                <GuessFeed guesses={oppGuess.history} comments={oppGuess.comments} cards={oppGuess.cards ?? []} />
-                <GuessBoard cards={oppGuess.cards ?? []} />
+                <GuessFeed guesses={oppGuess.history} comments={oppGuess.comments} />
+                <GuessClueCards cards={oppGuess.cards ?? []} comments={oppGuess.comments} />
               </div>
             )}
           </div>

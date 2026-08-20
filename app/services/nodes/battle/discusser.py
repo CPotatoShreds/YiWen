@@ -11,7 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 from app.services.nodes._override import with_system_override
 
 DISCUSS_SYSTEM_PROMPT = """你是一名严谨公正的论战分析师，负责在战斗推演之前，对两名能力者的异能与战术做全面的理论与实战分析。

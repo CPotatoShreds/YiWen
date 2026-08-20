@@ -61,7 +61,7 @@ export interface Loadout {
 // 一条原子判定：对用户猜测中一个原子片段的四态点评（服务端已剥离内部 reason）
 export interface GuessCommentaryItem {
   text: string; // 被单独判定的原子片段（忠实引用用户原文）
-  verdict: string; // 四态之一：是 / 否 / 半对 / 不能确定
+  verdict: string; // 四态之一：是 / 否 / 部分是 / 不能确定
 }
 
 // 一个点评回合对单门的原子判定组（index = 卡序号+1；旧版整轮点评 index=0）

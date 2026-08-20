@@ -28,13 +28,13 @@ from app.models.llm_profile import LlmProfile
 from app.models.llm_trace import LlmTrace
 from app.models.prompt_debug import PromptDebugRun, PromptScheme
 from app.models.user import User
-from app.services.battle import _resolve_loadout_inputs
-from app.services.deduction import run_deduction
-from app.services.llm import profile_to_llm_config
-from app.services.nodes.ability_pairs import build_pair_judge_chain
-from app.services.nodes.deducer import build_deduce_chain
-from app.services.nodes.transcribe_validator import build_repair_chain, build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_side_chain
+from app.services.battle.lifecycle import _resolve_loadout_inputs
+from app.services.battle.deduction import run_deduction
+from app.services.llm.client import profile_to_llm_config
+from app.services.nodes.ability.pair_judge import build_pair_judge_chain
+from app.services.nodes.battle.deducer import build_deduce_chain
+from app.services.nodes.battle.transcribe_validator import build_repair_chain, build_validate_chain
+from app.services.nodes.battle.transcriber import build_transcribe_side_chain
 
 logger = get_logger("prompt_debug")
 
@@ -211,12 +211,11 @@ def _seed_schemes() -> list[PromptScheme]:
     return [
         PromptScheme(name="原版", description="各环节全部使用冻结默认提示词（基准对照）"),
         PromptScheme(
-            name="简洁讨论",
-            description="实验变体：讨论环节换用精简系统指令（覆盖 discuss_prompt）",
+            name="简洁奇术比对",
+            description="实验变体：奇术比对环节换用精简系统指令（覆盖 discuss_prompt）",
             discuss_prompt=(
-                "你是一名严谨的论战分析师。对战双方是记录在异闻录中的奇人，各自持有奇术，"
-                "被各自的异闻师派出对决。请逐一分析双方奇术在实战中的碰撞：谁使用某个能力时，"
-                "对方会如何应对、会发生什么，聚焦能力效果本身与相互克制。只输出分析报告正文。"
+                "你是一名严谨的奇术比对分析师。只比较输入的两门奇术，按三相共鸣理论判断是否"
+                "存在直接冲突，并必须分出一门占优奇术。不得使用 A/B 代称，不得判定平局。"
             ),
         ),
         PromptScheme(

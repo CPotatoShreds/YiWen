@@ -21,18 +21,18 @@ from app.core.logger import get_logger
 from app.db.base import async_session_factory
 from app.models.ability import Ability
 from app.models.test_battle import TestBattle, TestBattleGuess, TestUser
-from app.services import economy
-from app.services.deduction import run_deduction
-from app.services.guess import GUESS_ATTEMPTS_MAX, run_guess_commentary, run_guess_verification
-from app.services.nodes.ability_pairs import build_pair_judge_chain
-from app.services.nodes.discusser import build_discuss_llm
-from app.services.nodes.guess_matcher import build_guess_commentary_llm, build_guess_verify_llm
-from app.services.nodes.usage_judge import USAGE_TEMPLATE, build_usage_llm
-from app.services.reliability import ainvoke_with_reliability
+from app.services.battle import economy
+from app.services.battle.deduction import run_deduction
+from app.services.guess.pipeline import GUESS_ATTEMPTS_MAX, run_guess_commentary, run_guess_verification
+from app.services.nodes.ability.pair_judge import build_pair_judge_chain
+from app.services.nodes.battle.discusser import build_discuss_llm
+from app.services.nodes.guess.matcher import build_guess_commentary_llm, build_guess_verify_llm
+from app.services.nodes.battle.usage_judge import USAGE_TEMPLATE, build_usage_llm
+from app.services.llm.reliability import ainvoke_with_reliability
 
 logger = get_logger("test_battle")
 
-# 猜词规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess 统一维护
+# 猜词规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess.pipeline 统一维护
 
 class _EventCollector:
     """本地 SSE 事件收集器：run_deduction 只 publish 到这里，不触碰全局事件总线。"""
@@ -96,7 +96,7 @@ async def generate_test_discuss_report(
 
     讨论失败抛异常，由路由转成可读错误（报告是主动操作，失败要显式告知，不做静默降级）。
     """
-    from app.services.deduction import _combat_info
+    from app.services.battle.deduction import _combat_info
 
     info = _combat_info(
         fighter_a, fighter_b, abilities_a, abilities_b,

@@ -20,8 +20,8 @@ from app.models.ability import Ability
 from app.models.llm_profile import LlmProfile
 from app.models.user import User
 from app.models.user_ability import UserAbility
-from app.services.llm import build_chat_model, profile_to_llm_config
-from app.services.reliability import ainvoke_with_reliability
+from app.services.llm.client import build_chat_model, profile_to_llm_config
+from app.services.llm.reliability import ainvoke_with_reliability
 
 
 class Phase(BaseModel):

@@ -53,6 +53,10 @@ desktop.ini
 
 # Claude Code 本地配置（impeccable skill 与 hooks）
 .claude/
+.agents/
+
+# 本地包管理器缓存
+.pnpm-store/
 
 # Docker 部署
 *.tar

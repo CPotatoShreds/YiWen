@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import Markdown from "../../components/Markdown";
+import { GuessClueCards } from "../../components/GuessClueCards";
 import {
-  CheckIcon,
   EyeIcon,
-  LockIcon,
   PlusIcon,
   TrashIcon,
   XIcon,
@@ -20,39 +19,6 @@ import type { GuessCommentaryGroup } from "../../types";
 import { StoryView, TracePanel } from "./chainViews";
 
 const statusLabel = (s: string) => (s === "pending" ? "推演中" : s === "failed" ? "失手" : "已落成");
-
-function GuessBoard({ cards }: { cards: TestGuessCard[] }) {
-  return (
-    <div className="guess-board" style={{ marginBottom: 14 }}>
-      {cards.map((card) => (
-        <div key={card.index} className={`guess-card ${card.cracked ? "guess-card--cracked" : ""}`}>
-          <div className="guess-card__head">
-            <span className="guess-card__no">第 {card.index} 门</span>
-            {card.cracked ? (
-              <span className="guess-card__label guess-card__label--hit">
-                <CheckIcon size={13} /> 已看破
-              </span>
-            ) : (
-              <span className="guess-card__label">
-                <LockIcon size={13} /> 未知奇术
-              </span>
-            )}
-          </div>
-          {card.cracked ? (
-            <div>
-              <div className="guess-card__name">{card.name}</div>
-              <p className="guess-card__effect">{card.effect}</p>
-            </div>
-          ) : (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              尚未看破
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 /**
  * 猜词矩阵：按轮展示「猜测 + 逐门原子点评」；列 = 对家奇术。
@@ -75,15 +41,16 @@ function GuessMatrix({
     <div className="guess-matrices">
       {Array.from({ length: rounds }, (_, i) => i + 1).map((r) => {
         const groups = comments[r - 1] ?? [];
+        const legacyGroups = groups.filter((g) => g.index === 0);
         return (
           <div className="guess-matrix" key={r}>
             <div className="guess-matrix__head">
               <b>第 {r} 次猜测</b>
             </div>
             <p style={{ fontSize: 13, marginBottom: 4 }}>{history[r - 1]}</p>
-            {groups.length > 0 && (
+            {legacyGroups.length > 0 && (
               <div style={{ fontSize: 13, marginBottom: 8, opacity: 0.85 }}>
-                {groups.map((g) => (
+                {legacyGroups.map((g) => (
                   <div key={g.index} style={{ marginTop: 2 }}>
                     {g.index > 0 && <span style={{ fontWeight: 700 }}>第 {g.index} 门：</span>}
                     {g.items.map((it, j) => (
@@ -161,6 +128,7 @@ export default function TestArena() {
   // 猜词
   const [guessText, setGuessText] = useState("");
   const [verifying, setVerifying] = useState(false);
+  const [guessFeedback, setGuessFeedback] = useState("");
   // 详情弹窗板块：对决 / 猜词
   const [detailTab, setDetailTab] = useState<"battle" | "guess">("battle");
 
@@ -311,12 +279,14 @@ export default function TestArena() {
   function openDetail(b: TestBattle, tab: "battle" | "guess") {
     setDetailTab(tab);
     setSelected(b);
+    setGuessFeedback("");
   }
 
   async function submitGuess() {
     if (!selected) return;
     setBusy(true);
     setErr("");
+    setGuessFeedback("");
     try {
       await api(`/admin/test/battles/${selected.id}/guess`, {
         method: "POST",
@@ -336,8 +306,19 @@ export default function TestArena() {
     if (!selected) return;
     setVerifying(true);
     setErr("");
+    setGuessFeedback("");
     try {
-      await api(`/admin/test/battles/${selected.id}/guess/verify`, { method: "POST" });
+      const before = crackedCount(selected);
+      const result = await api<TestBattle>(`/admin/test/battles/${selected.id}/guess/verify`, { method: "POST" });
+      const after = crackedCount(result);
+      const delta = after - before;
+      setGuessFeedback(
+        after >= result.guess_total && result.guess_total > 0
+          ? "已看破全部奇术"
+          : delta > 0
+            ? `本次检定看破了 ${delta} 门奇术`
+            : "本次检定未能看破任何奇术",
+      );
       await refreshDetail(selected.id);
     } catch (e: any) {
       setErr(e.message);
@@ -550,7 +531,7 @@ export default function TestArena() {
                 </p>
                 {selected.guess_total > 0 && (
                   <>
-                    <GuessBoard cards={selected.guess_cards ?? []} />
+                    <GuessClueCards cards={selected.guess_cards ?? []} comments={selected.comments} />
                     <GuessMatrix
                       cards={selected.guess_cards ?? []}
                       history={selected.guess_history}
@@ -572,6 +553,7 @@ export default function TestArena() {
                     ) : (
                       <p className="muted">已 {selected.guess_hit ? "看破逆转" : "揭示"}：{selected.guess_hit ? "全部命中，胜负改写" : `未全破，已用 ${selected.guess_attempts_used} 次`}。</p>
                     )}
+                    {guessFeedback && <p className="guess-feedback" role="status">{guessFeedback}</p>}
                   </>
                 )}
               </>

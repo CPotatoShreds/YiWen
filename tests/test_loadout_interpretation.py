@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from app.db.base import async_session_factory
 from app.main import app
 from app.models.loadout import Loadout
-from app.services.loadout_interpretation import LoadoutInterpretation, ensure_loadout_interpretation
+from app.services.loadouts.interpretation import LoadoutInterpretation, ensure_loadout_interpretation
 
 
 def _mk(client, prefix="testli") -> str:
@@ -47,7 +47,7 @@ def test_interpretation_corrects_and_caches():
         h = {"Authorization": f"Bearer {tok}"}
         aid = client.post("/api/abilities", json={"name": "索命咒", "effect": "命中即死"}, headers=h).json()["id"]
         chain = _stub_interpretation("远程压制流", "保持距离，远程消耗")
-        with patch("app.services.loadout_interpretation.build_interpretation_chain", return_value=chain):
+        with patch("app.services.loadouts.interpretation.build_interpretation_chain", return_value=chain):
             # 整段置于 override 内：POST 建奇人触发的后台解读任务也走同一桩，避免竞态回写空文本
             lid = client.post(
                 "/api/loadouts",
@@ -83,7 +83,7 @@ def test_ensure_clears_when_no_style_tactic():
 
         asyncio.run(_dirty())
         chain = MagicMock()
-        with patch("app.services.loadout_interpretation.build_interpretation_chain", return_value=chain):
+        with patch("app.services.loadouts.interpretation.build_interpretation_chain", return_value=chain):
             asyncio.run(ensure_loadout_interpretation(lid))
             assert chain.ainvoke.call_count == 0  # 未调用 LLM
             style_i, tactic_i = asyncio.run(_read_interpretation(lid))
@@ -92,7 +92,7 @@ def test_ensure_clears_when_no_style_tactic():
 
 def test_combat_info_uses_interpretation_fallback():
     """_combat_info：解读非空用解读；解读为空回退原文；风格进上下文（空则（未设定））。"""
-    from app.services.deduction import _combat_info
+    from app.services.battle.deduction import _combat_info
 
     abs_a = [_ability("索命咒", "命中即死")]
     abs_b = [_ability("镜面反射", "反射攻击")]
@@ -119,7 +119,7 @@ def test_update_loadout_schedules_interpretation():
         h = {"Authorization": f"Bearer {tok}"}
         lid = client.post("/api/loadouts", json={"name": "青锋"}, headers=h).json()["id"]
         chain = _stub_interpretation("远程压制流", "保持距离，远程消耗")
-        with patch("app.services.loadout_interpretation.build_interpretation_chain", return_value=chain):
+        with patch("app.services.loadouts.interpretation.build_interpretation_chain", return_value=chain):
             r = client.put(f"/api/loadouts/{lid}", json={"tactic": "保持距离，火球消耗"}, headers=h)
             assert r.status_code == 200
             style_i = tactic_i = None

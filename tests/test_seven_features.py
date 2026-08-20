@@ -13,7 +13,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
+from app.services.nodes.guess.matcher import CommentaryItem, CommentaryRound, Verification
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
@@ -123,9 +123,9 @@ def _mk_draw_battle(client, h_a, h_b):
     name_b = client.get("/api/auth/me", headers=h_b).json()["username"]
     user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
     with (
-        patch("app.services.battle._build_deduce_llm", return_value=_deduce("双方僵持周旋，谁也没有彻底失去作战能力。平局")),
-        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-        patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+        patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce("双方僵持周旋，谁也没有彻底失去作战能力。平局")),
+        patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
     ):
         r = client.post("/api/battles", headers=h_a)
         b = _wait_done(client, r.json()["id"], h_a)
@@ -175,8 +175,8 @@ def test_board_put_on_list_challenge_take_off():
 
         # B 点将挑战 A 的刻印 → 切磋局（friendly、不计名望）
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         ):
             rc = client.post(f"/api/board/{eid}/challenge", json={"loadout_id": ld_b["id"]}, headers=h_b)
             assert rc.status_code == 200
@@ -214,9 +214,9 @@ def test_no_repeat_matchmaking_avoids_repeat_pair():
 
         # 第一场：A×B（具体配对 LA1×LB1）
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             first = _wait_done(client, r.json()["id"], h_a)
@@ -227,9 +227,9 @@ def test_no_repeat_matchmaking_avoids_repeat_pair():
             raise AssertionError("no_repeat 不应兜底普通随机")
 
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(side_effect=_fail)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(side_effect=_fail)),
         ):
             r2 = client.post("/api/battles", json={"no_repeat": True}, headers=h_a)
             assert r2.status_code == 200
@@ -255,9 +255,9 @@ def test_rematch_copies_snapshot_and_guess_state():
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
 
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             orig = _wait_done(client, r.json()["id"], h_b)
@@ -266,8 +266,8 @@ def test_rematch_copies_snapshot_and_guess_state():
         # B 猜一次（仅点评，未看破，不设次数上限）→ 进度留待再战带入
         commentary, verify = _guess_pipeline()
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{orig['id']}/guess", h_b, text="控制重力")
             assert g.status_code == 202
@@ -279,8 +279,8 @@ def test_rematch_copies_snapshot_and_guess_state():
 
         # A 发起再战
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
         ):
             rm = client.post(f"/api/battles/{orig['id']}/rematch", headers=h_a)
             assert rm.status_code == 200
@@ -326,8 +326,8 @@ def test_draw_guess_one_crack_wins_and_rank_recalc():
             lambda text: Verification(cracked=True, missing="") if "血咒" in text else Verification(cracked=False, missing="")
         )
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_a, text="以血引咒反噬")
             assert g.status_code == 202
@@ -363,8 +363,8 @@ def test_draw_guess_both_crack_keeps_draw():
             lambda text: Verification(cracked=True, missing="") if "血咒" in text else Verification(cracked=False, missing="")
         )
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary_a),
-            patch("app.services.battle._build_verify_llm", return_value=verify_a),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary_a),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify_a),
         ):
             assert _post_guess(client, f"/api/battles/{b['id']}/guess", h_a, text="血咒").status_code == 202
             _wait_guess(client, b["id"], h_a, attempts_before=0)
@@ -376,8 +376,8 @@ def test_draw_guess_both_crack_keeps_draw():
             lambda text: Verification(cracked=True, missing="") if "影刃" in text else Verification(cracked=False, missing="")
         )
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary_b),
-            patch("app.services.battle._build_verify_llm", return_value=verify_b),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary_b),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify_b),
         ):
             assert _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="影刃").status_code == 202
             _wait_guess(client, b["id"], h_b, attempts_before=0)

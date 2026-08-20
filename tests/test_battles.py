@@ -11,12 +11,40 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
-from app.services.nodes.usage_judge import UsedAbilities
+from app.services.guess.pipeline import run_guess_commentary, strip_commentary_reason
+from app.services.nodes.guess.matcher import CommentaryItem, CommentaryRound, Verification
+from app.services.nodes.battle.usage_judge import UsedAbilities
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
 NAR_B = "B 视角叙述：乙措手不及，被一击击倒。"
+
+
+def test_guess_commentary_uses_partial_is_and_normalizes_legacy_value():
+    assert CommentaryItem(text="方向相关", verdict="部分是").verdict == "部分是"
+    assert strip_commentary_reason(
+        [[{"index": 1, "items": [{"text": "方向相关", "verdict": "半对", "reason": "旧存档"}]}]]
+    ) == [[{"index": 1, "items": [{"text": "方向相关", "verdict": "部分是"}]}]]
+
+
+def test_guess_commentary_fills_empty_successful_response():
+    """模型成功但没有原子项时，每张卡仍须获得不可确定的完整猜测反馈。"""
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(return_value=CommentaryRound(items=[]))
+
+    groups = asyncio.run(
+        run_guess_commentary(
+            text="这门能力可以操控重力",
+            abilities=[{"name": "甲术", "effect": "甲方效果"}, {"name": "乙术", "effect": "乙方效果"}],
+            cards=[{"cracked": False}, {"cracked": False}],
+            build_commentary=lambda **_: chain,
+        )
+    )
+
+    assert groups == [
+        {"index": 1, "items": [{"text": "这门能力可以操控重力", "verdict": "不能确定", "reason": "模型未返回原子判定。"}]},
+        {"index": 2, "items": [{"text": "这门能力可以操控重力", "verdict": "不能确定", "reason": "模型未返回原子判定。"}]},
+    ]
 
 
 def _deduce(text):
@@ -203,10 +231,10 @@ def test_battle_flow_and_guess_miss():
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-            patch("app.services.battle.GUESS_ATTEMPTS_MAX", 2),  # 点评 + 检定各一次，未看破即耗尽
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle.GUESS_ATTEMPTS_MAX", 2),  # 点评 + 检定各一次，未看破即耗尽
         ):
             r = client.post("/api/battles", headers=h_a)
             assert r.status_code == 200
@@ -238,8 +266,8 @@ def test_battle_flow_and_guess_miss():
         assert client.put("/api/auth/settings", json={"reveal_on_miss": True}, headers=h_b).status_code == 200
         commentary, verify = _guess_pipeline(lambda text: Verification(cracked=False, missing="还缺限制与发动方式"))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_a, text="控制重力")
             assert g.status_code == 202  # 只受理：LLM 判定在后台任务，轮询等落库
@@ -284,9 +312,9 @@ def test_guess_hit_flips_winner_and_rank():
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)  # 以 B（输家）视角轮询
@@ -299,8 +327,8 @@ def test_guess_hit_flips_winner_and_rank():
         # B 道出猜测（点评）→ 独立发起检定（看破）→ 全破逆转，名望回滚重算
         commentary, verify = _guess_pipeline(lambda text: Verification(cracked=True, missing=""))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
@@ -340,18 +368,18 @@ def test_reveal_on_miss_toggle_hides_ability():
         user_b = client.get("/api/auth/me", headers=h_b).json()
         user_b_id, name_b = user_b["id"], user_b["username"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-            patch("app.services.battle.GUESS_ATTEMPTS_MAX", 2),  # 点评 + 检定各一次，未看破即耗尽
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_b}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle.GUESS_ATTEMPTS_MAX", 2),  # 点评 + 检定各一次，未看破即耗尽
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
 
         commentary, verify = _guess_pipeline(lambda text: Verification(cracked=False, missing="还缺发动方式"))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_a, text="不猜了")
             assert g.status_code == 202
@@ -380,9 +408,9 @@ def test_battle_draw_from_ending():
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         deduce = _deduce("双方僵持周旋，谁也没有彻底失去作战能力。平局")
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
@@ -413,9 +441,9 @@ def test_winner_from_ending():
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         deduce = _deduce(f"战局推进……乙彻底击倒甲。胜者：{name_b}")
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
@@ -440,9 +468,9 @@ def test_share_shows_share_side_perspective():
         user_b = client.get("/api/auth/me", headers=h_b).json()
         user_b_id, name_a = user_b["id"], user_a["username"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
@@ -501,9 +529,9 @@ def test_battle_stream_emits_ordered_segments():
         deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)
         transcribe_llm = _transcribe(NAR_A, NAR_B, delay=0.3)  # 转写慢于推演，留出订阅窗口
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             battle_id = r.json()["id"]
@@ -562,9 +590,9 @@ def test_battle_stream_done_battle_short_circuits():
         )
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             battle_id = r.json()["id"]
@@ -595,9 +623,9 @@ def test_guess_round_polling_contract():
         deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)  # 默认 A 胜 → B 可猜
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             battle_id = r.json()["id"]
@@ -613,8 +641,8 @@ def test_guess_round_polling_contract():
         verify_chain = MagicMock()
         verify_chain.ainvoke = AsyncMock(return_value=Verification(cracked=False, missing=""))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary_chain),
-            patch("app.services.battle._build_verify_llm", return_value=verify_chain),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary_chain),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify_chain),
         ):
             # 未发起前：无在途判定
             assert client.get(f"/api/battles/{battle_id}", headers=h_b).json()["guess_in_flight"] is False
@@ -647,9 +675,9 @@ def test_battle_stream_requires_participant():
         deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             battle_id = r.json()["id"]
@@ -676,9 +704,9 @@ def test_battle_deduce_failure_marks_failed_with_message():
         deduce = MagicMock()
         deduce.ainvoke = AsyncMock(side_effect=TimeoutError("LLM 请求僵死"))  # 恒失败 → 可靠性重试耗尽
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             assert r.status_code == 200
@@ -706,9 +734,9 @@ def test_guess_empty_rejected_400():
         deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)  # 默认 A 胜
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)  # B 败方可猜
@@ -742,10 +770,10 @@ def test_usage_subset_limits_cards():
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-            patch("app.services.battle._build_usage_llm", return_value=_usage_chain([1])),  # 只用第 1 门（雷暴召来）
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_usage_llm", return_value=_usage_chain([1])),  # 只用第 1 门（雷暴召来）
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)  # B 输家视角
@@ -758,8 +786,8 @@ def test_usage_subset_limits_cards():
         # 下不稳定，故只断言名字落在装配的两门之内）
         commentary, verify = _guess_pipeline(lambda text: Verification(cracked=True, missing=""))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
@@ -787,9 +815,9 @@ def test_guess_cracks_card_reveals_ability():
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)  # 使用子集=全部装配（conftest 桩），2 张卡
@@ -805,8 +833,8 @@ def test_guess_cracks_card_reveals_ability():
 
         commentary, verify = _guess_pipeline(verify_fn)
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
@@ -839,18 +867,18 @@ def test_verify_requires_new_commentary():
         deduce_llm, user_b_id = _mk_battle(client, tok_a, tok_b, h_a, h_b)  # 默认 A 胜 → B 可猜
         transcribe_llm = _transcribe(NAR_A, NAR_B)
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=deduce_llm),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=transcribe_llm),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-            patch("app.services.battle.GUESS_ATTEMPTS_MAX", 4),  # 猜/检各两次
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=deduce_llm),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=transcribe_llm),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle.GUESS_ATTEMPTS_MAX", 4),  # 猜/检各两次
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_b)
 
         commentary, verify = _guess_pipeline(lambda text: Verification(cracked=False, missing="还缺限制"))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             # 猜一次 → 点评落库 → 可检定
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="控制重力")
@@ -898,9 +926,9 @@ def test_winner_sees_guesser_progress():
 
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),  # A 胜 → B 是败方/猜词者
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),  # A 胜 → B 是败方/猜词者
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)  # A（赢家）视角
@@ -925,8 +953,8 @@ def test_winner_sees_guesser_progress():
 
         commentary, verify = _guess_pipeline(verify_fn)
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
@@ -967,9 +995,9 @@ def test_same_name_fighters_disambiguated():
         _arm_named(client, tok_b, "林峰")
 
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：林峰（{uname_a}）")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：林峰（{uname_a}）")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)

@@ -15,7 +15,7 @@ from app.models.board import BoardGuessProgress
 from app.models.loadout import Loadout
 from app.models.user import User
 from app.schemas.battle import BattleOut, BattleStartIn, GuessBlock, GuessIn
-from app.services.battle import (
+from app.services.battle.lifecycle import (
     GUESS_ATTEMPTS_MAX,
     _can_verify,
     _guess_inflight,
@@ -23,11 +23,11 @@ from app.services.battle import (
     try_start_guess,
     try_start_verify,
 )
-from app.services.battle import give_up_guess as give_up_guess_service
-from app.services.battle import rematch_battle as rematch_battle_service
-from app.services.battle import start_battle as start_battle_service
-from app.services.battle_stream import _get_stream
-from app.services.guess import strip_commentary_reason
+from app.services.battle.lifecycle import give_up_guess as give_up_guess_service
+from app.services.battle.lifecycle import rematch_battle as rematch_battle_service
+from app.services.battle.lifecycle import start_battle as start_battle_service
+from app.services.battle.stream import _get_stream
+from app.services.guess.pipeline import strip_commentary_reason
 
 router = APIRouter(prefix="/battles", tags=["battles"])
 

@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 from app.services.nodes._override import with_system_override
 
 VALIDATE_SYSTEM_PROMPT = """你是转写质检员。把一段「视角叙述」对照以下要求逐条核对，判定是否**全部满足**：

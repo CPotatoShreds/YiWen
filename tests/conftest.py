@@ -44,11 +44,11 @@ def _no_real_loadout_interpretation_llm():
 
     路由在风格/战术/装配变更时调度该任务；不打桩会触发真实 LLM。空文本对既有测试零影响。
     """
-    from app.services.loadout_interpretation import LoadoutInterpretation
+    from app.services.loadouts.interpretation import LoadoutInterpretation
 
     chain = MagicMock()
     chain.ainvoke = AsyncMock(return_value=LoadoutInterpretation(style="", tactic=""))
-    with patch("app.services.loadout_interpretation.build_interpretation_chain", return_value=chain):
+    with patch("app.services.loadouts.interpretation.build_interpretation_chain", return_value=chain):
         yield
 
 
@@ -59,7 +59,7 @@ def _no_real_ability_understanding_llm():
     创建/更新奇术时路由调度该任务；不打桩会触发真实 LLM。空槽位对既有测试零影响
     （_render_ability 仅在 understanding 非空时才输出「因果槽位」行）。具体行为由测试 override。
     """
-    from app.services.ability_understanding import AbilitySlot, Phase, SlotVerdict
+    from app.services.ability.understanding import AbilitySlot, Phase, SlotVerdict
 
     chain = MagicMock()
     chain.ainvoke = AsyncMock(
@@ -70,7 +70,7 @@ def _no_real_ability_understanding_llm():
             post=Phase(present=False),
         )
     )
-    with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain):
+    with patch("app.services.ability.understanding.build_understanding_chain", return_value=chain):
         yield
 
 
@@ -80,13 +80,13 @@ def _no_real_usage_llm():
 
     结算时每个有败方的对决都会调用该节点；不打桩会触发真实 LLM。具体子集行为由测试自行 override。
     """
-    from app.services.nodes.usage_judge import UsedAbilities
+    from app.services.nodes.battle.usage_judge import UsedAbilities
 
     chain = MagicMock()
     chain.ainvoke = AsyncMock(return_value=UsedAbilities(indices=[]))
     with (
-        patch("app.services.battle._build_usage_llm", return_value=chain),
-        patch("app.services.test_battle.build_usage_llm", return_value=chain),
+        patch("app.services.battle.lifecycle._build_usage_llm", return_value=chain),
+        patch("app.services.admin.test_battle.build_usage_llm", return_value=chain),
     ):
         yield
 
@@ -98,13 +98,20 @@ def _no_real_pair_judge_llm():
     battle.py 的 _build_pair_judge_chain 别名与 test_battle 直接 import 的构建器都要打桩
     （对比节点在 run_deduction 编排内，两入口都会触达）。具体冲突判定行为由测试 override。
     """
-    from app.services.nodes.ability_pairs import PairVerdict
+    from app.services.nodes.ability.pair_judge import PairVerdict
 
     chain = MagicMock()
-    chain.ainvoke = AsyncMock(return_value=PairVerdict(ability_a="", ability_b="", conflict=False))
+    chain.ainvoke = AsyncMock(
+        return_value=PairVerdict(
+            conflict=False,
+            conflict_reason="无直接冲突",
+            stronger_ability="测试奇术",
+            stronger_reason="测试桩固定返回。",
+        )
+    )
     with (
-        patch("app.services.battle._build_pair_judge_chain", return_value=chain),
-        patch("app.services.test_battle.build_pair_judge_chain", return_value=chain),
+        patch("app.services.battle.lifecycle._build_pair_judge_chain", return_value=chain),
+        patch("app.services.admin.test_battle.build_pair_judge_chain", return_value=chain),
     ):
         yield
 
@@ -119,7 +126,7 @@ def _no_real_discuss_llm():
     chain = MagicMock()
     chain.ainvoke = AsyncMock(return_value="")
     with (
-        patch("app.services.test_battle.build_discuss_llm", return_value=chain),
+        patch("app.services.admin.test_battle.build_discuss_llm", return_value=chain),
     ):
         yield
 
@@ -131,15 +138,15 @@ def _no_real_test_arena_guess_nodes():
     test_battle.submit_test_guess 直接 import 节点构造器（不走 battle 层别名），需单独打桩。
     具体行为由测试自行 override。
     """
-    from app.services.nodes.guess_matcher import CommentaryRound, Verification
+    from app.services.nodes.guess.matcher import CommentaryRound, Verification
 
     commentary_chain = MagicMock()
     commentary_chain.ainvoke = AsyncMock(return_value=CommentaryRound(items=[]))
     verify_chain = MagicMock()
     verify_chain.ainvoke = AsyncMock(return_value=Verification(cracked=False, missing=""))
     with (
-        patch("app.services.test_battle.build_guess_commentary_llm", return_value=commentary_chain),
-        patch("app.services.test_battle.build_guess_verify_llm", return_value=verify_chain),
+        patch("app.services.admin.test_battle.build_guess_commentary_llm", return_value=commentary_chain),
+        patch("app.services.admin.test_battle.build_guess_verify_llm", return_value=verify_chain),
     ):
         yield
 
@@ -150,15 +157,15 @@ def _no_real_transcribe_validation():
 
     结算链路转写后必走校验节点；不打桩会触发真实 LLM。具体违规判定/修复行为由测试自行 override。
     """
-    from app.services.nodes.transcribe_validator import TranscribeVerdict
+    from app.services.nodes.battle.transcribe_validator import TranscribeVerdict
 
     validate_chain = MagicMock()
     validate_chain.ainvoke = AsyncMock(return_value=TranscribeVerdict(passes=True))
     repair_chain = MagicMock()
     repair_chain.ainvoke = AsyncMock(return_value="")
     with (
-        patch("app.services.battle._build_validate_chain", return_value=validate_chain),
-        patch("app.services.battle._build_repair_chain", return_value=repair_chain),
+        patch("app.services.battle.lifecycle._build_validate_chain", return_value=validate_chain),
+        patch("app.services.battle.lifecycle._build_repair_chain", return_value=repair_chain),
     ):
         yield
 

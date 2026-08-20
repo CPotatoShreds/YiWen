@@ -90,6 +90,7 @@ export interface AdminBattle {
   guess_hit: boolean | null;
   guess_score: number | null;
   guess_history: string[];
+  guess_comments: GuessCommentaryGroup[][];
   guess_total: number;
   guess_cards: AdminGuessCard[] | null;
   guess_attempts_used: number;

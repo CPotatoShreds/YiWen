@@ -18,7 +18,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 
 DESCRIBE_PROMPT = """你是异能设定分析师。给定一条奇术的完整设定，用**一句简洁清晰的话**描述该能力的主要内容：核心机制、发动条件、效果与关键限制。表述严谨、精炼，使用书面语，不要口语化、不要大白话、不要寒暄铺垫。不评价强弱，只说它是什么、能做什么。
 

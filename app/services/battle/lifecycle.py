@@ -1,7 +1,7 @@
 """对决服务（生命周期编排层）：异步对决 + 猜奇术（非和局败方单侧 / 和局双方并行）。
 
 流程：POST 启程 → 立即创建 pending 记录 → 后台任务把推演委托给推演链路模块
-（app.services.deduction，各 LLM 节点位于 app.services.nodes/*）→ 结算（经济 + Elo）→
+（app.services.battle.deduction，各 LLM 节点位于 app.services.nodes/*）→ 结算（经济 + Elo）→
 落库 done。
 
 职责边界：battle.py 只管对决记录的生命周期（创建、加载、结算、猜奇术）；"把一场仗打
@@ -52,36 +52,36 @@ from app.models.board import BoardEntry, BoardGuessProgress
 from app.models.llm_profile import LlmProfile
 from app.models.loadout import Loadout
 from app.models.user import User
-from app.services import economy
-from app.services.battle_stream import _get_stream
-from app.services.deduction import run_deduction
-from app.services.guess import (
+from app.services.battle import economy
+from app.services.battle.stream import _get_stream
+from app.services.battle.deduction import run_deduction
+from app.services.guess.pipeline import (
     GUESS_ATTEMPTS_MAX,
     VERIFY_FAIL_MISSING,
     render_commentary_text,
     run_guess_commentary,
     run_guess_verification,
 )
-from app.services.llm import profile_to_llm_config
-from app.services.loadout_interpretation import ensure_loadout_interpretation
-from app.services.loadouts import (
+from app.services.llm.client import profile_to_llm_config
+from app.services.loadouts.interpretation import ensure_loadout_interpretation
+from app.services.loadouts.service import (
     abilities_from_snapshot,
     loadout_abilities,
     loadout_snapshot,
     pick_battle_loadout,
 )
-from app.services.matchmaking import pick_opponent, pick_opponent_no_repeat
-from app.services.nodes.ability_pairs import build_pair_judge_chain as _build_pair_judge_chain
-from app.services.nodes.deducer import build_deduce_chain as _build_deduce_llm
-from app.services.nodes.guess_matcher import build_guess_commentary_llm as _build_commentary_llm
-from app.services.nodes.guess_matcher import build_guess_verify_llm as _build_verify_llm
-from app.services.nodes.transcribe_validator import build_repair_chain as _build_repair_chain
-from app.services.nodes.transcribe_validator import build_validate_chain as _build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_side_chain as _build_transcribe_side_chain
-from app.services.nodes.usage_judge import USAGE_TEMPLATE
-from app.services.nodes.usage_judge import build_usage_llm as _build_usage_llm
-from app.services.notifications import create_notification
-from app.services.reliability import ainvoke_with_reliability
+from app.services.battle.matchmaking import pick_opponent, pick_opponent_no_repeat
+from app.services.nodes.ability.pair_judge import build_pair_judge_chain as _build_pair_judge_chain
+from app.services.nodes.battle.deducer import build_deduce_chain as _build_deduce_llm
+from app.services.nodes.guess.matcher import build_guess_commentary_llm as _build_commentary_llm
+from app.services.nodes.guess.matcher import build_guess_verify_llm as _build_verify_llm
+from app.services.nodes.battle.transcribe_validator import build_repair_chain as _build_repair_chain
+from app.services.nodes.battle.transcribe_validator import build_validate_chain as _build_validate_chain
+from app.services.nodes.battle.transcriber import build_transcribe_side_chain as _build_transcribe_side_chain
+from app.services.nodes.battle.usage_judge import USAGE_TEMPLATE
+from app.services.nodes.battle.usage_judge import build_usage_llm as _build_usage_llm
+from app.services.support.notifications import create_notification
+from app.services.llm.reliability import ainvoke_with_reliability
 
 logger = get_logger("battle")
 
@@ -94,7 +94,7 @@ _guess_inflight: set[tuple[int, int]] = set()
 
 # 全链路自动重试耗尽后的面向用户解释文本（说书语系）
 FAIL_BATTLE_TEXT = "铺陈中途失联，行迹未能成卷，请稍后再启程。"
-# 猜奇术规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess 统一维护
+# 猜奇术规则（GUESS_ATTEMPTS_MAX / VERIFY_FAIL_MISSING）在 app.services.guess.pipeline 统一维护
 
 
 def _ability_dict(a: Ability) -> dict:

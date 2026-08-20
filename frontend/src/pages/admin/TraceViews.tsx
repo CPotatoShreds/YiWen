@@ -12,6 +12,7 @@ import {
   CAT_USAGE,
   CAT_VALIDATE,
   commentaryInfo,
+  buildPairReport,
   extractVar,
   foldPrompt,
   systemContent,
@@ -49,6 +50,17 @@ const JsonToggle = ({ label, obj }: { label: string; obj: unknown }) => (
 );
 
 export function TraceView({ d }: { d: LlmTraceDetail }) {
+  if (d.operation === "ability_pair") {
+    return (
+      <div className="trace-v">
+        <div className="trace-v__resp">
+          <span className="trace-v__label">奇术对比判定</span>
+          <Markdown className="trace-v__text" text={buildPairReport([d])} />
+        </div>
+        <JsonToggle label="查看原始请求" obj={d.request_json} />
+      </div>
+    );
+  }
   switch (d.operation) {
     case CAT_DISCUSS:
       return (

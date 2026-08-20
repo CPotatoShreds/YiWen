@@ -17,13 +17,13 @@ from fastapi.testclient import TestClient
 from app.db.base import async_session_factory
 from app.main import app
 from app.models.ability import Ability
-from app.services.ability_understanding import (
+from app.services.ability.understanding import (
     AbilitySlot,
     Phase,
     SlotVerdict,
     ensure_ability_understanding,
 )
-from app.services.deduction import _render_ability
+from app.services.battle.deduction import _render_ability
 
 
 def _mk(client, prefix="testund") -> str:
@@ -60,7 +60,7 @@ def test_ensure_ability_understanding_writes_slot():
         ).json()["id"]
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=_slot())
-        with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain):
+        with patch("app.services.ability.understanding.build_understanding_chain", return_value=chain):
             asyncio.run(ensure_ability_understanding(aid))
 
         parsed = AbilitySlot.model_validate_json(asyncio.run(_read_understanding(aid)))
@@ -86,8 +86,8 @@ def test_ensure_falls_back_to_default_when_profile_key_undecryptable():
         ).json()["id"]
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=_slot())
-        with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain), patch(
-            "app.services.ability_understanding.profile_to_llm_config",
+        with patch("app.services.ability.understanding.build_understanding_chain", return_value=chain), patch(
+            "app.services.ability.understanding.profile_to_llm_config",
             side_effect=InvalidToken("signature did not match digest"),
         ):
             asyncio.run(ensure_ability_understanding(aid))
@@ -126,7 +126,7 @@ def test_update_ability_regenerates_understanding():
             time.sleep(0.1)
         chain = MagicMock()
         chain.ainvoke = AsyncMock(return_value=_slot(summary="更新后的定位"))
-        with patch("app.services.ability_understanding.build_understanding_chain", return_value=chain):
+        with patch("app.services.ability.understanding.build_understanding_chain", return_value=chain):
             r = client.put(
                 f"/api/abilities/{aid}",
                 json={"name": "燃烬之握", "effect": "点燃接触物", "detail": "需掌心相对一息"},

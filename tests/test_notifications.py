@@ -20,7 +20,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
+from app.services.nodes.guess.matcher import CommentaryItem, CommentaryRound, Verification
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
@@ -142,8 +142,8 @@ def _board_entry(client, h_poster, loadout_id):
 def _challenge(client, entry_id, h_challenger, loadout_id, god_text):
     """点将挑战（打桩推演/转写），等待落定后返回行迹 dict。"""
     with (
-        patch("app.services.battle._build_deduce_llm", return_value=_deduce(god_text)),
-        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(god_text)),
+        patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
     ):
         rc = client.post(f"/api/board/{entry_id}/challenge", json={"loadout_id": loadout_id}, headers=h_challenger)
         assert rc.status_code == 200, rc.text
@@ -154,9 +154,9 @@ def _mk_battle(client, h_a, h_b, name_a):
     """组装一局完整对战：默认 A 胜 → B 为败方/猜词者。返回等待落定后的行迹 dict。"""
     user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
     with (
-        patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
-        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
-        patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+        patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"{GOD} 胜者：{name_a}")),
+        patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
     ):
         r = client.post("/api/battles", headers=h_a)
         assert r.status_code == 200
@@ -222,8 +222,8 @@ def test_board_challenge_notifies_owner_only():
         # 挑战者猜词（点评 + 检定看破）：榜主仍只有 board_challenge（无 guess_progress）
         commentary, verify = _guess_pipeline(lambda kw: Verification(cracked=True, missing=""))
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="影刃化形，遁入暗影")
             assert g.status_code == 202
@@ -295,8 +295,8 @@ def test_guess_progress_notifies_commentary_and_new_cracks():
             lambda text: Verification(cracked=True, missing="") if "雷暴" in text else Verification(cracked=False, missing="")
         )
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="掌控雷电轰击目标")
             assert g.status_code == 202
@@ -309,8 +309,8 @@ def test_guess_progress_notifies_commentary_and_new_cracks():
 
         # 检定 1：看破一门 → 追加 guess_progress（已看破 1 门）
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary),
-            patch("app.services.battle._build_verify_llm", return_value=verify),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
         ):
             gv = _post_guess(client, f"/api/battles/{b['id']}/guess/verify", h_b)
             assert gv.status_code == 202
@@ -322,8 +322,8 @@ def test_guess_progress_notifies_commentary_and_new_cracks():
         # 猜 2（点评）：重复猜测也通知（点评即窥探行为）
         commentary2, verify2 = _guess_pipeline()
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary2),
-            patch("app.services.battle._build_verify_llm", return_value=verify2),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary2),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify2),
         ):
             g = _post_guess(client, f"/api/battles/{b['id']}/guess", h_b, text="信口胡说")
             assert g.status_code == 202
@@ -333,8 +333,8 @@ def test_guess_progress_notifies_commentary_and_new_cracks():
 
         # 检定 2：无新看破 → 不追加
         with (
-            patch("app.services.battle._build_commentary_llm", return_value=commentary2),
-            patch("app.services.battle._build_verify_llm", return_value=verify2),
+            patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary2),
+            patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify2),
         ):
             gv = _post_guess(client, f"/api/battles/{b['id']}/guess/verify", h_b)
             assert gv.status_code == 202
@@ -408,7 +408,7 @@ async def test_notification_bus_pushes_event_to_subscriber():
     from app.db.base import async_session_factory
     from app.models.notification import Notification
     from app.models.user import User
-    from app.services.notifications import create_notification, subscribe, unsubscribe
+    from app.services.support.notifications import create_notification, subscribe, unsubscribe
 
     # 直插接收者用户（避免在 async 测试里跑 TestClient）
     async with async_session_factory() as db:

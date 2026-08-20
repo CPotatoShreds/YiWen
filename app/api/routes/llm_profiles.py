@@ -16,7 +16,7 @@ from app.db.base import get_db
 from app.models.llm_profile import LlmProfile
 from app.models.user import User
 from app.schemas.llm_profile import LlmProfileCreate, LlmProfileOut, LlmProfileUpdate
-from app.services import profile_crypto
+from app.services.llm import profile_crypto
 
 router = APIRouter(prefix="/llm-profiles", tags=["llm-profiles"])
 

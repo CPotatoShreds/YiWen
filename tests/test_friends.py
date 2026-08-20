@@ -86,8 +86,8 @@ def test_friends_and_challenge():
         _arm(client, tok_b)
         name_a = client.get("/api/auth/me", headers=h_a).json()["username"]
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：双方周旋，A 击杀 B。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("A 视角……", "B 视角……")),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"上帝视角：双方周旋，A 击杀 B。胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe("A 视角……", "B 视角……")),
         ):
             r = client.post(f"/api/battles/challenge/{id_b}", headers=h_a)
             assert r.status_code == 200

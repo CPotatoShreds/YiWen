@@ -22,9 +22,9 @@ from app.db.base import async_session_factory
 from app.models.llm_profile import LlmProfile
 from app.models.loadout import Loadout
 from app.models.user import User
-from app.services.llm import build_chat_model, profile_to_llm_config
-from app.services.loadouts import loadout_abilities
-from app.services.reliability import ainvoke_with_reliability
+from app.services.llm.client import build_chat_model, profile_to_llm_config
+from app.services.loadouts.service import loadout_abilities
+from app.services.llm.reliability import ainvoke_with_reliability
 
 
 class LoadoutInterpretation(BaseModel):

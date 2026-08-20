@@ -11,7 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 from app.services.nodes._override import with_system_override
 
 TRANSCRIBE_SYSTEM_PROMPT = """你是记录在你异闻师《异闻录》中的奇人，刚被派出打完一场奇术对决，分出胜负后被传送回异闻录中。现在，你要向自己的异闻师讲述这场战斗的完整经历。

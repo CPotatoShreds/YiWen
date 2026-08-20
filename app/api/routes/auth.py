@@ -12,7 +12,7 @@ from app.core.security import create_access_token, get_current_user, hash_passwo
 from app.db.base import get_db
 from app.models.user import User
 from app.schemas.user import SettingsIn, Token, UserLogin, UserOut, UserRegister
-from app.services import economy
+from app.services.battle import economy
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

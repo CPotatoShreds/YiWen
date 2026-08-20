@@ -19,13 +19,13 @@ from collections.abc import Callable
 
 from langchain_core.runnables import Runnable
 
-from app.services.nodes.guess_matcher import (
+from app.services.nodes.guess.matcher import (
     GUESS_COMMENTARY_TEMPLATE,
     GUESS_VERIFY_TEMPLATE,
     build_guess_commentary_llm,
     build_guess_verify_llm,
 )
-from app.services.reliability import ainvoke_with_reliability
+from app.services.llm.reliability import ainvoke_with_reliability
 
 # 猜奇术规则：有限次数内逐次道出猜测，点评/检定都计入次数。上限 200（形同不限）——真正的结束靠
 # 「收手」：次数仅作兜底与试验场打桩（测试常 patch 为 1 模拟耗尽）。
@@ -33,6 +33,11 @@ GUESS_ATTEMPTS_MAX = 200
 
 # 检定失败时该卡的降级文案（可重试语义，不判看破）
 VERIFY_FAIL_MISSING = "检定失联，请稍后重试。"
+
+
+def _normalize_verdict(value: object) -> str:
+    """把旧存档的“半对”统一为当前正式判定“部分是”。"""
+    return "部分是" if value == "半对" else str(value or "")
 
 
 def _ability_txt(ability: dict) -> str:
@@ -45,13 +50,13 @@ def _round_atoms(round_comments, card_index: int | None = None) -> list[dict]:
     round_comments = 该轮各组列表 [{index, items}, ...]；comments 存的就是轮列表。
     """
     if isinstance(round_comments, str):
-        # 旧版单文本点评：无原子结构，作为一条「半对」叙述兜底（历史数据只进检定作弱线索）
-        return [{"text": round_comments, "verdict": "半对"}]
+        # 旧版单文本点评：无原子结构，作为一条「部分是」叙述兜底（历史数据只进检定作弱线索）
+        return [{"text": round_comments, "verdict": "部分是"}]
     atoms: list[dict] = []
     for group in round_comments or []:
         if card_index is not None and group.get("index") != card_index:
             continue
-        atoms.extend(group.get("items") or [])
+        atoms.extend({**item, "verdict": _normalize_verdict(item.get("verdict"))} for item in group.get("items") or [])
     return atoms
 
 
@@ -64,14 +69,14 @@ def strip_commentary_reason(comments: list | None) -> list[list[dict]]:
     out: list[list[dict]] = []
     for round_comments in comments or []:
         if isinstance(round_comments, str):
-            out.append([{"index": 0, "items": [{"text": round_comments, "verdict": "半对"}]}])
+            out.append([{"index": 0, "items": [{"text": round_comments, "verdict": "部分是"}]}])
             continue
         out.append(
             [
                 {
                     "index": group.get("index"),
                     "items": [
-                        {"text": it.get("text", ""), "verdict": it.get("verdict", "")}
+                        {"text": it.get("text", ""), "verdict": _normalize_verdict(it.get("verdict"))}
                         for it in group.get("items") or []
                     ],
                 }
@@ -86,7 +91,7 @@ def render_commentary_text(commentary: list[dict] | None) -> str:
     lines: list[str] = []
     for group in commentary or []:
         for it in group.get("items") or []:
-            lines.append(f"「{it['text']}」{it.get('verdict', '')}")
+            lines.append(f"「{it['text']}」{_normalize_verdict(it.get('verdict'))}")
     return "；".join(lines) if lines else ""
 
 
@@ -146,7 +151,8 @@ async def run_guess_commentary(
             failed += 1
             groups.append({"index": ci + 1, "items": []})
         else:
-            groups.append({"index": ci + 1, "items": res[1]})
+            items = res[1] or [{"text": text, "verdict": "不能确定", "reason": "模型未返回原子判定。"}]
+            groups.append({"index": ci + 1, "items": items})
     if failed == len(pending):
         raise RuntimeError("所有奇术点评均失败，点评作废。")
     return groups

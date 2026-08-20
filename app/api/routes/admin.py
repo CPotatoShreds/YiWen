@@ -74,11 +74,11 @@ from app.schemas.admin import (
     TestUserOut,
     TrafficOut,
 )
-from app.services.ability_understanding import ensure_ability_understanding
-from app.services.battle import GUESS_ATTEMPTS_MAX
-from app.services.guess import strip_commentary_reason
-from app.services.prompt_debug import rerun_battle
-from app.services.test_battle import (
+from app.services.ability.understanding import ensure_ability_understanding
+from app.services.battle.lifecycle import GUESS_ATTEMPTS_MAX
+from app.services.guess.pipeline import strip_commentary_reason
+from app.services.admin.prompt_debug import rerun_battle
+from app.services.admin.test_battle import (
     generate_test_discuss_report,
     resolve_test_battle,
     resolve_test_battle_from_deduction,
@@ -129,15 +129,53 @@ def _load_story(raw: str) -> dict | None:
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        story = json.loads(raw)
+        return story if isinstance(story, dict) else None
     except (ValueError, TypeError):
         return None
+
+
+def _guess_cards_out(used_abilities: object, cards: object) -> list[dict] | None:
+    """将当前和旧版猜词卡统一为管理端响应格式。"""
+    if not isinstance(used_abilities, list) or not used_abilities:
+        return None
+    raw_cards = cards if isinstance(cards, list) else []
+    result: list[dict] = []
+    for index, ability in enumerate(used_abilities, start=1):
+        raw_card = raw_cards[index - 1] if index <= len(raw_cards) else {}
+        card = raw_card if isinstance(raw_card, dict) else {}
+        cracked = bool(card.get("cracked", card.get("guessed", False)))
+        verifies = []
+        for raw_verify in card.get("verifies") or []:
+            if not isinstance(raw_verify, dict) or "round" not in raw_verify:
+                continue
+            verified = bool(raw_verify.get("cracked", raw_verify.get("guessed", False)))
+            verifies.append(
+                {
+                    "round": raw_verify["round"],
+                    "cracked": verified,
+                    "missing": "" if verified else raw_verify.get("missing", raw_verify.get("reason", "")),
+                }
+            )
+        item = {
+            "index": index,
+            "missing": card.get("missing") or "",
+            "cracked": cracked,
+            "cracked_round": card.get("cracked_round"),
+            "verifies": verifies,
+        }
+        if cracked and isinstance(ability, dict):
+            item["name"] = ability.get("name")
+            item["effect"] = ability.get("effect")
+        result.append(item)
+    return result
 
 
 def _admin_battle_out(
     b: Battle,
     name_map: dict[int, str],
     guess_history: list[str] | None = None,
+    guess_comments: list[list[dict]] | None = None,
     guess_total: int = 0,
     guess_cards: list[dict] | None = None,
     guess_attempts_used: int = 0,
@@ -161,6 +199,7 @@ def _admin_battle_out(
         guess_hit=b.guess_hit,
         guess_score=b.guess_score,
         guess_history=guess_history or [],
+        guess_comments=guess_comments or [],
         guess_total=guess_total,
         guess_cards=guess_cards,
         guess_attempts_used=guess_attempts_used,
@@ -552,23 +591,12 @@ async def admin_battle_detail(
     if guess is None and rows:
         guess = rows[0]
     guess_total = len(guess.used_abilities) if guess and guess.used_abilities else 0
-    guess_cards = None
-    if guess is not None and guess.used_abilities:
-        guess_cards = [
-            {
-                "index": i + 1,
-                "missing": c.get("missing") or "",
-                "cracked": c.get("cracked", False),
-                "cracked_round": c.get("cracked_round"),
-                "verifies": c.get("verifies") or [],
-                **({"name": used["name"], "effect": used["effect"]} if c.get("cracked", False) else {}),
-            }
-            for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
-        ]
+    guess_cards = _guess_cards_out(guess.used_abilities, guess.cards) if guess is not None else None
     return _admin_battle_out(
         battle,
         name_map,
         guess_history=list(guess.guess_history) if guess else [],
+        guess_comments=strip_commentary_reason(guess.comments) if guess else [],
         guess_total=guess_total,
         guess_cards=guess_cards,
         guess_attempts_used=guess.attempts_used if guess else 0,
@@ -1093,19 +1121,7 @@ async def _test_battle_out_full(db: AsyncSession, battle: TestBattle) -> TestBat
     name_map = await _test_names(db, ids)
     guess = await db.get(TestBattleGuess, battle.id)
     guess_total = len(guess.used_abilities) if guess and guess.used_abilities else 0
-    guess_cards = None
-    if guess is not None and guess.used_abilities:
-        guess_cards = [
-            {
-                "index": i + 1,
-                "missing": c.get("missing") or "",
-                "cracked": c.get("cracked", False),
-                "cracked_round": c.get("cracked_round"),
-                "verifies": c.get("verifies") or [],
-                **({"name": used["name"], "effect": used["effect"]} if c.get("cracked", False) else {}),
-            }
-            for i, (c, used) in enumerate(zip(guess.cards, guess.used_abilities))
-        ]
+    guess_cards = _guess_cards_out(guess.used_abilities, guess.cards) if guess is not None else None
     return TestBattleOut(
         id=battle.id,
         user_a=name_map.get(battle.user_a_id, "?"),

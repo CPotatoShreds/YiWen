@@ -18,7 +18,7 @@ from app.db.base import get_db
 from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.notification import NotificationList, NotificationOut
-from app.services.notifications import subscribe, unsubscribe
+from app.services.support.notifications import subscribe, unsubscribe
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 

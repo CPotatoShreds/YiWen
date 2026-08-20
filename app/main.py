@@ -14,8 +14,8 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.logger import get_logger, setup_logging
 from app.db.base import Base, engine
-from app.services.battle import recover_pending_battles
-from app.services.prompt_debug import seed_prompt_schemes
+from app.services.battle.lifecycle import recover_pending_battles
+from app.services.admin.prompt_debug import seed_prompt_schemes
 
 logger = get_logger("main")
 

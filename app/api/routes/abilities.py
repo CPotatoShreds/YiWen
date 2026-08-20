@@ -20,7 +20,7 @@ from app.models.loadout import Loadout, LoadoutAbility
 from app.models.user import User
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut, AbilitySetIn
-from app.services.ability_understanding import ensure_ability_understanding
+from app.services.ability.understanding import ensure_ability_understanding
 
 router = APIRouter(prefix="/abilities", tags=["abilities"])
 

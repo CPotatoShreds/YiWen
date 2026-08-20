@@ -21,7 +21,7 @@ import psycopg
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.nodes.guess_matcher import CommentaryItem, CommentaryRound, Verification
+from app.services.nodes.guess.matcher import CommentaryItem, CommentaryRound, Verification
 
 GOD = "上帝视角：甲以影刃潜行逼近，先手斩落乙。"
 NAR_A = "A 视角叙述：甲循着阴影逼近，一刀斩落乙。"
@@ -147,15 +147,15 @@ def _board_entry(client, h_poster, loadout_id):
 def _challenge(client, entry_id, h_challenger, loadout_id, god_text, usage_indices=None):
     """点将挑战（打桩推演/转写/可选 usage 子集），等待落定后返回行迹 dict。"""
     patches = [
-        patch("app.services.battle._build_deduce_llm", return_value=_deduce(god_text)),
-        patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
+        patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(god_text)),
+        patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe(NAR_A, NAR_B)),
     ]
     if usage_indices is not None:
-        from app.services.nodes.usage_judge import UsedAbilities
+        from app.services.nodes.battle.usage_judge import UsedAbilities
 
         usage_chain = MagicMock()
         usage_chain.ainvoke = AsyncMock(return_value=UsedAbilities(indices=usage_indices))
-        patches.append(patch("app.services.battle._build_usage_llm", return_value=usage_chain))
+        patches.append(patch("app.services.battle.lifecycle._build_usage_llm", return_value=usage_chain))
     with ExitStack() as stack:
         for p in patches:
             stack.enter_context(p)
@@ -185,8 +185,8 @@ def _guess(client, battle, headers, text, verify_fn):
     """
     commentary, verify = _guess_pipeline(verify_fn)
     with (
-        patch("app.services.battle._build_commentary_llm", return_value=commentary),
-        patch("app.services.battle._build_verify_llm", return_value=verify),
+        patch("app.services.battle.lifecycle._build_commentary_llm", return_value=commentary),
+        patch("app.services.battle.lifecycle._build_verify_llm", return_value=verify),
     ):
         before = battle.get("guess_attempts_used", 0)
         g = _post_guess(client, f"/api/battles/{battle['id']}/guess", headers, text=text)

@@ -19,7 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.services.llm import build_chat_model
+from app.services.llm.client import build_chat_model
 
 GUESS_CORE_JUDGE_PROMPT = """你是猜词检定员。用户正在根据一段叙述文本猜测人物拥有的能力。现在给出一条奇术的**核心一句话描述**（对该能力本质特征的抽象概括，猜词成功标准就是命中它），以及用户的一次猜测。
 

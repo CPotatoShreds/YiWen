@@ -98,7 +98,7 @@ def _insert_battle_guess_full(battle_id: int, guesser_id: int) -> None:
                 ' {"index": 2, "items": [{"text": "即死", "verdict": "否", "reason": "该门非即死"}]}'
                 '],'
                 ' ['
-                ' {"index": 1, "items": [{"text": "全图冲击", "verdict": "半对", "reason": "方向沾边"}]},'
+                ' {"index": 1, "items": [{"text": "全图冲击", "verdict": "部分是", "reason": "方向沾边"}]},'
                 ' {"index": 2, "items": [{"text": "瞬移", "verdict": "是", "reason": "该门可瞬移"}]}'
                 ']]'
             ),
@@ -415,6 +415,11 @@ def test_battle_detail_guess_cards():
         assert detail["guess_attempts_used"] == 2
         assert detail["guess_attempts_max"] == 5
         assert detail["guess_history"] == ["第一轮猜测", "第二轮猜测"]
+        assert detail["guess_comments"][0][0] == {
+            "index": 1,
+            "items": [{"text": "全图范围", "verdict": "是"}],
+        }
+        assert detail["guess_comments"][1][0]["items"][0]["verdict"] == "部分是"
         cards = detail["guess_cards"]
         assert cards is not None and len(cards) == 2
         assert cards[0]["cracked"] is False
@@ -624,6 +629,38 @@ def test_test_arena_skip_battle_and_guess():
         assert client.delete(f"/api/admin/test/users/{b.json()['id']}", headers=h).status_code == 204
         assert client.delete(f"/api/admin/test/loadouts/{l_a_id}", headers=h).status_code == 204
         assert client.delete(f"/api/admin/test/loadouts/{l_b_id}", headers=h).status_code == 204
+
+
+def test_test_arena_list_compatibly_serializes_legacy_guess_verdicts():
+    """旧版 guessed/reason 检定记录不能拖垮测试行迹列表。"""
+    with TestClient(app) as client:
+        _, _, h = _new_user(client)
+        _promote(_me_name(client, h))
+        aid = _test_ability(client, h, "燃烬之握", "点燃一切")
+        result = client.post(
+            "/api/admin/test/battles/skip",
+            json={
+                "fighter_a": {"name": "赤焰君临", "abilities": [aid]},
+                "fighter_b": {"name": "霜语者", "abilities": [aid]},
+                "winner": "A",
+            },
+            headers=h,
+        )
+        assert result.status_code == 201, result.text
+        battle_id = result.json()["id"]
+        con = _sqlite()
+        con.execute(
+            "UPDATE test_battle_guesses SET cards=%s WHERE battle_id=%s",
+            ('[{"guessed": true, "verifies": [{"round": 1, "guessed": true, "reason": "已猜出。"}]}]', battle_id),
+        )
+        con.commit()
+        con.close()
+
+        rows = client.get("/api/admin/test/battles", headers=h)
+        assert rows.status_code == 200, rows.text
+        card = next(item for item in rows.json() if item["id"] == battle_id)["guess_cards"][0]
+        assert card["cracked"] is True
+        assert card["verifies"] == [{"round": 1, "cracked": True, "missing": ""}]
 
 
 def test_test_arena_lists_persistent_loadouts():
@@ -872,14 +909,19 @@ _BUILDER_ATTR = {
 
 def _stub_prompt_debug_builders(stack: ExitStack):
     """打桩 5 个推演段构建器；返回 (builder_mocks, deduce 输入捕获 dict)。"""
-    from app.services.nodes.ability_pairs import PairVerdict
-    from app.services.nodes.transcribe_validator import TranscribeVerdict
+    from app.services.nodes.ability.pair_judge import PairVerdict
+    from app.services.nodes.battle.transcribe_validator import TranscribeVerdict
 
     captured: dict = {}
     builder_mocks: dict[str, MagicMock] = {}
 
     def _pair_judge(kwargs):
-        return PairVerdict(ability_a="甲", ability_b="乙", conflict=False)
+        return PairVerdict(
+            conflict=False,
+            conflict_reason="无直接冲突",
+            stronger_ability="甲",
+            stronger_reason="测试桩固定返回。",
+        )
 
     async def _deduce(kwargs):
         captured.update(kwargs)
@@ -905,7 +947,7 @@ def _stub_prompt_debug_builders(stack: ExitStack):
     for stage, attr in _BUILDER_ATTR.items():
         chain = MagicMock()
         chain.ainvoke = AsyncMock(side_effect=impls[stage])
-        builder_mocks[stage] = stack.enter_context(patch(f"app.services.prompt_debug.{attr}", return_value=chain))
+        builder_mocks[stage] = stack.enter_context(patch(f"app.services.admin.prompt_debug.{attr}", return_value=chain))
     return builder_mocks, captured
 
 
@@ -1029,4 +1071,3 @@ def test_prompt_debug_rerun_flow():
         con = _sqlite()
         assert con.execute("SELECT 1 FROM prompt_debug_runs WHERE id=%s", (run_id,)).fetchone() is None
         con.close()
-

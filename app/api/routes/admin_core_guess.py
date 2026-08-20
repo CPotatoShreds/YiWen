@@ -20,13 +20,13 @@ from app.core.security import get_current_admin
 from app.db.base import get_db
 from app.models.ability import Ability
 from app.models.user import User
-from app.services.nodes.ability_describer import DESCRIBE_TEMPLATE, build_describer_llm
-from app.services.nodes.guess_core_judge import (
+from app.services.nodes.ability.describer import DESCRIBE_TEMPLATE, build_describer_llm
+from app.services.nodes.guess.core_judge import (
     GUESS_CORE_JUDGE_TEMPLATE,
     CoreGuessVerdict,
     build_core_judge_llm,
 )
-from app.services.reliability import ainvoke_with_reliability
+from app.services.llm.reliability import ainvoke_with_reliability
 
 router = APIRouter(prefix="/admin/core-guess", tags=["admin", "core-guess"])
 

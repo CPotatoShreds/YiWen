@@ -4,10 +4,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import Markdown from "../../components/Markdown";
-import { CheckIcon, LockIcon } from "../../components/icons";
+import { GuessClueCards } from "../../components/GuessClueCards";
 import type { AdminBattle, LlmTrace, LlmTraceDetail } from "./types";
 import {
   CAT_LABEL,
+  buildPairReport,
   buildSummary,
   categorize,
   fmtDt,
@@ -222,8 +223,7 @@ export function TracePanel({
 }
 
 /**
- * 拆字内容（StoryView「拆字」页签）：猜测者逐次道出的猜测原文流 + 奇术卡片网格
- * （未看破显线索片段，看破揭示真名）。复用用户端 GuessBoard/GuessFeed 的样式类。
+ * 拆字内容（StoryView「拆字」页签）：猜测者逐次道出的猜测原文流 + 按奇术聚合的卡片网格。
  */
 export function GuessPanel({ battle }: { battle: AdminBattle }) {
   const cards = battle.guess_cards ?? [];
@@ -244,40 +244,13 @@ export function GuessPanel({ battle }: { battle: AdminBattle }) {
           ))}
         </ul>
       )}
-      <div className="guess-board">
-        {cards.map((card) => (
-          <div key={card.index} className={`guess-card ${card.cracked ? "guess-card--cracked" : ""}`}>
-            <div className="guess-card__head">
-              <span className="guess-card__no">第 {card.index} 门</span>
-              {card.cracked ? (
-                <span className="guess-card__label guess-card__label--hit">
-                  <CheckIcon size={13} /> 已看破{card.cracked_round ? ` · 第 ${card.cracked_round} 轮` : ""}
-                </span>
-              ) : (
-                <span className="guess-card__label">
-                  <LockIcon size={13} /> 未知奇术
-                </span>
-              )}
-            </div>
-            {card.cracked ? (
-              <div>
-                <div className="guess-card__name">{card.name}</div>
-                <p className="guess-card__effect">{card.effect}</p>
-              </div>
-            ) : (
-              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                尚未看破
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
+      <GuessClueCards cards={cards} comments={battle.guess_comments} />
     </div>
   );
 }
 
 /**
- * 单场真实行迹的完整链路展示：拉取行迹 + 战前讨论报告（discuss trace），
+ * 单场真实行迹的完整链路展示：拉取行迹 + 战前讨论报告（旧 discuss 或新版 ability_pair trace），
  * 渲染 讨论/三视角 页签与 LLM 调用链。链路页（BattleChain）与奇人库（LoadoutBrowser）共用。
  */
 export function BattleChainView({ id }: { id: number }) {
@@ -293,21 +266,27 @@ export function BattleChainView({ id }: { id: number }) {
     Promise.all([
       api<AdminBattle>(`/admin/battles/${id}`),
       api<LlmTrace[]>(`/admin/llm-traces?trace_id=${id}&kind=battle&operation=discuss&limit=3`),
+      api<LlmTrace[]>(`/admin/llm-traces?trace_id=${id}&kind=battle&operation=ability_pair&limit=500`),
     ])
-      .then(async ([b, discussRows]) => {
+      .then(async ([b, discussRows, pairRows]) => {
         setBattle(b);
-        const okTrace = discussRows.find((t) => t.status === "ok");
-        if (okTrace) {
-          const d = await api<LlmTraceDetail>(`/admin/llm-traces/${okTrace.id}`);
-          if (typeof d.response_json === "string") {
-            setDiscussReport(d.response_json);
-          } else {
-            setDiscussNote("讨论调用返回非文本输出");
-          }
-        } else if (discussRows.length === 0) {
+        const okDiscuss = discussRows.find((t) => t.status === "ok");
+        const okPairs = pairRows.filter((t) => t.status === "ok").sort((a, z) => a.id - z.id);
+        if (okPairs.length) {
+          const details = await Promise.all(
+            okPairs.map((t) => api<LlmTraceDetail>(`/admin/llm-traces/${t.id}`))
+          );
+          const report = buildPairReport(details);
+          setDiscussReport(report);
+          if (!report) setDiscussNote("奇术对比调用返回非结构化输出");
+        } else if (okDiscuss) {
+          const d = await api<LlmTraceDetail>(`/admin/llm-traces/${okDiscuss.id}`);
+          if (typeof d.response_json === "string") setDiscussReport(d.response_json);
+          else setDiscussNote("讨论调用返回非文本输出");
+        } else if (discussRows.length === 0 && pairRows.length === 0) {
           setDiscussNote("本场无讨论调用记录（可能未走讨论链路）");
         } else {
-          setDiscussNote("本场讨论调用失败，无成功报告");
+          setDiscussNote("本场讨论/奇术对比调用失败，无成功报告");
         }
       })
       .catch((e: Error) => {

@@ -19,7 +19,7 @@ class GuessCommentaryItem(BaseModel):
     """一条原子判定：对用户猜测中一个原子片段的四态点评（reason 为内部字段，绝不进前端）。"""
 
     text: str  # 被单独判定的原子片段（忠实引用用户原文）
-    verdict: str  # 四态之一：是 / 否 / 半对 / 不能确定
+    verdict: str  # 四态之一：是 / 否 / 部分是 / 不能确定
 
 
 class GuessCommentaryGroup(BaseModel):

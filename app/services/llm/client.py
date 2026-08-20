@@ -10,8 +10,8 @@ from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
 from app.models.llm_profile import LlmProfile
-from app.services.profile_crypto import decrypt_storage
-from app.services.reliability import LLM_TIMEOUT_SECONDS
+from app.services.llm.profile_crypto import decrypt_storage
+from app.services.llm.reliability import LLM_TIMEOUT_SECONDS
 
 
 def profile_to_llm_config(profile: LlmProfile | None) -> dict | None:

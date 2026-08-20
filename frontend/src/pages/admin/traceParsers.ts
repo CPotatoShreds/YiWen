@@ -64,6 +64,7 @@ export const CAT_RAW = "raw";
 export function categorize(op: string): string {
   switch (op) {
     case "discuss": return CAT_DISCUSS;
+    case "ability_pair": return CAT_DISCUSS;
     case "deduce": return CAT_DEDUCE;
     case "transcribe": return CAT_TRANSCRIBE;
     case "validate": return CAT_VALIDATE;
@@ -74,6 +75,38 @@ export function categorize(op: string): string {
     case "guess_verify": return CAT_GUESS_VERIFY;
     default: return CAT_RAW;
   }
+}
+
+/** 新版战前对比节点返回结构化判定；汇总为讨论页签可读的 Markdown。 */
+export function buildPairReport(details: LlmTraceDetail[]): string {
+  const rows = details
+    .map((d) => d.response_json)
+    .filter((v): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v))
+    .filter((v) => typeof v.conflict === "boolean");
+  if (!rows.length) return "";
+
+  const lines = ["【奇术对比分析】"];
+  for (const row of rows) {
+    if (typeof row.stronger_ability === "string") {
+      const relation = row.conflict ? "冲突" : "无直接冲突";
+      const conflictReason = typeof row.conflict_reason === "string" ? row.conflict_reason : "未说明";
+      const strongerReason = typeof row.stronger_reason === "string" ? row.stronger_reason : "未说明";
+      lines.push(`- ${relation}：${conflictReason}。${row.stronger_ability}占优：${strongerReason}`);
+    } else if (typeof row.ability_a === "string" && typeof row.ability_b === "string" && row.conflict) {
+      const abilityA = row.ability_a;
+      const abilityB = row.ability_b;
+      const interaction = typeof row.interaction === "string" && row.interaction ? row.interaction : "矛与盾式碰撞";
+      const winnerText: Record<string, string> = { A: "A 侧占优", B: "B 侧占优", none: "不相上下" };
+      const winner = winnerText[String(row.winner)] ?? "不相上下";
+      const reasoning = typeof row.reasoning === "string" ? row.reasoning : "";
+      lines.push(`- ${abilityA} × ${abilityB}：冲突（${interaction}），依三相共鸣理论，${winner}。${reasoning}`);
+    } else if (typeof row.ability_a === "string" && typeof row.ability_b === "string") {
+      const abilityA = row.ability_a;
+      const abilityB = row.ability_b;
+      lines.push(`- ${abilityA} × ${abilityB}：无直接冲突。`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export const CAT_LABEL: Record<string, string> = {

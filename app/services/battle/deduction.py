@@ -7,7 +7,7 @@
 
 推演方式：一次性推演。推演 LLM 以开场白开头、以三选一固定结尾句收尾，一口气输出完整
 对战（不再分轮、不再由判定 LLM 裁断）；胜负从结尾句解析（解析失败保守判和局）。推演前由
-**能力对比节点**把双方奇术两两配对（上限 MAX_ABILITY_PAIRS 对），逐对并发判断冲突、依三相
+**能力对比节点**把双方各至多四门奇术全量跨边配对（最多 16 对），逐对并发判断冲突、依三相
 共鸣理论分判高下，汇总为对比报告作为推演输入（暂时替代讨论节点）。随后对完整上帝叙述做
 **逐字流式**双视角转写（A/B 各一个视角分支并发）：转写 LLM 扮演该视角奇人，以第一人称向
 自己的异闻师讲述这场战斗的经历，结果由角色自然交代。流式输出经**流内审查**遮蔽对家异能名
@@ -39,12 +39,12 @@ from app.core.logger import get_logger
 from app.models.ability import Ability
 from app.models.loadout import MAX_LOADOUT_ABILITIES
 from app.models.user import User
-from app.services.nodes.ability_pairs import MAX_ABILITY_PAIRS, PairVerdict, build_pair_judge_chain, render_pair_report
-from app.services.nodes.deducer import OPENINGS, build_deduce_chain, build_endings
-from app.services.nodes.leak_filter import build_denylist, mask_stream_chunks
-from app.services.nodes.transcribe_validator import build_repair_chain, build_validate_chain
-from app.services.nodes.transcriber import build_transcribe_side_chain
-from app.services.reliability import ainvoke_with_reliability, astream_with_reliability
+from app.services.nodes.ability.pair_judge import PairVerdict, build_pair_judge_chain, render_pair_report
+from app.services.nodes.battle.deducer import OPENINGS, build_deduce_chain, build_endings
+from app.services.nodes.battle.leak_filter import build_denylist, mask_stream_chunks
+from app.services.nodes.battle.transcribe_validator import build_repair_chain, build_validate_chain
+from app.services.nodes.battle.transcriber import build_transcribe_side_chain
+from app.services.llm.reliability import ainvoke_with_reliability, astream_with_reliability
 
 logger = get_logger("deduction")
 
@@ -235,13 +235,12 @@ async def _settle_side(
 async def _run_pair_analysis(
     abilities_a: list[Ability],
     abilities_b: list[Ability],
-    info: str,
     build_pair_judge: Callable[..., Runnable],
     llm_config: dict | None = None,
     trace_context: dict | None = None,
 ) -> str:
-    """能力对比节点：双方奇术两两配对（各取前 MAX_LOADOUT_ABILITIES，共上限 MAX_ABILITY_PAIRS 对）
-    并发判断是否存在冲突效果，有冲突则依三相共鸣理论分判高下，汇总为对比报告。
+    """能力对比节点：双方各至多四门奇术全量跨边配对，天然最多 16 对。
+    每对只传两门奇术完整信息，并发判断冲突与依三相理论分出的占优奇术，汇总为对比报告。
 
     专用 asyncio.Semaphore(4) 限流（对比对本身很多，全局 LLM 信号量管在途总量、这里管这一节点的
     并发，避免一次性打爆服务商配额）。单对失败跳过；全部失败返回空报告，推演照旧（对比是增强、
@@ -249,7 +248,7 @@ async def _run_pair_analysis(
     """
     pairs = [
         (a, b) for a in abilities_a[:MAX_LOADOUT_ABILITIES] for b in abilities_b[:MAX_LOADOUT_ABILITIES]
-    ][:MAX_ABILITY_PAIRS]
+    ]
     if not pairs:
         return ""
     judge = build_pair_judge(llm_config=llm_config)
@@ -260,7 +259,7 @@ async def _run_pair_analysis(
             async with sem:
                 return await ainvoke_with_reliability(
                     judge,
-                    {"info": info, "ability_a": _render_ability(a), "ability_b": _render_ability(b)},
+                    {"ability_a": _render_ability(a), "ability_b": _render_ability(b)},
                     operation="ability_pair",
                     trace_context=trace_context,
                 )
@@ -378,7 +377,7 @@ async def run_deduction(
     if not discuss_report:
         await stream.publish({"type": "stage", "stage": "compare"})
         discuss_report = await _run_pair_analysis(
-            abilities_a, abilities_b, info, build_pair_judge,
+            abilities_a, abilities_b, build_pair_judge,
             llm_config=llm_config, trace_context=trace_context,
         )
 

@@ -22,7 +22,7 @@ from app.models.user import User, loadout_capacity
 from app.models.user_ability import UserAbility
 from app.schemas.ability import AbilityOut
 from app.schemas.loadout import LoadoutOut, LoadoutSetIn
-from app.services.loadout_interpretation import ensure_loadout_interpretation
+from app.services.loadouts.interpretation import ensure_loadout_interpretation
 
 router = APIRouter(prefix="/loadouts", tags=["loadouts"])
 

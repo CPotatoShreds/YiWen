@@ -199,9 +199,9 @@ def test_battle_uses_only_chosen_loadout():
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
 
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)
@@ -287,9 +287,9 @@ def test_delete_loadout_unlinks_battle_snapshot():
         user_b_id = client.get("/api/auth/me", headers=h_b).json()["id"]
 
         with (
-            patch("app.services.battle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
-            patch("app.services.battle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
-            patch("app.services.battle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
+            patch("app.services.battle.lifecycle._build_deduce_llm", return_value=_deduce(f"上帝视角：甲先手，雷暴落下。胜者：{name_a}")),
+            patch("app.services.battle.lifecycle._build_transcribe_side_chain", return_value=_transcribe("甲视角……", "乙视角……")),
+            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
         ):
             r = client.post("/api/battles", headers=h_a)
             b = _wait_done(client, r.json()["id"], h_a)

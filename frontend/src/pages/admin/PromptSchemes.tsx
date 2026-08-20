@@ -10,7 +10,7 @@ import type { PromptScheme, PromptStage } from "./types";
 type Form = { name: string; description: string; enabled: boolean } & Record<PromptStage, string>;
 
 const STAGES: { key: PromptStage; label: string; hint: string; live: boolean }[] = [
-  { key: "discuss_prompt", label: "讨论", hint: "数据槽：{info}", live: true },
+  { key: "discuss_prompt", label: "奇术比对", hint: "数据槽：{ability_a} {ability_b}", live: true },
   { key: "deduce_prompt", label: "推演（上帝视角）", hint: "数据槽：{info} {discuss_report} {opening} {ending_a/b/draw}", live: true },
   { key: "transcribe_prompt", label: "转写（双视角）", hint: "数据槽：{info} {god} {viewer_name}", live: true },
   { key: "validate_prompt", label: "转写校验", hint: "数据槽：{info} {god} {viewer_name} {narration}", live: true },

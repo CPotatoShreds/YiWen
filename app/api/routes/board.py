@@ -29,8 +29,8 @@ from app.schemas.board import (
     BoardEntryOut,
     GuessPathRecordOut,
 )
-from app.services.battle import start_board_challenge
-from app.services.loadouts import loadout_abilities
+from app.services.battle.lifecycle import start_board_challenge
+from app.services.loadouts.service import loadout_abilities
 
 router = APIRouter(prefix="/board", tags=["board"])
 
