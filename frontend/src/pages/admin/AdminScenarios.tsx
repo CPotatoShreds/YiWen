@@ -1,0 +1,12 @@
+import { useEffect, useState } from "react";
+import { api } from "../../api";
+
+type Review = { id: string; scenario_id: string; revision_number: number; status: string; review_reason?: string | null; content: { name?: string; summary?: string; background?: string; victory_condition?: string; guardian_name?: string } };
+
+export default function AdminScenarios() {
+  const [items, setItems] = useState<Review[]>([]); const [error, setError] = useState(""); const [reason, setReason] = useState<Record<string, string>>({}); const [busy, setBusy] = useState("");
+  const load = () => api<Review[]>("/admin/creator/scenarios?status=pending_review").then(setItems).catch((e: Error) => setError(e.message));
+  useEffect(() => { void load(); }, []);
+  const review = async (item: Review, action: "approve" | "reject") => { if (action === "reject" && !reason[item.scenario_id]?.trim()) { setError("驳回必须填写原因"); return; } setBusy(item.scenario_id); setError(""); try { await api(`/admin/creator/scenarios/${item.scenario_id}/${action}`, { method: "POST", ...(action === "reject" ? { body: JSON.stringify({ reason: reason[item.scenario_id] }) } : {}) }); await load(); } catch (e) { setError(e instanceof Error ? e.message : "审核失败"); } finally { setBusy(""); } };
+  return <div className="admin-page"><div className="admin-toolbar"><div><h2>小天下集审核</h2><p className="muted">审核异闻本体，守方配置与指导策略仅做完整性校验。</p></div><button className="btn btn-ghost" onClick={() => void load()}>刷新</button></div>{error && <p className="err">{error}</p>}{items.length === 0 ? <div className="empty"><p>暂无待审核异闻。</p></div> : <div className="review-list">{items.map((item) => <article className="review-item" key={item.id}><div className="review-item__head"><h3>{item.content.name}</h3><span className="muted">修订 {item.revision_number} · 守方 {item.content.guardian_name}</span></div><p>{item.content.summary}</p><details><summary>查看背景与胜利条件</summary><p>{item.content.background}</p><p><b>胜利条件：</b>{item.content.victory_condition}</p></details><textarea className="textarea" placeholder="驳回原因（驳回时必填）" value={reason[item.scenario_id] ?? ""} onChange={(e) => setReason((r) => ({ ...r, [item.scenario_id]: e.target.value }))} rows={3} /><div className="review-item__actions"><button className="btn btn-primary" disabled={busy === item.scenario_id} onClick={() => void review(item, "approve")}>通过</button><button className="btn btn-danger" disabled={busy === item.scenario_id} onClick={() => void review(item, "reject")}>驳回</button></div></article>)}</div>}</div>;
+}

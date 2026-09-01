@@ -1,5 +1,5 @@
 // API 客户端：Cookie 会话 + 统一错误处理 + 连接超时 + GET 网络失败重试 + GET 内存 SWR 缓存
-export const API_BASE = "/api";
+export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 const CONNECT_TIMEOUT_MS = 15000;
 const GET_RETRIES = 2;
@@ -24,7 +24,7 @@ const inflight = new Map<string, Promise<unknown>>();
 const refreshing = new Set<string>();
 
 // 状态敏感的读路径用短 TTL：板子/跨场进度随推演结果变化，短暂过期可接受且后台自愈
-const CACHE_TTL_BY_PREFIX: [string, number][] = [["/board", 10_000]];
+const CACHE_TTL_BY_PREFIX: [string, number][] = [["/board", 10_000], ["/collections", 10_000]];
 
 function ttlFor(path: string): number {
   for (const [prefix, ttl] of CACHE_TTL_BY_PREFIX) {
@@ -37,6 +37,7 @@ function cachePolicyFor(path: string): "cache" | "skip" {
   if (path.includes("?")) return "skip"; // 带查询参数的结果随条件变化，不缓存
   if (path.startsWith("/admin/")) return "skip"; // 管理工具要实时
   if (path.startsWith("/battles/")) return "skip"; // 进行中对战/分享，SSE 实时驱动
+  if (path.startsWith("/scenario-challenges/")) return "skip"; // 小天下集进行中推演，SSE 实时驱动
   if (path.startsWith("/notifications")) return "skip"; // 未读角标状态敏感 + SSE 推送重拉，缓存会吞掉更新
   return "cache";
 }
@@ -48,6 +49,8 @@ const MUTATE_PREFIXES = [
   "/abilities",
   "/battles",
   "/board",
+  "/collections",
+  "/creator",
   "/friends",
   "/leaderboard",
   "/llm-profiles",

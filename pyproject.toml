@@ -27,6 +27,8 @@ dependencies = [
     "langchain-core>=1.5.3",
     "langchain-openai>=1.4.2",
     "cryptography>=50.0.0",
+    "fastapi-pagination>=0.12.34",
+    "celery[redis]>=5.4",
 ]
 
 [dependency-groups]

@@ -4,6 +4,7 @@ import { BarChart3Icon, BookIcon, GearIcon, PencilIcon, ScrollIcon, ShieldIcon, 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
   { to: "/admin/users", label: "异闻师", icon: UsersIcon },
+  { to: "/admin/scenarios", label: "小天下集审核", icon: ScrollIcon },
   { to: "/admin/abilities", label: "奇术", icon: BookIcon },
   { to: "/admin/battles", label: "行迹", icon: GearIcon },
   { to: "/admin/loadouts", label: "奇人", icon: ShieldIcon },

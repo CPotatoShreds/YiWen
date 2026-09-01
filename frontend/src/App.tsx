@@ -4,16 +4,19 @@ import Navbar from "./components/Navbar";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Home from "./pages/Home";
-import MyAbilities from "./pages/MyAbilities";
+import CreatorStudio from "./pages/CreatorStudio";
 import BattleReport from "./pages/BattleReport";
 import Books from "./pages/Books";
 import Friends from "./pages/Friends";
 import Leaderboard from "./pages/Leaderboard";
-import Board from "./pages/Board";
-import BoardDetail from "./pages/BoardDetail";
-import BoardTracking from "./pages/BoardTracking";
 import Share from "./pages/Share";
 import Settings from "./pages/Settings";
+import Scenarios from "./pages/Scenarios";
+import ScenarioDetail from "./pages/ScenarioDetail";
+import ScenarioChallenge from "./pages/ScenarioChallenge";
+import ScenarioRosterDetail from "./pages/ScenarioRosterDetail";
+import ScenarioComposer from "./pages/ScenarioComposer";
+import ScenarioEditor from "./pages/ScenarioEditor";
 import AdminLayout from "./components/AdminLayout";
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminUsers from "./pages/admin/AdminUsers";
@@ -28,6 +31,7 @@ import LoadoutBrowser from "./pages/admin/LoadoutBrowser";
 import LoadoutDetail from "./pages/admin/LoadoutDetail";
 import AdminBattleDetail from "./pages/admin/AdminBattleDetail";
 import PromptSchemes from "./pages/admin/PromptSchemes";
+import AdminScenarios from "./pages/admin/AdminScenarios";
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
@@ -54,13 +58,17 @@ export default function App() {
             <Route path="/register" element={<Register />} />
             <Route path="/share/:token" element={<Share />} />
             <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
-            <Route path="/abilities" element={<RequireAuth><MyAbilities /></RequireAuth>} />
+            <Route path="/abilities" element={<RequireAuth><CreatorStudio /></RequireAuth>} />
+            <Route path="/creator" element={<RequireAuth><CreatorStudio /></RequireAuth>} />
+            <Route path="/creator/scenarios/new" element={<RequireAuth><ScenarioComposer /></RequireAuth>} />
+            <Route path="/creator/scenarios/:id" element={<RequireAuth><ScenarioEditor /></RequireAuth>} />
             <Route path="/books" element={<RequireAuth><Books /></RequireAuth>} />
             <Route path="/battles/:id" element={<RequireAuth><BattleReport /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
-            <Route path="/board" element={<RequireAuth><Board /></RequireAuth>} />
-            <Route path="/board/:id" element={<RequireAuth><BoardDetail /></RequireAuth>} />
-            <Route path="/board/:id/tracking" element={<RequireAuth><BoardTracking /></RequireAuth>} />
+            <Route path="/scenarios" element={<RequireAuth><Scenarios /></RequireAuth>} />
+            <Route path="/scenarios/:id" element={<RequireAuth><ScenarioDetail /></RequireAuth>} />
+            <Route path="/scenarios/:scenarioId/rosters/:rosterId" element={<RequireAuth><ScenarioRosterDetail /></RequireAuth>} />
+            <Route path="/scenario-challenges/:id" element={<RequireAuth><ScenarioChallenge /></RequireAuth>} />
             <Route path="/friends" element={<RequireAuth><Friends /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/admin" element={<RequireAuth><RequireAdmin><AdminLayout /></RequireAdmin></RequireAuth>}>
@@ -75,6 +83,7 @@ export default function App() {
               <Route path="traffic" element={<AdminTraffic />} />
               <Route path="chain" element={<BattleChain />} />
               <Route path="prompt-schemes" element={<PromptSchemes />} />
+              <Route path="scenarios" element={<AdminScenarios />} />
               <Route path="test" element={<TestArena />} />
               <Route path="test/core-guess" element={<CoreGuessLab />} />
             </Route>

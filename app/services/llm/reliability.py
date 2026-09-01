@@ -173,6 +173,13 @@ async def ainvoke_with_reliability(
             latency = int((time.monotonic() - start) * 1000)
             logger.info("llm_ok op=%s attempt=%d dur=%.2fs", operation, attempt, latency / 1000)
             if trace_context:
+                trace_context.update(
+                    {
+                        "latency_ms": latency,
+                        "tokens_input": capture.tokens_input,
+                        "tokens_output": capture.tokens_output,
+                    }
+                )
                 _spawn_trace(
                     kind=kind,
                     operation=operation,
@@ -266,6 +273,13 @@ async def astream_with_reliability(
                 emitted,
             )
             if trace_context:
+                trace_context.update(
+                    {
+                        "latency_ms": latency,
+                        "tokens_input": capture.tokens_input,
+                        "tokens_output": capture.tokens_output,
+                    }
+                )
                 if collected and all(isinstance(c, str) for c in collected):
                     response_json = "".join(collected)  # type: ignore[arg-type]
                 else:

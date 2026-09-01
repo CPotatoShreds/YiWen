@@ -218,3 +218,146 @@ export interface LlmProfile {
   is_active: boolean;
   created_at: string;
 }
+
+export interface CreatorRevision {
+  id: string;
+  asset_id: string;
+  revision_number: number;
+  status: "draft" | "pending_review" | "rejected" | "publishing" | "publish_failed" | "published";
+  lock_version: number;
+  publish_error?: string | null;
+  review_reason?: string | null;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  published_at?: string | null;
+  content: Record<string, string>;
+  ability_revision_ids: string[];
+}
+
+export interface CreatorAsset {
+  id: string;
+  owner_id: number;
+  kind: "ability" | "character" | "anecdote";
+  current_title: string;
+  normalized_title: string;
+  current_published_revision_id?: string | null;
+  deleted_at?: string | null;
+  updated_at?: string | null;
+  work_revision?: CreatorRevision | null;
+}
+
+export interface Scenario {
+  id: string;
+  revision_id: string;
+  name: string;
+  summary: string;
+  background: string;
+  victory_condition: string;
+  guardian_name: string;
+  guardian_ability_count: number;
+  challenge_count: number;
+  published_at?: string | null;
+}
+
+export interface CollectionAbility {
+  name: string;
+  effect: string;
+  detail?: string;
+  understanding?: string;
+}
+
+export interface CollectionParticipant {
+  name: string;
+  style: string;
+  tactic: string;
+  abilities: CollectionAbility[];
+}
+
+export interface CollectionStats {
+  challenge_count: number;
+  derived_count: number;
+  cracked_count: number;
+  avg_worldlines_to_derive: number | null;
+  avg_atoms_to_crack: number | null;
+}
+
+export interface Volume {
+  id: number;
+  title: string;
+  introduction: string;
+  author: string;
+  booklet_requirements: string;
+  victory_condition: string;
+  tianji: Array<{ name: string; description: string }>;
+  mine: boolean;
+  can_manage: boolean;
+  booklet_count: number;
+  created_at: string;
+}
+
+export interface Booklet {
+  id: number;
+  volume_id: number;
+  author: string;
+  defenders: CollectionParticipant[];
+  defender_people: number;
+  defender_ability_count: number;
+  opening: string;
+  challenges_open: boolean;
+  mine: boolean;
+  can_manage: boolean;
+  stats: CollectionStats;
+  history: Array<{ id: number; status: string; derived: boolean; cracked: boolean; worldline_count: number; created_at: string }>;
+  created_at: string;
+}
+
+export interface VolumeDetail extends Volume {
+  booklets: Booklet[];
+}
+
+export interface CollectionMessage {
+  id: number;
+  sequence: number;
+  role: "challenger" | "guardian";
+  text: string;
+  omniscient_text?: string | null;
+  created_at: string;
+}
+
+export interface CollectionGuess {
+  total: number;
+  cards: Array<{ cracked: boolean; missing?: string }>;
+  history: string[];
+  comments: GuessCommentaryGroup[][];
+  atom_count: number;
+  can_verify: boolean;
+  cracked: boolean;
+}
+
+export interface CollectionWorldline {
+  id: number;
+  sequence: number;
+  status: string;
+  token_budget: number;
+  tokens_used: number;
+  derived: boolean;
+  messages: CollectionMessage[];
+  guess: CollectionGuess | null;
+  created_at: string;
+}
+
+export interface CollectionChallenge {
+  id: number;
+  booklet_id: number;
+  opening: string;
+  challenger: string;
+  challengers: CollectionParticipant[];
+  status: string;
+  derived: boolean;
+  cracked: boolean;
+  worldlines: CollectionWorldline[];
+  created_at: string;
+}

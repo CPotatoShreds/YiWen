@@ -9,7 +9,6 @@ import {
   LogoutIcon,
   ScrollIcon,
   ShieldIcon,
-  SwordIcon,
   TrophyIcon,
   UsersIcon,
 } from "./icons";
@@ -38,7 +37,7 @@ export default function Navbar() {
             to="/abilities"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
-            <SwordIcon size={14} />
+            <BookIcon size={14} />
             异闻录
           </NavLink>
           <NavLink
@@ -56,11 +55,11 @@ export default function Navbar() {
             异闻榜
           </NavLink>
           <NavLink
-            to="/board"
+            to="/scenarios"
             className={({ isActive }) => "nav__link" + (isActive ? " is-active" : "")}
           >
             <ScrollIcon size={14} />
-            奇人榜
+            小天下集
           </NavLink>
           <NavLink
             to="/friends"
