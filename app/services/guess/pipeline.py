@@ -1,35 +1,32 @@
-"""猜词管道（共享）：逐门点评 → 检定。真实对战（battle.py）与试验场（test_battle.py）共用。
+"""猜词管道（共享）：拆分 → 原子配对 → 检定。小天下集挑战流程使用。
 
-一次「点评」= 用户道出完整猜测 → 按实际需要猜的门数并发发起多个 LLM 请求，一个请求只对比用户
-猜测与一门实际奇术，各自输出原子判定列表；落库为 guess_history 追加原文 + comments 追加
-[{index, items}]（items 元素为 {text, verdict, reason}），attempts_used +1；不改变任何看破状态。
+一次「配对」= 用户道出猜测 → 先切分为原子条目，再将每个原子与每门未看破奇术全组合并发请求；
+每个请求只输出该原子的四态判定，结果按完成顺序回调落库；不改变任何看破状态。
 一次「检定」= 玩家主动发起 → 对每张未看破卡并发调用，输入该卡自己的「猜测+点评」聊天记录
 （按卡过滤，避免跨卡泄露点评），返回 cracked（看破）/ missing（还缺什么），就地更新 cards
 并返回同一列表；不追加聊天记录。
 
-与 deduction.py 同构：本模块只编排「一轮猜词判定怎么跑」，不碰战斗记录生命周期与结算规则。
-节点构造器由调用方注入（battle 层别名 / 试验场直接 import），测试打桩同一位置。产出卡片含
-全部明细；真实对战落库时自行裁剪为 {cracked, missing, cracked_round}。
+与落库层同构：本模块只编排「一轮猜词判定怎么跑」，不碰挑战生命周期与结算落库（那些在
+scenario_domain 路由层）。节点构造器由调用方注入，测试可在同一位置打桩。产出卡片含
+全部明细；挑战记录落库时自行裁剪为 {cracked, missing, cracked_round}。
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from langchain_core.runnables import Runnable
 
-from app.services.nodes.guess.matcher import (
-    GUESS_COMMENTARY_TEMPLATE,
-    GUESS_VERIFY_TEMPLATE,
-    build_guess_commentary_llm,
-    build_guess_verify_llm,
-)
 from app.services.llm.reliability import ainvoke_with_reliability
-
-# 猜奇术规则：有限次数内逐次道出猜测，点评/检定都计入次数。上限 200（形同不限）——真正的结束靠
-# 「收手」：次数仅作兜底与试验场打桩（测试常 patch 为 1 模拟耗尽）。
-GUESS_ATTEMPTS_MAX = 200
+from app.services.nodes.guess.matcher import (
+    GUESS_PAIR_TEMPLATE,
+    GUESS_VERIFY_TEMPLATE,
+    PairMatch,
+    build_guess_pair_llm,
+    build_guess_verify_llm,
+    split_atomic_guesses,
+)
 
 # 检定失败时该卡的降级文案（可重试语义，不判看破）
 VERIFY_FAIL_MISSING = "检定失联，请稍后重试。"
@@ -60,41 +57,6 @@ def _round_atoms(round_comments, card_index: int | None = None) -> list[dict]:
     return atoms
 
 
-def strip_commentary_reason(comments: list | None) -> list[list[dict]]:
-    """逐门点评序列化前剥离内部 reason（绝不进前端）。
-
-    comments = 轮列表，每轮 = 各组 [{index, items}]；输出同构，但每组 items 只留 {text, verdict}。
-    兼容旧版 str 点评：整轮降为 index=0 的单组（无卡归属的旧数据）。
-    """
-    out: list[list[dict]] = []
-    for round_comments in comments or []:
-        if isinstance(round_comments, str):
-            out.append([{"index": 0, "items": [{"text": round_comments, "verdict": "部分是"}]}])
-            continue
-        out.append(
-            [
-                {
-                    "index": group.get("index"),
-                    "items": [
-                        {"text": it.get("text", ""), "verdict": _normalize_verdict(it.get("verdict"))}
-                        for it in group.get("items") or []
-                    ],
-                }
-                for group in round_comments or []
-            ]
-        )
-    return out
-
-
-def render_commentary_text(commentary: list[dict] | None) -> str:
-    """把一个点评轮次（各组 [{index, items}]）的原子判定渲染成一行文本（榜同步落库，天然剥离 reason）。"""
-    lines: list[str] = []
-    for group in commentary or []:
-        for it in group.get("items") or []:
-            lines.append(f"「{it['text']}」{_normalize_verdict(it.get('verdict'))}")
-    return "；".join(lines) if lines else ""
-
-
 def _chat_log(history: list[str], comments: list, card_index: int | None = None) -> str:
     """把「猜测+点评」平行列表拼成逐轮聊天记录（检定输入）。
 
@@ -111,51 +73,73 @@ def _chat_log(history: list[str], comments: list, card_index: int | None = None)
     return "\n".join(lines)
 
 
-async def run_guess_commentary(
+async def run_guess_split(text: str) -> list[str]:
+    """环节一：按旧版规则切分原子猜测，不调用模型。"""
+    items = split_atomic_guesses(text)
+    if not items:
+        raise ValueError("猜测不能为空")
+    return items
+
+
+async def run_guess_matching(
     *,
-    text: str,
+    items: list[str],
     abilities: list[dict],
     cards: list[dict],
     trace_context: dict | None = None,
-    build_commentary: Callable[..., Runnable] = build_guess_commentary_llm,
+    build_pair: Callable[..., Runnable] = build_guess_pair_llm,
     llm_config: dict | None = None,
+    on_match: Callable[[dict], Awaitable[None]] | None = None,
 ) -> list[dict]:
-    """对用户一次猜测逐门并发点评（环节一）。
+    """环节二：每个原子猜测与每门未看破奇术一一配对并发匹配。
 
-    对每张未看破卡发起一个独立请求（一个请求只对比用户猜测与这一门奇术），各自输出原子判定列表。
-    返回 [{index: 卡序号+1, items: [{text, verdict, reason}, ...]}]，index 与前端卡序号对齐。
-    单卡失败 → 该卡 items=[]；全部卡失败 → 上抛异常（整轮点评作废，不计次数，由调用方处理）。
+    返回结果按完成顺序产出；每个结果都会先通过 ``on_match`` 回调，供调用方立即落库。
+    单个配对失败不会影响其它配对，失败项也会以 ``status=failed`` 回调，保证前端能看到进度。
     """
-    pending = [ci for ci, card in enumerate(cards) if not card.get("cracked")]
-    if not pending:
+    pending_cards = [ci for ci, card in enumerate(cards) if not card.get("cracked")]
+    if not items or not pending_cards:
         return []
 
-    async def _commentary_card(ci: int) -> tuple[int, list[dict]]:
-        out = await ainvoke_with_reliability(
-            build_commentary(llm_config=llm_config),
-            GUESS_COMMENTARY_TEMPLATE.format_messages(
-                text=text,
-                ability=_ability_txt(abilities[ci]),
-            ),
-            operation="guess_commentary",
-            trace_context=trace_context,
-        )
-        return ci, [it.model_dump() for it in (out.items or [])]
+    async def _match(atom_index: int, card_index: int) -> dict:
+        result = {
+            "atom_index": atom_index + 1,
+            "card_index": card_index + 1,
+            "status": "matching",
+            "text": items[atom_index],
+            "verdict": "不能确定",
+            "reason": "",
+        }
+        try:
+            out: PairMatch = await ainvoke_with_reliability(
+                build_pair(llm_config=llm_config),
+                GUESS_PAIR_TEMPLATE.format_messages(
+                    item_text=items[atom_index],
+                    ability=_ability_txt(abilities[card_index]),
+                    existing="\n".join(
+                        f"- {value}"
+                        for value in (cards[card_index].get("matched") or [])
+                    )
+                    or "（暂无）",
+                ),
+                operation="guess_pair",
+                trace_context=trace_context,
+            )
+            text_value = str(getattr(out, "text", "") or "").strip()
+            verdict = _normalize_verdict(getattr(out, "verdict", "不能确定"))
+            result.update({"status": "complete", "text": text_value or items[atom_index], "verdict": verdict, "reason": str(getattr(out, "reason", "") or "")})
+        except Exception:  # noqa: BLE001 - 单配对失败不阻塞其它配对
+            result["status"] = "failed"
+        return result
 
-    results = await asyncio.gather(*(_commentary_card(ci) for ci in pending), return_exceptions=True)
-
-    groups: list[dict] = []
-    failed = 0
-    for ci, res in zip(pending, results):
-        if isinstance(res, Exception):  # noqa: PERF203 - 单卡点评失败仅该卡缺，不整轮作废
-            failed += 1
-            groups.append({"index": ci + 1, "items": []})
-        else:
-            items = res[1] or [{"text": text, "verdict": "不能确定", "reason": "模型未返回原子判定。"}]
-            groups.append({"index": ci + 1, "items": items})
-    if failed == len(pending):
-        raise RuntimeError("所有奇术点评均失败，点评作废。")
-    return groups
+    pairs = [(ai, ci) for ai in range(len(items)) for ci in pending_cards]
+    results: list[dict] = []
+    tasks = [asyncio.create_task(_match(ai, ci)) for ai, ci in pairs]
+    for task in asyncio.as_completed(tasks):
+        match = await task
+        results.append(match)
+        if on_match is not None:
+            await on_match(match)
+    return results
 
 
 async def run_guess_verification(
@@ -168,11 +152,12 @@ async def run_guess_verification(
     trace_context: dict | None = None,
     build_verify: Callable[..., Runnable] = build_guess_verify_llm,
     llm_config: dict | None = None,
+    on_result: Callable[[int, dict], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """对全部未看破卡并发检定（环节三），就地更新传入的 cards 并返回同一列表。
 
     每张卡：看破 → cracked/cracked_round 置位、missing 置空；未看破 → missing 记「还缺什么」。
-    verifies 明细供试验场展示。单卡调用失败 → 不判看破、missing 置可重试文案，不降级整轮。
+    verifies 明细供挑战详情展示。单卡调用失败 → 不判看破、missing 置可重试文案，不降级整轮。
     检定输入为该卡自己的聊天记录（_chat_log card_index 过滤），避免跨卡点评泄露。
     """
     pending = [ci for ci, card in enumerate(cards) if not card.get("cracked")]
@@ -194,7 +179,8 @@ async def run_guess_verification(
         except Exception:  # noqa: BLE001 - 单卡检定失败视为未看破，不降级整轮
             return ci, {"cracked": False, "missing": VERIFY_FAIL_MISSING}
 
-    for ci, verdict in await asyncio.gather(*(_verify_card(ci) for ci in pending)):
+    for task in asyncio.as_completed([asyncio.create_task(_verify_card(ci)) for ci in pending]):
+        ci, verdict = await task
         card = cards[ci]
         card["verifies"] = list(card.get("verifies") or []) + [
             {"round": round_no, "cracked": verdict["cracked"], "missing": verdict["missing"]}
@@ -205,5 +191,7 @@ async def run_guess_verification(
             card["missing"] = ""
         else:
             card["missing"] = verdict["missing"]
+        if on_result is not None:
+            await on_result(ci, verdict)
 
     return cards

@@ -1,81 +1,55 @@
-"""猜词节点：逐门点评 → 检定。
+"""猜词节点：原子配对判定 → 玩家主动检定。
 
-取代旧的三环节（拆分 → 配对 → 检定）。败方每次道出完整猜测，走两条流水线：
+挑战流程分为切分、配对和玩家主动检定三个动作：
 
-1. 点评（commentary）：输入 = 猜测全文 + 一门实际奇术。按「实际需要猜的门数」逐门并发，
-   一个请求只对比用户猜测与这一门奇术，强制输出一个原子判定列表：每个元素为
-   {text, verdict ∈ 是/否/部分是/不能确定, reason}。思考流程：先整体判定这一句对这
-   门是对是错，能锁定就输出单条；只有一部分对就切成原子片段各自判定。text 忠实引用
-   用户原文，verdict 只取四值之一；reason 是内部判定理由，只落库/调试用，绝不进前端。
+1. 配对（pair）：输入 = 一个原子猜测 + 一门实际奇术，并发输出一个四态原子判定。
 2. 检定（verify）：独立、由玩家主动发起。输入 = 全部「猜测+点评」聊天记录 + 一门未看破能力
    → 布尔判定该能力是否已看破，未看破时指出还缺什么。
 
-关键约束（玩法冻结后不可改）：点评绝不能泄露奇术真实名称/效果原文——这是胜负关键。
-提示词为用户可手调的草稿；点评/检定采用单条消息（system 提示词即用户消息），无冗余收尾。
+关键约束（玩法冻结后不可改）：配对判定绝不能泄露奇术真实名称/效果原文——这是胜负关键。
+提示词为用户可手调的草稿；配对/检定采用单条消息（提示词即用户消息），无冗余收尾。
 """
 
+import re
 from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.services.llm.client import build_chat_model
+from app.services.nodes.registry import NodeSpec, build_node
 
-# 环节一：点评。输入 = 用户猜测全文 + 一门实际奇术，输出对该门的原子判定列表。
-# 思考流程：先整体判对错，能锁定就单条；只有一部分对就切成原子片段各自给 verdict。
-GUESS_COMMENTARY_PROMPT = """你是一个严守底牌的海龟汤主持人。用户正在根据战斗叙述猜测对手实际使用了哪些奇术。
-你会拿到用户本次的完整猜测，以及其中一门实际奇术。你的任务：只对这一门奇术，把用户话里的判断
-逐条判定与它的相符程度，输出一个原子判定列表。数据库资料只作你的内部判定依据，绝不能原样或
-变相泄露给用户。
 
-用户本次的猜测：
-{text}
+def split_atomic_guesses(text: str) -> list[str]:
+    """把用户输入切成原子条目（换行与中英文逗号/顿号分隔，去首尾句点）。"""
+    items: list[str] = []
+    for line in re.split(r"\n", text):
+        for piece in re.split(r"[，,；;、]", line):
+            piece = piece.strip().strip("。．.")
+            if piece:
+                items.append(piece)
+    return items
 
-这一门实际奇术（绝密，仅供内部比对）：
+GUESS_PAIR_PROMPT = """用户正在根据一段叙述文本猜测里面的人物拥有什么能力。以下是用户的一条原子猜测与人物实际使用的一门奇术。
+只对这一条原子猜测给出四态判定，不要自动检定是否已经看破奇术。
+
+用户的猜测：
+{item_text}
+
+人物实际使用的能力（绝密，仅供内部比对）：
 {ability}
 
-思考流程：
-1. 先整体判断：用户发送的这一句话，对这一门奇术来说是对还是错。
-2. 如果可以锁定整体对错 → 直接输出这一句话对应的判定，verdict 给「是」或「否」。
-3. 如果只有一部分对 → 把用户文本切分成互不相干的原子片段，每个片段各自给一个判定。
-   原子片段必须是用户原文里实际说出的内容（忠实引用，不作改写、不补用户没说过的信息）。
+用户之前已猜出的线索（仅用于去重）：
+{existing}
 
-verdict 只取四值之一：
-- 是：用户这段话说中了这门奇术的真实特征（效果/范围/发动方式/限制等），换别的能力就对不上。
-- 否：用户这段话与这门奇术的真实情况相悖（包括把它误当成别的能力）。
-- 部分是：方向沾边但说得不精确、不完整，不能直接算说中。
-- 不能确定：仅凭这句话无法判断对应关系，既不能说中也不能说错。
+判定只取四值之一：是、否、部分是、不能确定。
+- 是：这条原子猜测准确命中该门奇术的真实特征。
+- 否：这条原子猜测与该门奇术相悖。
+- 部分是：方向沾边但不精确或不完整。
+- 不能确定：仅凭该条无法判断。
 
-下面是判定尺度示例。示例中的奇术名称与原文仅供你理解，不是你在真实对局中可以复述给用户的内容。
-
-以「杀意波动：以自身为中心释放杀意，范围可覆盖全图，被杀意波及的目标会陷入昏厥」为例：
-- 用户说「全图范围」→ [{{"text": "全图范围", "verdict": "是"}}]
-- 用户说「全图精神冲击」→ [{{"text": "全图范围", "verdict": "是"}}, {{"text": "精神冲击", "verdict": "是"}}]（该门确为全图的精神冲击类，使目标昏厥）
-- 用户说「全图即死」→ [{{"text": "全图", "verdict": "是"}}, {{"text": "即死", "verdict": "否"}}]（该门波及全图但效果不是即死）
-
-以「索命咒：发射一道魔咒，命中目标立刻死亡」为例：
-- 用户说「即死效果」→ [{{"text": "即死效果", "verdict": "是"}}]
-- 用户说「全图即死」→ [{{"text": "即死", "verdict": "是"}}, {{"text": "全图", "verdict": "否"}}]（有即死但非全图）
-
-以「瞬移：瞬移到任何看到的地方」为例：
-- 用户说「瞬移」→ [{{"text": "瞬移", "verdict": "是"}}]
-- 用户说「快速移动」→ [{{"text": "快速移动", "verdict": "否"}}]（本质不是加快速度）
-- 用户问「瞬移的限制是不是必须做手势念咒语」→ [{{"text": "限制必须做手势念咒语", "verdict": "否"}}]
-- 用户说「瞬移到任何看到的地方」→ [{{"text": "瞬移到任何看到的地方", "verdict": "是"}}]（核心限制已被说中）
-
-以「视域之魂：立马获得全图视野」为例：
-- 用户说「全图范围」→ [{{"text": "全图范围", "verdict": "是"}}]
-- 用户说「获得全图视野」→ [{{"text": "获得全图视野", "verdict": "是"}}]
-
-输出规则：
-1. 只输出一个原子判定列表，每个元素是 {{text, verdict, reason}}。
-2. text 忠实引用用户原文中的原子片段；verdict 只取「是/否/部分是/不能确定」之一；reason 是
-   给设计者/调试者看的简短内部理由（可写对照了哪条能力信息），它在真实对局中绝不允许出现在
-   任何面向用户的界面上。
-3. 不要替用户继续猜，不要补出用户没说过的能力名称、效果、限制、代价、发动条件、表现形式。
-4. 用户以问题形式询问时，只对该问题本身给「是/否/部分是/不能确定」，不展开底牌解释。
-5. 无法从用户话中提取任何可判定的原子内容时，输出空列表。"""
+输出 text 时忠实引用用户原子猜测，输出 reason 仅供内部调试，不得泄露奇术名称或效果原文。
+只输出结构化字段，不要补充用户没有说过的内容。"""
 
 # 环节二：检定。输入 = 全部「猜测+点评」聊天记录 + 一门能力，判定是否已看破；未看破指出还缺什么。
 GUESS_VERIFY_PROMPT = """你是一个海龟汤主持人，现在要判断用户是否已经看破其中一门奇术。
@@ -116,22 +90,16 @@ GUESS_VERIFY_PROMPT = """你是一个海龟汤主持人，现在要判断用户�
 - 不得输出奇术名称、效果原文、数据库字段值，不能用“该奇术其实……”交底。
 - 只输出结构化字段，不输出分析过程。"""
 
-GUESS_COMMENTARY_TEMPLATE = ChatPromptTemplate.from_messages([("user", GUESS_COMMENTARY_PROMPT)])
+GUESS_PAIR_TEMPLATE = ChatPromptTemplate.from_messages([("user", GUESS_PAIR_PROMPT)])
 GUESS_VERIFY_TEMPLATE = ChatPromptTemplate.from_messages([("user", GUESS_VERIFY_PROMPT)])
 
 
-class CommentaryItem(BaseModel):
-    """环节一输出：单条原子判定（对用户猜测中一个原子片段的四态判定）。"""
+class PairMatch(BaseModel):
+    """当前配对节点：单个原子猜测对单门奇术的四态判定。"""
 
-    text: str = Field(description="用户猜测中被单独判定的原子片段（忠实引用用户原文，不作改写）")
-    verdict: Literal["是", "否", "部分是", "不能确定"] = Field(description="四态之一：是/否/部分是/不能确定")
-    reason: str = Field(default="", description="内部判定理由，仅调试用，绝不向用户展示")
-
-
-class CommentaryRound(BaseModel):
-    """环节一输出：对单门奇术的原子判定列表（整体可锁定对错时输出单条）。"""
-
-    items: list[CommentaryItem] = Field(default_factory=list, description="原子判定列表；无法提取任何可判定内容时为空列表")
+    text: str = Field(default="", description="用户原子猜测原文")
+    verdict: Literal["是", "否", "部分是", "不能确定"] = Field(default="不能确定", description="四态判定")
+    reason: str = Field(default="", description="内部判定理由，仅调试用")
 
 
 class Verification(BaseModel):
@@ -141,15 +109,14 @@ class Verification(BaseModel):
     missing: str = Field(default="", description="未看破时指出还缺什么；已看破时为空")
 
 
-def build_guess_commentary_llm(llm_config: dict | None = None) -> Runnable:
-    """点评 LLM：结构化输出 CommentaryRound（原子判定列表）。"""
-    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
-        CommentaryRound, method="function_calling"
-    )
+SPEC_PAIR = NodeSpec(id="guess_pair", template=GUESS_PAIR_TEMPLATE, schema=PairMatch, pipes_template=False)
+SPEC_VERIFY = NodeSpec(id="guess_verify", template=GUESS_VERIFY_TEMPLATE, schema=Verification, pipes_template=False)
+
+
+def build_guess_pair_llm(llm_config: dict | None = None) -> Runnable:
+    return build_node(SPEC_PAIR, llm_config=llm_config)
 
 
 def build_guess_verify_llm(llm_config: dict | None = None) -> Runnable:
     """检定 LLM：结构化输出 Verification。"""
-    return build_chat_model(thinking=False, llm_config=llm_config).with_structured_output(
-        Verification, method="function_calling"
-    )
+    return build_node(SPEC_VERIFY, llm_config=llm_config)

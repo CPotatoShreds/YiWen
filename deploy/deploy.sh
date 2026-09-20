@@ -43,7 +43,7 @@ if [ ! -f deploy/.env.production ]; then
   echo "[deploy] 已生成 deploy/.env.production，请编辑其中的口令与 LLM Key 后再跑一次"
 fi
 
-# 远端构建并启动（app 保持单副本，勿 --scale）
+# 远端构建并启动（SSE 走 Redis 总线，多副本可用；默认单副本起步）
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml up -d --build
 '
 

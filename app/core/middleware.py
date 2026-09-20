@@ -1,6 +1,6 @@
 """请求流量中间件：记录每次 /api 请求到 request_logs，供管理员流量面板使用。
 
-**必须用纯 ASGI**：应用有 SSE 战斗流（text/event-stream），BaseHTTPMiddleware 会
+**必须用纯 ASGI**：应用有 SSE 推演流（text/event-stream），BaseHTTPMiddleware 会
 把响应包成 StreamingResponse 缓冲，破坏逐段转写。这里只包装 send 观察
 http.response.start 拿状态码，不触碰 body，SSE 原样透传。
 
@@ -12,11 +12,13 @@ http.response.start 拿状态码，不触碰 body，SSE 原样透传。
 from __future__ import annotations
 
 import time
+import uuid
 
 import jwt
+from starlette.datastructures import MutableHeaders
 
 from app.core.config import settings
-from app.core.logger import get_logger
+from app.core.logger import get_logger, reset_request_id, set_request_id
 from app.db.base import async_session_factory
 from app.models.request_log import RequestLog
 
@@ -35,7 +37,7 @@ def _decode_user_id(authorization: bytes | None) -> int | None:
         if scheme.lower() != "bearer" or not token:
             return None
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        return int(payload.get("sub"))
+        return int(payload.get("sub"))  # type: ignore[arg-type]
     except (jwt.PyJWTError, ValueError, TypeError):
         return None
 
@@ -97,3 +99,62 @@ class RequestLoggingMiddleware:
         finally:
             # 响应体已完整发出：await 落库（不 fire-and-forget，防悬挂写事务）
             await _write_log(path, scope.get("method", ""), status_code or 500, duration_ms, user_id)
+
+
+class RequestIdMiddleware:
+    """纯 ASGI：透传入站 X-Request-ID（截断防滥用）或生成短随机 ID。
+
+    写入日志 contextvar（随 asyncio.create_task 透传到后台任务）并在响应头回带，
+    客户端反馈问题时可凭此检索全链路日志。SSE 流式安全（不触碰 body）。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {key: value for key, value in scope.get("headers") or []}
+        request_id = headers.get(b"x-request-id", b"").decode(errors="ignore")[:64] or uuid.uuid4().hex[:12]
+        token = set_request_id(request_id)
+
+        async def send_wrapper(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).append("X-Request-ID", request_id)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            reset_request_id(token)
+
+
+class SecurityHeadersMiddleware:
+    """纯 ASGI：统一安全响应头。
+
+    CSP 暂只收紧 frame-ancestors（禁止被 iframe 嵌套）；完整脚本 CSP 需要
+    前端构建配合（内联脚本 nonce 化），另行处理。HSTS 仅在显式启用 HTTPS
+    Cookie（即链路上有 TLS 终止）时下发。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["X-Frame-Options"] = "DENY"
+                headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+                if settings.auth_cookie_secure:
+                    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

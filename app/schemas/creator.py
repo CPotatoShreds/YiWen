@@ -1,129 +1,70 @@
+"""用户奇人、奇术编辑接口。"""
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
-class AbilityDraftIn(BaseModel):
-    name: str = Field(default="", max_length=10)
+class AbilityCreate(BaseModel):
+    name: str = Field(max_length=10)
     effect: str = Field(min_length=1, max_length=50)
     detail: str = Field(default="", max_length=500)
-    lock_version: int | None = Field(default=None, ge=1)
-    model_config = {"extra": "ignore"}
 
+    @field_validator("name", "effect", "detail")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
 
-class CharacterDraftIn(BaseModel):
-    name: str = Field(default="", max_length=30)
+    @field_validator("name")
+    @classmethod
+    def require_name(cls, value: str) -> str:
+        if not value:
+            raise ValueError("名称不能为空")
+        return value
+
+    @field_validator("effect")
+    @classmethod
+    def require_effect(cls, value: str) -> str:
+        if not value:
+            raise ValueError("效果不能为空")
+        return value
+
+class AbilityOut(BaseModel):
+    id: str
+    owner_id: int
+    name: str
+    effect: str
+    detail: str
+    understanding: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+class CharacterCreate(BaseModel):
+    name: str = Field(max_length=30)
     bio: str = Field(default="", max_length=500)
-    lock_version: int | None = Field(default=None, ge=1)
-    model_config = {"extra": "ignore"}
+    ability_ids: list[str] = Field(default_factory=list, max_length=4)
 
+    @field_validator("name", "bio")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
 
-class CharacterComponentIn(CharacterDraftIn):
-    ability_asset_ids: list[UUID] = Field(default_factory=list, max_length=4)
+    @field_validator("name")
+    @classmethod
+    def require_name(cls, value: str) -> str:
+        if not value:
+            raise ValueError("名称不能为空")
+        return value
 
-
-class AnecdoteDraftIn(BaseModel):
-    name: str = Field(default="", max_length=30)
-    summary: str = Field(min_length=1, max_length=120)
-    background: str = Field(min_length=1, max_length=1000)
-    victory_condition: str = Field(min_length=1, max_length=300)
-    lock_version: int | None = Field(default=None, ge=1)
-
-
-class AnecdoteRejectIn(BaseModel):
-    reason: str = Field(min_length=1, max_length=1000)
-
-
-class CharacterAbilitiesIn(BaseModel):
-    revision_id: UUID
-    ability_revision_ids: list[UUID] = Field(max_length=4)
-    lock_version: int = Field(ge=1)
-
-
-class TagIn(BaseModel):
-    name: str = Field(min_length=1, max_length=30)
-
-
-class TagsReplaceIn(BaseModel):
-    tag_ids: list[UUID] = Field(max_length=30)
-
-
-class RevisionOut(BaseModel):
-    id: UUID
-    asset_id: UUID
-    revision_number: int
-    status: str
-    lock_version: int
-    based_on_revision_id: UUID | None = None
-    publish_error: str | None = None
-    review_reason: str | None = None
-    submitted_at: datetime | None = None
-    reviewed_at: datetime | None = None
-    reviewed_by: int | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    published_at: datetime | None = None
-    content: dict = {}
-    ability_revision_ids: list[UUID] = []
-
-    model_config = {"from_attributes": True}
-
-
-class AssetOut(BaseModel):
+class CharacterOut(BaseModel):
     id: UUID
     owner_id: int
-    kind: str
-    current_title: str
-    normalized_title: str
-    current_published_revision_id: UUID | None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    deleted_at: datetime | None = None
-    work_revision: RevisionOut | None = None
-    model_config = {"from_attributes": True}
-
-
-class ComponentOut(BaseModel):
-    id: UUID
-    kind: str
     name: str
-    content: dict
-    lock_version: int
-    ability_asset_ids: list[UUID] = Field(default_factory=list)
-    updated_at: datetime | None = None
+    bio: str
+    ability_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
-
-class CursorPage(BaseModel):
-    items: list[AssetOut]
-    next_cursor: str | None = None
-
-
-class TagOut(BaseModel):
-    id: UUID
-    name: str
-    normalized_name: str
-    model_config = {"from_attributes": True}
-
-
-class AnecdotePublicOut(BaseModel):
-    id: UUID
-    revision_id: UUID
-    name: str
-    summary: str
-    background: str
-    victory_condition: str
-    published_at: datetime | None = None
-    created_at: datetime | None = None
-
-
-class AnecdotePublicPage(BaseModel):
-    items: list[AnecdotePublicOut]
-    next_cursor: str | None = None
-
-
-class AnecdoteReviewOut(BaseModel):
-    id: UUID
-    owner_id: int
-    revision: RevisionOut
-    owner_name: str | None = None
+class CharacterDetailOut(CharacterOut):
+    abilities: list[AbilityOut] = Field(default_factory=list)

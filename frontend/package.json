@@ -10,13 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@arco-design/web-react": "^2.66.16",
     "jsencrypt": "^3.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.18.2",
-    "remark-gfm": "^4.0.1"
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

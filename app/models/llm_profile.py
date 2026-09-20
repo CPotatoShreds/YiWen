@@ -1,6 +1,6 @@
 """用户自配 LLM 方案模型：provider/base_url/api_key/model 的一套配置，一用户可有多套，激活一套生效。
 
-api_key 明文落库（与参考项目一致），API 层永不回传明文，只给 has_api_key 布尔。
+api_key 经 profile_crypto 的 Fernet 加密后落库，API 层永不回传明文，只给 has_api_key 布尔。
 """
 
 from datetime import datetime

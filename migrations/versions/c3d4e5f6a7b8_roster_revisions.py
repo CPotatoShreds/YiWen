@@ -1,5 +1,6 @@
 """Complete roster revision snapshots and challenge transcript fields."""
 from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 

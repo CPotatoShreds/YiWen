@@ -1,1 +1,19 @@
-Generic single-database configuration with an async dbapi.
+# migrations — 数据库结构变更档案
+
+Alembic 迁移目录。`versions/` 里每个文件是数据库结构的一次带编号的变更，
+按 `down_revision` 链成一条单向时间线；已应用的迁移**永不修改、永不删除**。
+
+## 常用命令
+
+```bash
+uv run alembic upgrade head            # 升级到最新
+uv run alembic current                 # 看数据库现在处于哪个版本
+uv run alembic revision --autogenerate -m "..."   # 对比 ORM 模型自动生成迁移
+uv run alembic check                   # 校验模型与库结构是否一致（应报 No new upgrade operations）
+```
+
+## 规矩
+
+1. 改了 `app/models/` 之后，先 `alembic check` 看漂移，再 autogenerate 出迁移并**人工复核**（自动生成的 downgrade 常有坑，如匿名约束的回滚）。
+2. 新迁移的 `down_revision` 必须接到当前唯一 head 上，保持单链；迁移文件名与 message 用英文描述变更本身。
+3. 删表/删列属于破坏性操作：先核对数据实况，并征得同意（见仓库根 AGENTS.md）。

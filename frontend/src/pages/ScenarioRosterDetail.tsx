@@ -1,25 +1,348 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { CheckIcon, LockIcon, ScrollIcon, SwordIcon } from "../components/icons";
-import { parseUtc } from "../time";
+import { BookIcon, ChevronLeftIcon, ChevronRightIcon, ScrollIcon } from "../components/icons";
+import { CardBack, SealStamp } from "../components/Ornaments";
+import { ScenarioHistory } from "../components/ScenarioHistory";
+import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
 
-type Character = { id: string; current_title: string };
-type History = { id: string; status: string; challenge_number: number; is_preview: boolean; won: boolean | null; guess_attempts: number; created_at: string; finished_at?: string; challenger_character_name?: string; challenger_id?: number; challenger_name?: string };
-type Detail = { scenario: { id: string; name: string; summary: string; background: string; victory_condition: string }; roster: { id: string; owner_id: number; owner_name: string; character_name: string; character_bio: string; guidance: string; ability_count: number; challenge_count: number; challenger_win_rate: number | null; first_victory_avg_challenges: number | null }; viewer_role: "challenger" | "owner"; my_progress: { attempts: number; first_victory_challenges: number | null; cracked_cards: { index: number; cracked: boolean; name?: string; effect?: string }[]; guess_count: number } | null; my_challenges: History[]; owner_challenges: History[]; next_cursor: string | null };
+type Feedback = { text?: string; verdict?: string; round?: number | string };
+type GuessRound = {
+  attempt?: number;
+  matches?: { card_index?: number; text?: string; verdict?: string }[];
+  comments?: { index?: number; items?: { text?: string; verdict?: string }[] }[];
+};
+type Card = { index: number; cracked: boolean; name?: string; effect?: string; feedback?: Feedback[] };
+type Progress = {
+  attempts: number;
+  guess_count: number;
+  guess_credits: number;
+  cracked_cards: Card[];
+  guess_rounds?: GuessRound[];
+};
+type Detail = {
+  scenario: { id: string; slug: string; name: string };
+  roster: {
+    character_name: string;
+    character_bio: string;
+    owner_name: string;
+    ability_count: number;
+    challenger_win_rate: number | null;
+  };
+  viewer_role: string;
+  my_progress?: Progress | null;
+  my_challenges: ScenarioHistoryItem[];
+};
+type Clue = { text: string; verdict?: string; round?: number | string };
 
-const date = (value?: string) => value ? parseUtc(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+// 卡牌在扇面上相对居中的偏移；单张居中，多张两侧各露出一张
+function relativePosition(index: number, active: number, count: number) {
+  let offset = index - active;
+  if (offset > count / 2) offset -= count;
+  if (offset < -count / 2) offset += count;
+  return offset;
+}
+
+function cardStyle(position: number, count: number): CSSProperties {
+  if (count <= 2) {
+    if (position === 0) {
+      return {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: "translate(-50%, -50%) scale(1)",
+        opacity: 1,
+        zIndex: 10,
+        transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+        pointerEvents: "auto",
+      };
+    }
+    const side = position < 0 ? -1 : 1;
+    return {
+      position: "absolute",
+      left: `calc(50% + ${side * 34}%)`,
+      top: "50%",
+      transform: `translate(-50%, -50%) scale(0.78) rotate(${side * 4}deg)`,
+      opacity: 0.6,
+      zIndex: 5,
+      transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      pointerEvents: "auto",
+    };
+  }
+  if (position === 0) {
+    return {
+      position: "absolute",
+      left: "50%",
+      top: "50%",
+      transform: "translate(-50%, -50%) scale(1)",
+      opacity: 1,
+      zIndex: 10,
+      transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      pointerEvents: "auto",
+    };
+  }
+  if (Math.abs(position) === 1) {
+    const side = position < 0 ? -1 : 1;
+    return {
+      position: "absolute",
+      left: `calc(50% + ${side * 32}%)`,
+      top: "50%",
+      transform: `translate(-50%, -50%) scale(0.78) rotate(${side * 5}deg)`,
+      opacity: 0.55,
+      zIndex: 5,
+      transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      pointerEvents: "auto",
+    };
+  }
+  return {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    transform: "translate(-50%, -50%) scale(0.6)",
+    opacity: 0,
+    zIndex: 0,
+    pointerEvents: "none",
+    transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+  };
+}
+
+// 猜词检定的裁定词 → 配色语义（是=墨绿 否=朱砂 部分/不确定=中性）
+function verdictClass(v?: string) {
+  if (!v) return "verdict-neutral";
+  if (v === "是") return "verdict-yes";
+  if (v === "否") return "verdict-no";
+  if (v === "部分是") return "verdict-partial";
+  return "verdict-neutral";
+}
 
 export default function ScenarioRosterDetail() {
-  const { scenarioId, rosterId } = useParams<{ scenarioId: string; rosterId: string }>();
-  const navigate = useNavigate();
-  const [detail, setDetail] = useState<Detail | null>(null); const [characters, setCharacters] = useState<Character[]>([]); const [selected, setSelected] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [loadingMore, setLoadingMore] = useState(false);
-  const load = async (cursor?: string) => { if (!scenarioId || !rosterId) return; const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""; const result = await api<Detail>(`/scenarios/${scenarioId}/rosters/${rosterId}${suffix}`); setDetail((current) => cursor && current ? { ...result, my_challenges: current.my_challenges, owner_challenges: [...current.owner_challenges, ...result.owner_challenges] } : result); };
-  useEffect(() => { void load().catch((cause: Error) => setError(cause.message)); api<{ items: Character[] }>("/creator/assets?kind=character&limit=100").then((result) => setCharacters(result.items)).catch(() => undefined); }, [scenarioId, rosterId]);
-  const active = useMemo(() => detail?.my_challenges.filter((item) => !["won", "lost", "failed"].includes(item.status) && item.won === null && !item.is_preview).sort((a, b) => b.created_at.localeCompare(a.created_at))[0], [detail]);
-  const start = async () => { if (!rosterId || !selected) { setError("请先选择自己的奇人"); return; } setBusy(true); setError(""); try { const result = await api<{ id: string }>(`/scenario-rosters/${rosterId}/challenges`, { method: "POST", body: JSON.stringify({ character_asset_id: selected }) }); navigate(`/scenario-challenges/${result.id}`); } catch (cause) { setError(cause instanceof Error ? cause.message : "挑战创建失败"); } finally { setBusy(false); } };
-  if (!detail) return error ? <p className="err">{error}</p> : <div className="skeleton" style={{ height: 360 }} />;
-  const cards = detail.my_progress?.cracked_cards ?? Array.from({ length: detail.roster.ability_count }, (_, i) => ({ index: i + 1, cracked: false }));
-  const history = detail.viewer_role === "owner" ? detail.owner_challenges : detail.my_challenges;
-  return <><div className="section-head scenario-detail-head"><div><h1 className="section-title"><ScrollIcon size={22} /> {detail.roster.character_name}</h1><p className="muted">{detail.scenario.name} · {detail.roster.owner_name}</p></div><Link className="muted" to={`/scenarios/${detail.scenario.id}`}>返回小天下集情景</Link></div><section className="panel scenario-roster-detail"><div className="scenario-roster-detail__identity"><h2>{detail.roster.character_name}</h2><p>{detail.roster.character_bio || "暂无简介"}</p><p className="muted">指导策略：{detail.roster.guidance || "作者未提供"}</p></div><div className="scenario-roster-card__stats"><span>{detail.roster.ability_count} 门奇术</span><span>{detail.roster.challenge_count} 次挑战</span><span>胜率 {detail.roster.challenger_win_rate == null ? "暂无数据" : `${Math.round(detail.roster.challenger_win_rate * 100)}%`}</span><span>首胜平均 {detail.roster.first_victory_avg_challenges == null ? "暂无数据" : `${detail.roster.first_victory_avg_challenges.toFixed(1)} 次`}</span></div>{detail.viewer_role === "challenger" && <div className="scenario-roster-detail__start">{active && <Link className="btn btn-primary" to={`/scenario-challenges/${active.id}`}><SwordIcon size={14} /> 继续最近挑战</Link>}<label>选择自己的奇人<select value={selected} onChange={(event) => setSelected(event.target.value)}><option value="">请选择</option>{characters.map((character) => <option key={character.id} value={character.id}>{character.current_title}</option>)}</select></label><button className="btn btn-primary" disabled={busy || !selected} onClick={() => void start()}><SwordIcon size={14} /> 开始挑战</button></div>}</section><section className="panel"><div className="panel__head"><h3>勘算进度</h3><span className="muted">已看破 {cards.filter((card) => card.cracked).length} / {cards.length} · 挑战 {detail.my_progress?.attempts ?? 0} 次 · 猜词 {detail.my_progress?.guess_count ?? 0} 次</span></div><div className="guess-board">{cards.map((card) => <div className={`guess-card ${card.cracked ? "guess-card--cracked" : ""}`} key={card.index}><div className="guess-card__head"><span className="guess-card__no">第 {card.index} 门</span>{card.cracked ? <span className="guess-card__label guess-card__label--hit"><CheckIcon size={13} /> 已看破</span> : <span className="guess-card__label"><LockIcon size={13} /> 未知奇术</span>}</div>{card.cracked ? <><div className="guess-card__name">{card.name}</div><p className="guess-card__effect">{card.effect}</p></> : <p className="muted">尚未看破</p>}</div>)}</div>{detail.my_progress?.first_victory_challenges != null && <p className="muted">首次胜利：第 {detail.my_progress.first_victory_challenges} 次挑战</p>}</section><section className="panel"><div className="panel__head"><h3>{detail.viewer_role === "owner" ? "挑战记录" : "我的挑战记录"}</h3></div>{history.length === 0 ? <div className="empty"><ScrollIcon size={20} /><p>尚无挑战记录。</p></div> : <div className="scenario-history-list">{history.map((item) => <Link className="scenario-history-row" to={`/scenario-challenges/${item.id}`} key={item.id}><span><b>{item.challenger_name || item.challenger_character_name || `第 ${item.challenge_number} 次挑战`}</b><small>{date(item.created_at)} · {item.won === true ? "胜利" : item.won === false ? "失败" : "进行中"}{item.challenger_name ? ` · ${item.challenger_name}` : ""}</small></span><span className="muted">查看 →</span></Link>)}</div>}{detail.viewer_role === "owner" && detail.next_cursor && <button className="btn btn-ghost" disabled={loadingMore} onClick={async () => { setLoadingMore(true); try { await load(detail.next_cursor!); } finally { setLoadingMore(false); } }}>{loadingMore ? "加载中..." : "加载更多"}</button>}</section>{error && <p className="err">{error}</p>}</>;
+  const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [activeCard, setActiveCard] = useState(0);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!scenarioSlug || !rosterId) return;
+    api<Detail>(`/scenarios/${scenarioSlug}/rosters/${rosterId}`)
+      .then(setDetail)
+      .catch((cause: Error) => setError(cause.message));
+  }, [scenarioSlug, rosterId]);
+
+  const cards = useMemo(() => {
+    const source = detail?.my_progress?.cracked_cards ?? [];
+    const count = detail?.roster.ability_count ?? source.length;
+    const byIndex = new Map(source.map((c) => [c.index, c]));
+    return Array.from({ length: count }, (_, i) => byIndex.get(i + 1) ?? { index: i + 1, cracked: false });
+  }, [detail]);
+
+  useEffect(() => {
+    setActiveCard((cur) => (cards.length ? cur % cards.length : 0));
+  }, [cards.length]);
+
+  const progress = detail?.my_progress;
+  const current = cards[activeCard];
+
+  const clues = useMemo<Clue[]>(() => {
+    if (!current || !progress) return [];
+    const collected: Clue[] = [];
+    for (const item of current.feedback ?? []) {
+      if (item.text) collected.push({ text: item.text, verdict: item.verdict, round: item.round });
+    }
+    for (const [ri, round] of (progress.guess_rounds ?? []).entries()) {
+      for (const m of round.matches ?? [])
+        if (m.card_index === current.index && m.text)
+          collected.push({ text: m.text, verdict: m.verdict, round: round.attempt ?? ri + 1 });
+      for (const g of round.comments ?? [])
+        if (g.index === current.index)
+          for (const c of g.items ?? [])
+            if (c.text) collected.push({ text: c.text, verdict: c.verdict, round: round.attempt ?? ri + 1 });
+    }
+    const unique = new Map<string, Clue>();
+    for (const clue of collected) unique.set(`${clue.round}-${clue.text}`, clue);
+    return [...unique.values()].reverse();
+  }, [current, progress]);
+
+  const moveCard = (step: number) => {
+    if (cards.length) setActiveCard((i) => (i + step + cards.length) % cards.length);
+  };
+
+  if (error) return <p className="roster-error">{error}</p>;
+  if (!detail) return <div className="roster-skeleton" />;
+
+  const cracked = cards.filter((c) => c.cracked).length;
+  const winRatePct = detail.roster.challenger_win_rate == null ? null : Math.round(detail.roster.challenger_win_rate * 100);
+  const showArrows = cards.length > 1;
+
+  return (
+    <div className="roster-page">
+      {/* 上区：奇人信息 + 奇术卡扇形轮盘 */}
+      <section className="roster-stage">
+        <div className="roster-metrics">
+          <div className="roster-metrics__identity">
+            <div className="roster-metrics__name-row">
+              <ScrollIcon size={15} />
+              <h2>{detail.roster.character_name}</h2>
+            </div>
+            <p className="roster-metrics__owner">
+              {detail.scenario.name} · {detail.roster.owner_name}
+            </p>
+          </div>
+          <p className="roster-metrics__bio">{detail.roster.character_bio || "暂无简介"}</p>
+          <div className="roster-metrics__footer">
+            <div className="roster-metrics__row">
+              <div className="roster-metrics__stat">
+                <b>{cracked}</b>
+                <span>/{cards.length} 已知</span>
+              </div>
+              <div className="roster-metrics__divider" />
+              <div className="roster-metrics__stat">
+                <b>{progress?.attempts ?? 0}</b>
+                <span>次推演</span>
+              </div>
+              <div className="roster-metrics__divider" />
+              <div className="roster-metrics__stat">
+                <b>{progress?.guess_credits ?? 0}</b>
+                <span>可提问</span>
+              </div>
+            </div>
+            {winRatePct != null && (
+              <div className="roster-metrics__winrate">
+                <span>全体挑战者胜率</span>
+                <b>{winRatePct}%</b>
+              </div>
+            )}
+          </div>
+          <Link className="roster-metrics__back" to={`/scenarios/${detail.scenario.slug}`}>
+            返回卷册
+          </Link>
+        </div>
+
+        <div
+          className="roster-wheel"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") moveCard(-1);
+            if (e.key === "ArrowRight") moveCard(1);
+          }}
+          aria-label="奇术卡片轮转"
+        >
+          <div className="roster-wheel__label">
+            <span>奇术卡片</span>
+            <small>
+              当前选中 · {activeCard + 1} / {cards.length || 0}
+            </small>
+          </div>
+
+          {showArrows && (
+            <button
+              type="button"
+              className="roster-wheel__arrow roster-wheel__arrow--prev"
+              aria-label="上一门奇术"
+              onClick={() => moveCard(-1)}
+            >
+              <ChevronLeftIcon size={20} />
+            </button>
+          )}
+
+          <div className="roster-wheel__track">
+            {cards.map((card, index) => {
+              const pos = relativePosition(index, activeCard, cards.length);
+              return (
+                <article
+                  className={`roster-card ${card.cracked ? "is-cracked" : "is-unknown"} ${pos === 0 ? "is-active" : ""}`}
+                  style={cardStyle(pos, cards.length)}
+                  key={card.index}
+                  aria-hidden={Math.abs(pos) > 1 && cards.length > 2}
+                >
+                  {!card.cracked && <CardBack />}
+                  <header className="roster-card__head">
+                    <span className="roster-card__label">第 {card.index} 门奇术</span>
+                    {card.cracked && <SealStamp char="破" size={24} className="roster-card__seal" />}
+                  </header>
+                  {card.cracked ? (
+                    <>
+                      <h3>{card.name || "已看破奇术"}</h3>
+                      <p>{card.effect || "已揭示效果，暂无详述。"}</p>
+                    </>
+                  ) : (
+                    <span className="roster-card__veiled">未看破</span>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+
+          {showArrows && (
+            <button
+              type="button"
+              className="roster-wheel__arrow roster-wheel__arrow--next"
+              aria-label="下一门奇术"
+              onClick={() => moveCard(1)}
+            >
+              <ChevronRightIcon size={20} />
+            </button>
+          )}
+
+          <div className="roster-wheel__action">
+            <Link
+              className="btn btn-primary"
+              to={`/scenarios/${scenarioSlug}/rosters/${rosterId}/battle`}
+            >
+              起笔
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* 下区：挑战记录 + 当前卡线索（各自内部滚动） */}
+      <section className="roster-book">
+        <div className="roster-book__page">
+          <header className="roster-book__header">
+            <div className="roster-book__header-left">
+              <BookIcon size={16} />
+              <h2>挑战记录</h2>
+            </div>
+            <span className="roster-book__meta">左页 · 翻阅</span>
+          </header>
+          <div className="roster-book__body">
+            <ScenarioHistory
+              items={detail.my_challenges}
+              emptyText="完成第一场挑战后，这里会留下记录。"
+              resolveHref={(item) =>
+                isInProgress(item.status)
+                  ? `/scenarios/${scenarioSlug}/rosters/${rosterId}/battle`
+                  : `/scenarios/${scenarioSlug}/rosters/${rosterId}/records?run=${item.id}`
+              }
+            />
+          </div>
+        </div>
+
+        <div className="roster-book__page roster-book__page--clues">
+          <header className="roster-book__header">
+            <div className="roster-book__header-left">
+              <span className="roster-book__mark">当前卡</span>
+              <h2>{current?.cracked ? current.name || "已看破奇术" : `第 ${current?.index ?? "?"} 门奇术`}</h2>
+            </div>
+            <span className="roster-book__meta">右页 · 行迹线索</span>
+          </header>
+          <div className="roster-book__body">
+            {clues.length ? (
+              <div className="roster-clues" aria-live="polite">
+                {clues.map((clue, i) => (
+                  <article key={`${clue.round}-${clue.text}-${i}`} className="roster-clue">
+                    <p className="roster-clue__text">{clue.text}</p>
+                    {clue.verdict && (
+                      <span className={`roster-clue__verdict ${verdictClass(clue.verdict)}`}>{clue.verdict}</span>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="roster-book__empty">尚无关于此门奇术的线索记录。</p>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }

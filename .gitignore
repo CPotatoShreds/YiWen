@@ -61,5 +61,15 @@ desktop.ini
 # Docker 部署
 *.tar
 
-# 运行时数据（行迹 md、日志；部署时走卷 /app/data）
-data/
+# 运行时产物（应用日志；profile_crypto 无 .env 密钥时的自动落盘）
+logs/
+/app/data/
+
+# 数据库备份产物（含容器外备份目录）
+backups/
+
+# 本地实验阵地（CDP 截图脚本、验收截图、浏览器 profile）
+tmp/
+
+# 工具会话产物
+.zcode/

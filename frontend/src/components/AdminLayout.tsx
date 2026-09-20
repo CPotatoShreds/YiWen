@@ -1,19 +1,13 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3Icon, BookIcon, GearIcon, PencilIcon, ScrollIcon, ShieldIcon, SwordIcon, TargetIcon, TestTubeIcon, UsersIcon } from "./icons";
+import { Link, NavLink, Outlet } from "react-router-dom";
+import { BarChart3Icon, BookIcon, ScrollIcon, TargetIcon, UsersIcon } from "./icons";
+import { CloudDivider } from "./Ornaments";
 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
   { to: "/admin/users", label: "异闻师", icon: UsersIcon },
   { to: "/admin/scenarios", label: "小天下集审核", icon: ScrollIcon },
   { to: "/admin/abilities", label: "奇术", icon: BookIcon },
-  { to: "/admin/battles", label: "行迹", icon: GearIcon },
-  { to: "/admin/loadouts", label: "奇人", icon: ShieldIcon },
-  { to: "/admin/relations", label: "关系", icon: UsersIcon },
   { to: "/admin/traffic", label: "流量", icon: BarChart3Icon },
-  { to: "/admin/chain", label: "链路", icon: ScrollIcon },
-  { to: "/admin/prompt-schemes", label: "提示词方案", icon: PencilIcon },
-  { to: "/admin/test", label: "试验场", icon: TestTubeIcon },
-  { to: "/admin/test/core-guess", label: "核心一句话", icon: SwordIcon }, // 临时试验：删除时连同页面一并移除
 ];
 
 export default function AdminLayout() {
@@ -21,11 +15,15 @@ export default function AdminLayout() {
     <div className="admin-shell">
       <div className="section-head admin-heading">
         <div>
-          <span className="eyebrow">CONTROL ROOM</span>
+          <span className="eyebrow">异闻司</span>
           <h1 className="section-title">后台案牍</h1>
         </div>
         <p className="muted">只为管理员开放的异闻录内务</p>
+        <div className="section-head__exit">
+          <Link className="muted" to="/home">返回首页</Link>
+        </div>
       </div>
+      <CloudDivider />
       <nav className="admin-subnav" aria-label="后台导航">
         {links.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? "is-active" : ""}>

@@ -19,6 +19,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ynfight-redis
+    # 缓存专用：内存上限 + allkeys-lru 淘汰（奇术比对缓存无 TTL，靠 LRU 约束增长）
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6380:6379"
     healthcheck:

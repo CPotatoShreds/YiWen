@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # 测试库由 lifespan 的 create_all 建立（conftest 不跑 Alembic），需 DEBUG=true
+      DEBUG: "1"
+      SECRET_KEY: ci-test-secret
+      # LLM 相关单测均为打桩；密钥仅防止配置校验类分支走偏
+      LLM_API_KEY: ci-dummy-key
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ynfight
+          POSTGRES_PASSWORD: ynfight
+          POSTGRES_DB: ynfight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ynfight"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: 安装依赖
+        run: uv sync
+      - name: Lint（ruff）
+        run: uv run ruff check .
+      - name: 类型检查（mypy，渐进接入先 core）
+        continue-on-error: true  # P2.6 渐进策略：先观察噪音再收紧
+        run: uv run mypy
+      - name: 测试
+        run: uv run pytest
+      - name: 依赖漏洞扫描（pip-audit）
+        continue-on-error: true  # 已知无法立即升级的传递依赖会误报，先观察后收紧
+        run: |
+          uv export --format requirements-txt --no-dev > requirements-ci.txt
+          uvx pip-audit -r requirements-ci.txt

@@ -1,1 +1,0 @@
-"""Creator asset domain services."""

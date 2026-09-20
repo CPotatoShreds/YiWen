@@ -21,6 +21,7 @@ dependencies = [
     # 用户认证（直接用 bcrypt，避免 passlib 停维护带来的兼容问题）
     "PyJWT>=2.10",
     "bcrypt>=5.0",
+    "pypinyin>=0.53",
     # LLM 调用
     "httpx>=0.28",
     "openai>=1.50",
@@ -29,10 +30,15 @@ dependencies = [
     "cryptography>=50.0.0",
     "fastapi-pagination>=0.12.34",
     "celery[redis]>=5.4",
+    "slowapi>=0.1.10",
+    "itsdangerous>=2.2.0",
+    "prometheus-fastapi-instrumentator>=8.1.0",
+    "arq>=0.28.0",
 ]
 
 [dependency-groups]
 dev = [
+    "mypy>=2.3.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
@@ -52,3 +58,11 @@ target-version = "py312"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# 渐进接入（P2.6）：先 core/services，路由与测试后补
+files = ["app/core"]
+warn_unused_ignores = false
+check_untyped_defs = true

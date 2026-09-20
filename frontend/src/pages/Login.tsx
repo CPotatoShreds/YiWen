@@ -1,28 +1,29 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
-import { BookIcon } from "../components/icons";
-import { InkMountains, Lantern, SwordsmanScene } from "../components/Ornaments";
+import { InkMountains, Lantern, SealStamp, SwordsmanScene } from "../components/Ornaments";
 
+/** 登录页：居中卡片 + 明确层级 + 口令可见切换 + 错误提示 + 条款微文案。 */
 export default function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setErr("");
     try {
-      await login(username, password);
-      nav("/");
+      await login(username.trim(), password);
+      nav("/home");
     } catch (e2: any) {
-      setErr(e2.message);
-    } finally {
-      setBusy(false);
+      setErr(e2?.message || "登录失败，请稍后重试");
+      setBusy(false); // 登录失败保持表单可用；成功后不再恢复（页面即将跳转）
     }
   }
 
@@ -44,45 +45,75 @@ export default function Login() {
       <div className="auth__card rise">
         <div className="auth__brand">
           <span className="brand__mark">
-            <BookIcon size={22} />
+            <SealStamp char="异" size={40} />
           </span>
           <h1>异闻录</h1>
         </div>
         <p className="auth__sub">登录，重返书场</p>
-        <div className="auth__gloss">
-          自创奇术 · 纯机制对抗 · 战败可凭行迹线索猜穿对家的奇术，命中即逆转胜负。
-        </div>
-        <form onSubmit={submit}>
+
+        {err && (
+          <div className="auth-alert" role="alert">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={submit} noValidate>
           <div className="field">
-            <label htmlFor="login-u">异闻师·名号</label>
+            <label htmlFor="login-username">用户名</label>
             <input
-              id="login-u"
+              id="login-username"
               className="input"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="你的名号"
               autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
             />
           </div>
+
           <div className="field">
-            <label htmlFor="login-p">口令</label>
-            <input
-              id="login-p"
-              className="input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="口令"
-              autoComplete="current-password"
-            />
+            <div className="field-label-row">
+              <label htmlFor="login-password">口令</label>
+              <Link className="field-link" to="/forgot-password">
+                忘记口令？
+              </Link>
+            </div>
+            <div className="input-wrap">
+              <input
+                id="login-password"
+                className="input"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="至少 6 位"
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                className="input-trail"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "隐藏口令" : "显示口令"}
+              >
+                {showPassword ? "隐藏" : "显示"}
+              </button>
+            </div>
           </div>
-          {err && <p className="err">{err}</p>}
+
           <button className="btn btn-primary btn-block" disabled={busy || !username || !password}>
-            {busy ? "登台中…" : "入座"}
+            {busy ? "登台中…" : "登录"}
           </button>
         </form>
+
         <p className="auth__foot">
-          没有名号？<Link to="/register">注册新异闻师</Link>
+          还没有名号？<Link to="/register">立即注册</Link>
+        </p>
+        <p className="auth-legal">
+          登录即表示同意
+          <Link to="/terms" target="_blank">《用户协议》</Link>
+          与
+          <Link to="/privacy" target="_blank">《隐私政策》</Link>
         </p>
       </div>
     </div>

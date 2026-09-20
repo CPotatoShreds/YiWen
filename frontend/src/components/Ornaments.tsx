@@ -32,53 +32,6 @@ export function Lantern({ size = 30, ...rest }: OrnamentProps) {
   );
 }
 
-/** 毛笔：笔杆 + 笔斗 + 收尖笔毫。白色（--surface），用于朱砂底上的「对决中」指示。 */
-export function Brush({ size = 26, ...rest }: OrnamentProps) {
-  return (
-    <svg width={size} height={size * (58 / 40)} viewBox="0 0 40 58" aria-hidden="true" {...rest}>
-      {/* 笔杆 */}
-      <rect x="16" y="3" width="8" height="30" rx="4" fill="var(--surface)" />
-      {/* 笔杆顶帽 */}
-      <rect x="15.6" y="2.2" width="8.8" height="5" rx="2.5" fill="var(--surface)" opacity="0.85" />
-      {/* 笔斗（箍） */}
-      <path d="M15.6 33 h8.8 l-1.4 4.6 h-6 z" fill="var(--surface)" opacity="0.85" />
-      {/* 笔毫（收尖） */}
-      <path d="M15.8 37.6 h8.4 l-2.2 15.5 Q 20 57.5 19.6 55 Z" fill="var(--surface)" />
-    </svg>
-  );
-}
-
-/** 挂幡：旗杆 + 开衩幡旗，旗面题「幡」字。高约为宽的 84/56。 */
-export function BattleBanner({ size = 44, ...rest }: OrnamentProps) {
-  return (
-    <svg width={size} height={size * (84 / 56)} viewBox="0 0 56 84" aria-hidden="true" {...rest}>
-      {/* 旗杆 */}
-      <rect x="12" y="2" width="2.6" height="80" rx="1.3" fill="var(--ink)" />
-      {/* 顶球 */}
-      <circle cx="13.3" cy="4.5" r="3" fill="var(--accent)" />
-      {/* 幡旗（下摆开衩，随风飘） */}
-      <path
-        d="M14.6 8 H 40 Q 45 13 45 21 Q 45 27 41 29 L 28 26.5 L 32 35.5 L 14.6 38 Z"
-        fill="var(--accent)"
-      />
-      <path d="M14.6 8 Q 30 9 40 16" fill="none" stroke="var(--accent-strong)" strokeWidth="1" opacity="0.7" />
-      <path d="M28 26.5 L 32 35.5 L 14.6 38" fill="none" stroke="var(--accent-strong)" strokeWidth="0.8" opacity="0.6" />
-      {/* 旗面题字 */}
-      <text
-        x="29.5"
-        y="25"
-        textAnchor="middle"
-        fontFamily="'Kaiti SC','STKaiti','PingFang SC',serif"
-        fontSize="11"
-        fontWeight="700"
-        fill="var(--surface)"
-      >
-        幡
-      </text>
-    </svg>
-  );
-}
-
 /** 远山剪影：三层深浅墨色山脊。默认等比铺满容器宽。 */
 export function InkMountains({ size, ...rest }: OrnamentProps) {
   return (
@@ -106,6 +59,151 @@ export function InkMountains({ size, ...rest }: OrnamentProps) {
           d="M0 200 L0 196 L190 168 L310 202 L462 176 L600 200 L762 172 L920 200 L1080 180 L1200 198 L1200 200 Z"
           opacity="0.16"
         />
+      </g>
+    </svg>
+  );
+}
+
+/** 白文印章：朱砂印面 + 留白印文（阴刻）。印面略有刀痕，印泥有未匀处。 */
+export function SealStamp({
+  char = "异",
+  size = 34,
+  ...rest
+}: OrnamentProps & { char?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" {...rest}>
+      {/* 印面：四边微有起伏，模拟刀刻 */}
+      <path
+        d="M4.6 3.4 Q 20 2.2 35.4 3.5 Q 37.6 20 35.3 36.6 Q 20 37.8 4.7 36.4 Q 2.3 20 4.6 3.4 Z"
+        fill="var(--accent)"
+      />
+      {/* 内栏：一道深朱砂细线，做出印面厚度（不是白框） */}
+      <path
+        d="M8.2 6.8 Q 20 6 31.8 6.9 Q 33.2 20 31.7 33.1 Q 20 33.9 8.3 33 Q 6.8 20 8.2 6.8 Z"
+        fill="none"
+        stroke="var(--accent-strong)"
+        strokeWidth="0.9"
+        opacity="0.5"
+      />
+      {/* 印泥未匀处 */}
+      <g fill="var(--surface)" opacity="0.12">
+        <circle cx="12.5" cy="12.6" r="1.4" />
+        <circle cx="28.6" cy="27.4" r="1.7" />
+      </g>
+      <text
+        x="20"
+        y="29.6"
+        textAnchor="middle"
+        fontFamily="'Kaiti SC','STKaiti','KaiTi','楷体','PingFang SC',serif"
+        fontSize="25"
+        fontWeight="500"
+        fill="var(--surface)"
+      >
+        {char}
+      </text>
+    </svg>
+  );
+}
+
+/** 云纹分隔：两侧细横线 + 朱砂如意珠。用于区块抬头之间的收束。 */
+export function CloudDivider({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className ? `cloud-divider ${className}` : "cloud-divider"}
+      viewBox="0 0 240 16"
+      height="16"
+      aria-hidden="true"
+    >
+      <g stroke="var(--line-strong)" strokeWidth="1" strokeLinecap="round">
+        <path d="M4 8 H104" opacity="0.7" />
+        <path d="M136 8 H236" opacity="0.7" />
+      </g>
+      <g fill="var(--line-strong)" opacity="0.55">
+        <circle cx="110.5" cy="8" r="1.5" />
+        <circle cx="129.5" cy="8" r="1.5" />
+      </g>
+      <path d="M120 2.4 L125.6 8 L120 13.6 L114.4 8 Z" fill="var(--accent)" />
+    </svg>
+  );
+}
+
+/** 空卷：一轴未落墨的纸笺 + 朱砂空印。用于各处空态插画。 */
+export function EmptyScroll({ size = 150, className, ...rest }: OrnamentProps) {
+  return (
+    <svg
+      className={className ? `empty-scroll ${className}` : "empty-scroll"}
+      width={size}
+      height={size * (108 / 160)}
+      viewBox="0 0 160 108"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+      {...rest}
+    >
+      <g fill="var(--ink)">
+        {/* 左轴 */}
+        <rect x="8" y="22" width="11" height="64" rx="5.5" opacity="0.16" />
+        <ellipse cx="13.5" cy="22" rx="5.5" ry="2.8" opacity="0.2" />
+        <ellipse cx="13.5" cy="86" rx="5.5" ry="2.8" opacity="0.2" />
+        {/* 右轴（半露） */}
+        <rect x="143" y="30" width="9" height="50" rx="4.5" opacity="0.13" />
+        <ellipse cx="147.5" cy="30" rx="4.5" ry="2.4" opacity="0.17" />
+        <ellipse cx="147.5" cy="80" rx="4.5" ry="2.4" opacity="0.17" />
+      </g>
+      {/* 纸面 */}
+      <path
+        d="M19 20 H144 V88 H19 Z"
+        fill="var(--surface)"
+        stroke="var(--line-strong)"
+        strokeWidth="1"
+      />
+      {/* 朱丝栏（未写字的行） */}
+      <g stroke="var(--line)" strokeWidth="1" strokeLinecap="round">
+        <path d="M32 36 H130" />
+        <path d="M32 49 H130" />
+        <path d="M32 62 H130" />
+        <path d="M32 75 H104" />
+      </g>
+      {/* 空印 */}
+      <path
+        d="M108 58 h15 v15 h-15 z"
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth="1.4"
+        strokeDasharray="3 2.6"
+        opacity="0.5"
+      />
+    </svg>
+  );
+}
+
+/** 奇术卡背：双线边栏 + 四角回纹 + 中心圆光。铺满容器，用于未看破的卡。 */
+export function CardBack({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className ? `card-back ${className}` : "card-back"}
+      viewBox="0 0 132 180"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <g fill="none" stroke="var(--line-strong)">
+        <rect x="5.5" y="5.5" width="121" height="169" rx="5" strokeWidth="1.1" opacity="0.8" />
+        <rect x="10.5" y="10.5" width="111" height="159" rx="3" strokeWidth="1" opacity="0.5" />
+      </g>
+      {/* 四角回纹 */}
+      <g fill="none" stroke="var(--line-strong)" strokeWidth="1" opacity="0.7">
+        <path d="M14 24 V18 H20" />
+        <path d="M118 24 V18 H112" />
+        <path d="M14 156 V162 H20" />
+        <path d="M118 156 V162 H112" />
+      </g>
+      {/* 中心圆光 */}
+      <g fill="none" stroke="var(--line-strong)">
+        <circle cx="66" cy="90" r="34" strokeWidth="1" opacity="0.45" />
+        <circle cx="66" cy="90" r="27" strokeWidth="1" opacity="0.3" strokeDasharray="4 3.5" />
+      </g>
+      <g fill="var(--accent)" opacity="0.22">
+        <path d="M66 74 L70 90 L66 106 L62 90 Z" />
+        <path d="M50 90 L66 86 L82 90 L66 94 Z" />
       </g>
     </svg>
   );

@@ -17,6 +17,6 @@ echo "[entrypoint] Running database migrations…"
 alembic upgrade head
 echo "[entrypoint] Migrations complete"
 
-# ── 3. Start app（单进程：SSE 为进程内 asyncio 总线，勿加 --workers）─────────
+# ── 3. Start app（默认单进程；SSE 事件总线已走 Redis，需扩容时加 --workers 或加副本）──
 echo "[entrypoint] Starting uvicorn on ${HOST:-0.0.0.0}:${PORT:-8102}"
 exec uvicorn app.main:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8102}"

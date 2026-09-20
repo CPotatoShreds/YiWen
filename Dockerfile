@@ -32,7 +32,7 @@ COPY --from=frontend-builder /src/frontend/dist ./static/
 # Persistent state（SECRET_KEY、行迹 md、日志，挂卷 /app/data）
 RUN mkdir -p /app/data
 
-# Runtime（SSE 为进程内总线，必须单 worker，勿加 --workers）
+# Runtime（SSE 事件总线已走 Redis，多 worker/多副本可用；默认单进程起步，需扩容时调整启动命令）
 EXPOSE 8102
 ENV HOST=0.0.0.0
 ENV PORT=8102

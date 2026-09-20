@@ -20,35 +20,6 @@ function base({ size = 18, ...rest }: IconProps) {
   };
 }
 
-export function SwordIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M14.5 17.5 3 6V3h3l11.5 11.5" />
-      <path d="M13 19l6-6" />
-      <path d="M16 16l4 4" />
-      <path d="M19 21l2-2" />
-    </svg>
-  );
-}
-
-export function LockIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <rect x="4" y="11" width="16" height="10" rx="2.5" />
-      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-    </svg>
-  );
-}
-
-export function EyeIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
 export function PlusIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -107,27 +78,6 @@ export function XIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
       <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-export function ClockIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    </svg>
-  );
-}
-
-export function TrophyIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M8 21h8" />
-      <path d="M12 17v4" />
-      <path d="M7 4h10v6a5 5 0 0 1-10 0z" />
-      <path d="M7 6H4v1a3 3 0 0 0 3 3" />
-      <path d="M17 6h3v1a3 3 0 0 1-3 3" />
     </svg>
   );
 }
@@ -217,29 +167,20 @@ export function RefreshIcon(props: IconProps) {
   );
 }
 
-export function BellIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
-      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
-    </svg>
-  );
-}
-
-export function HomeIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M3 10.5 12 3l9 7.5" />
-      <path d="M5.5 9v11h4.5v-5h4v5h4.5V9" />
-    </svg>
-  );
-}
-
 export function ShieldIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
       <path d="M12 3 5 6v5c0 4.5 3 8.2 7 10 4-1.8 7-5.5 7-10V6z" />
       <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
+export function UserRoundIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="7.5" r="3.5" />
+      <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
     </svg>
   );
 }

@@ -17,14 +17,14 @@ export class ApiError extends Error {
 
 // ── GET 客户端缓存（staleness-while-revalidate）──
 // 读多写少的稳定数据做内存缓存：TTL 内命中直接返回；过期返回旧值并后台刷新；
-// 无缓存时 in-flight 去重。进行中的对战/分享页由 SSE 实时驱动、管理端要实时，均豁免。
+// 无缓存时 in-flight 去重。进行中的推演由 SSE 实时驱动、管理端要实时，均豁免。
 type CacheEntry = { data: unknown; at: number };
 const cacheStore = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<unknown>>();
 const refreshing = new Set<string>();
 
-// 状态敏感的读路径用短 TTL：板子/跨场进度随推演结果变化，短暂过期可接受且后台自愈
-const CACHE_TTL_BY_PREFIX: [string, number][] = [["/board", 10_000], ["/collections", 10_000]];
+// 状态敏感的读路径用短 TTL：跨场进度随推演结果变化，短暂过期可接受且后台自愈
+const CACHE_TTL_BY_PREFIX: [string, number][] = [["/scenarios", 10_000]];
 
 function ttlFor(path: string): number {
   for (const [prefix, ttl] of CACHE_TTL_BY_PREFIX) {
@@ -36,24 +36,16 @@ function ttlFor(path: string): number {
 function cachePolicyFor(path: string): "cache" | "skip" {
   if (path.includes("?")) return "skip"; // 带查询参数的结果随条件变化，不缓存
   if (path.startsWith("/admin/")) return "skip"; // 管理工具要实时
-  if (path.startsWith("/battles/")) return "skip"; // 进行中对战/分享，SSE 实时驱动
   if (path.startsWith("/scenario-challenges/")) return "skip"; // 小天下集进行中推演，SSE 实时驱动
-  if (path.startsWith("/notifications")) return "skip"; // 未读角标状态敏感 + SSE 推送重拉，缓存会吞掉更新
   return "cache";
 }
 
 // 变更请求成功后按前缀失效缓存：同一资源的 POST/DELETE 后，缓存数据已过期
 const MUTATE_PREFIXES = [
   "/auth",
-  "/loadouts",
-  "/abilities",
-  "/battles",
-  "/board",
-  "/collections",
   "/creator",
-  "/friends",
-  "/leaderboard",
   "/llm-profiles",
+  "/scenarios",
 ];
 
 function invalidateCache(): void {
@@ -68,6 +60,11 @@ export function clearApiCache(): void {
 
 function detailMessage(detail: unknown, status: number): string {
   if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    // AppError 信封：{detail: 文案, code: 错误码}（code 供后续按码分支，此处只取文案）
+    const envelope = detail as { detail?: unknown };
+    if (typeof envelope.detail === "string") return envelope.detail;
+  }
   if (Array.isArray(detail)) {
     return detail
       .map((item) => {
@@ -79,8 +76,34 @@ function detailMessage(detail: unknown, status: number): string {
   return detail == null ? `HTTP ${status}` : String(detail);
 }
 
-async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout: number, method: string): Promise<T> {
-  const maxAttempts = method === "GET" ? GET_RETRIES + 1 : 1;
+// ── 401 自动续签：access 过期时先调 /auth/refresh（refresh cookie 限路径自动携带），成功则重放原请求 ──
+let refreshingSession: Promise<boolean> | null = null;
+
+function tryRefreshSession(): Promise<boolean> {
+  if (!refreshingSession) {
+    refreshingSession = rawFetch<void>("/auth/refresh", { method: "POST" }, CONNECT_TIMEOUT_MS, "POST")
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        refreshingSession = null;
+      });
+  }
+  return refreshingSession;
+}
+
+async function fetchWithAuth<T>(path: string, fetchOpts: RequestInit, connectTimeout: number, method: string): Promise<T> {
+  try {
+    return await rawFetch<T>(path, fetchOpts, connectTimeout, method);
+  } catch (error) {
+    // /auth/* 自身的 401 就是"该重新登录了"，不进入续签循环
+    if (error instanceof ApiError && error.status === 401 && !path.startsWith("/auth/") && (await tryRefreshSession())) {
+      return rawFetch<T>(path, fetchOpts, connectTimeout, method);
+    }
+    throw error;
+  }
+}
+
+async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout: number, method: string): Promise<T> {  const maxAttempts = method === "GET" ? GET_RETRIES + 1 : 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), connectTimeout);
@@ -144,7 +167,7 @@ export async function api<T>(path: string, opts: RequestInit & { timeout?: numbe
     }
     const inFlight = inflight.get(path);
     if (inFlight) return inFlight as Promise<T>;
-    const p = rawFetch<T>(path, fetchOpts, connectTimeout, method).then((data) => {
+    const p = fetchWithAuth<T>(path, fetchOpts, connectTimeout, method).then((data) => {
       if (data != null) cacheStore.set(path, { data, at: Date.now() });
       return data;
     });
@@ -156,7 +179,7 @@ export async function api<T>(path: string, opts: RequestInit & { timeout?: numbe
     }
   }
 
-  const data = await rawFetch<T>(path, fetchOpts, connectTimeout, method);
+  const data = await fetchWithAuth<T>(path, fetchOpts, connectTimeout, method);
   if (method !== "GET") invalidateCache();
   return data;
 }

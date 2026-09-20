@@ -5,12 +5,16 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 开发默认密钥哨兵：非 DEBUG 启动时若 SECRET_KEY 仍是该值则拒绝启动（见 app/main.py）
+DEV_DEFAULT_SECRET = "dev-secret-change-me"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # .env 中的未知/已废弃键（如已删除的 LLM_PROVIDER）静默忽略，不让残留行炸掉启动
     )
 
     # 应用
@@ -27,18 +31,50 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 60  # 池满后可临时超出到 pool_size + max_overflow（受 PG max_connections 约束）
 
+    # Redis（缓存：奇术逐对比对结果；LRU 淘汰，见 docker-compose.yml）
+    REDIS_URL: str = "redis://localhost:6380/0"
+
     # 安全 / JWT
-    SECRET_KEY: str = "dev-secret-change-me"
+    SECRET_KEY: str = DEV_DEFAULT_SECRET
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 天
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2 小时：短时 access 配合 refresh 旋转，缩小泄露窗口
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     AUTH_COOKIE_NAME: str = "ynfight_session"
+    AUTH_REFRESH_COOKIE_NAME: str = "ynfight_refresh"  # 限路径 /api/auth，仅认证端点携带
     AUTH_COOKIE_SECURE: bool | None = None  # 未显式设置时按 DEBUG 推导
+
+    # 限流（slowapi 装饰器模式，Redis 共享计数；登录/注册/创建挑战三个敏感端点）
+    RATELIMIT_LOGIN: str = "5/minute"
+    RATELIMIT_REGISTER: str = "10/minute"
+    RATELIMIT_CHALLENGE: str = "30/minute"
+
+    # 日志：LOG_JSON=true 输出结构化 JSON（生产日志采集用），默认人类可读文本
+    LOG_JSON: bool = False
+
+    # 邮件（密码找回/邮箱验证）：console=写日志（开发/测试零配置），smtp=真实发送
+    EMAIL_PROVIDER: Literal["console", "smtp"] = "console"
+    EMAIL_FROM: str = "异闻录 <no-reply@example.com>"
+    SMTP_HOST: str = "smtpdm.aliyun.com"  # 阿里云邮件推送 SMTP 端点
+    SMTP_PORT: int = 465
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    PUBLIC_FRONTEND_URL: str = "http://localhost:5174"  # 邮件里的重置/验证链接指向前端
+
+    # Metrics（/metrics 根路径；生产建议网络层限制来源）
+    METRICS_ENABLED: bool = True
+
+    # 后台任务派发：inline=进程内 create_task（默认，行为同旧版）；arq=独立 worker（重试+崩溃恢复，
+    # 需另起 `uv run arq app.worker.WorkerSettings`）
+    TASK_QUEUE_MODE: Literal["inline", "arq"] = "inline"
+
+    # 数据保留：日志类数据滚动清理（0=永久保留）
+    LLM_TRACE_RETENTION_DAYS: int = 90
+    REQUEST_LOG_RETENTION_DAYS: int = 30
 
     # CORS：允许 React 开发服务器访问（localhost / 127.0.0.1 两种入口）
     CORS_ORIGINS: list[str] = ["http://localhost:5174", "http://127.0.0.1:5174"]
 
     # LLM 提供商（兼容 OpenAI 协议的任意服务，如 DeepSeek / 通义 / Ollama）
-    LLM_PROVIDER: Literal["openai", "deepseek", "anthropic", "ollama"] = "openai"
     LLM_BASE_URL: str | None = "https://ws-mfxldgdpk6czro89.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "qwen3.7-flash"
@@ -46,13 +82,18 @@ class Settings(BaseSettings):
     # 在途请求打爆服务商 RPM/TPM（此前仅靠逐调用退避，429 风暴下多场同时失败）
     LLM_MAX_CONCURRENCY: int = 1000
 
+    # LLM 自配方案的传输/落库密钥：不配则首次使用时自动生成到 app/data/llm_profile_keys.json。
+    # 生产与 Docker 部署建议显式配置（换新会导致既有方案密文不可解）；PEM 里的换行可写作字面 \n。
+    LLM_PROFILE_PRIVATE_KEY: str = ""
+    LLM_PROFILE_STORAGE_KEY: str = ""
+
     @property
     def auth_cookie_secure(self) -> bool:
         return not self.DEBUG if self.AUTH_COOKIE_SECURE is None else self.AUTH_COOKIE_SECURE
 
     @model_validator(mode="after")
     def validate_security(self) -> "Settings":
-        if not self.DEBUG and self.SECRET_KEY == "dev-secret-change-me":
+        if not self.DEBUG and self.SECRET_KEY == DEV_DEFAULT_SECRET:
             raise ValueError("生产环境必须设置 SECRET_KEY")
         if self.ACCESS_TOKEN_EXPIRE_MINUTES <= 0:
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES 必须大于 0")

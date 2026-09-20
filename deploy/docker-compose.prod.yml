@@ -1,4 +1,4 @@
-# 服务器端生产编排 — 2 容器：postgres + app（app 托管前端静态文件）
+# 服务器端生产编排 — 3 容器：postgres + redis + app（app 托管前端静态文件）
 # 用法：cd deploy && docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 # （deploy.sh 已封装：同步代码 + 远端构建启动）
 
@@ -19,6 +19,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis：SSE 跨实例事件总线 + 比对缓存 + 限流计数 + 登录锁定 + （可选）arq 队列。
+  # 全链路可降级（Redis 挂时服务不中断），但它在线时功能才完整，生产必须部署。
+  redis:
+    image: redis:7-alpine
+    container_name: ynfight-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data   # 默认 RDB 快照：重启不丢队列/锁计数
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     build:
       context: ..
@@ -31,20 +46,44 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env.production
     environment:
-      # 容器内走 postgres 服务名；口令由 --env-file 插值
+      # 容器内走服务名；口令由 --env-file 插值
       DATABASE_URL: postgresql+asyncpg://ynfight:${POSTGRES_PASSWORD}@postgres:5432/ynfight
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - appdata:/app/data
-    # 注意：SSE 为进程内总线，app 必须保持单副本、uvicorn 单进程，勿扩缩容
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/api/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
 
+  # ── arq 后台任务 worker（可选）──────────────────────────────────────────
+  # 仅当 .env.production 设 TASK_QUEUE_MODE=arq 时启用本服务（去掉注释后重跑 deploy.sh）。
+  # 启用后：推演/猜词任务走独立进程执行，带重试与崩溃恢复；app 必须也是 arq 模式（同配置项）。
+  # worker:
+  #   image: ynfight:latest
+  #   container_name: ynfight-worker
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   env_file:
+  #     - .env.production
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://ynfight:${POSTGRES_PASSWORD}@postgres:5432/ynfight
+  #     REDIS_URL: redis://redis:6379/0
+  #   volumes:
+  #     - appdata:/app/data
+  #   entrypoint: ["arq", "app.worker.WorkerSettings"]
+
 volumes:
   pgdata:
+  redisdata:
   appdata:

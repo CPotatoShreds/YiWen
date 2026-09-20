@@ -6,10 +6,7 @@ import { api, clearApiCache } from "./api";
 export interface User {
   id: number;
   username: string;
-  exp: number; // 见闻：唯一养成属性
-  rank_points: number; // 名望：天梯分
-  max_loadouts: number; // 按见闻解锁的奇人槽位上限
-  reveal_on_miss: boolean;
+  email: string | null;
   is_admin: boolean;
 }
 
@@ -17,7 +14,7 @@ interface AuthCtx {
   user: User | null;
   initializing: boolean;
   login: (u: string, p: string) => Promise<void>;
-  register: (u: string, p: string) => Promise<void>;
+  register: (u: string, p: string, email: string) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;
 }
@@ -53,8 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refresh();
   }
 
-  async function register(username: string, password: string) {
-    await api("/auth/register", { method: "POST", body: JSON.stringify({ username, password }) });
+  async function register(username: string, password: string, email: string) {
+    await api("/auth/register", { method: "POST", body: JSON.stringify({ username, email, password }) });
     await login(username, password);
   }
 

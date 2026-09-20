@@ -1,15 +1,13 @@
-"""自配 LLM 方案测试：CRUD / 激活互斥 / 属主越权 / api_key 掩码 / 加解密落库 / 模型覆盖逻辑 / 对战链路透传。"""
+"""自配 LLM 方案测试：CRUD / 激活互斥 / 属主越权 / api_key 掩码 / 加解密落库 / 模型覆盖逻辑 / 推演链路透传。"""
 
 import asyncio
 import base64
-import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.battle.deduction import DeductionResult
 
 
 def _encrypt_transit(plain: str) -> str:
@@ -25,9 +23,9 @@ def _encrypt_transit(plain: str) -> str:
 
 def _make_user(client, prefix="u") -> str:
     uname = f"{prefix}_" + uuid4().hex[:8]
-    r = client.post("/api/auth/register", json={"username": uname, "password": "secret123"})
+    r = client.post("/api/auth/register", json={"username": uname, "email": f"{uname}@test.dev", "password": "secret123"})
     assert r.status_code == 201
-    r = client.post("/api/auth/login", json={"username": uname, "password": "secret123"})
+    r = client.post("/api/auth/login", json={"username": uname, "email": f"{uname}@test.dev", "password": "secret123"})
     assert r.status_code == 200
     return r.json()["access_token"]
 
@@ -112,7 +110,9 @@ def test_ownership_isolation():
 def test_test_endpoint_unreachable():
     with TestClient(app) as client:
         _make_user(client)
-        p = _create_profile(client, base_url="http://127.0.0.1:1", api_key=_encrypt_transit("sk-bad"), model="m").json()
+        p = _create_profile(
+            client, base_url="http://127.0.0.1:1", api_key=_encrypt_transit("sk-bad"), model="m"
+        ).json()
         r = client.post(f"/api/llm-profiles/{p['id']}/test")
         assert r.status_code == 200
         assert r.json()["ok"] is False  # 连接失败 → 明确返回失败而非 500
@@ -153,7 +153,9 @@ def test_test_endpoint_hits_real_inference():
 
     with TestClient(app) as client:
         _make_user(client)
-        p = _create_profile(client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m").json()
+        p = _create_profile(
+            client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m"
+        ).json()
         with patch.object(routes.httpx, "AsyncClient", _Client):
             r = client.post(f"/api/llm-profiles/{p['id']}/test")
         assert captured["url"] == "https://relay.example/v1/chat/completions"
@@ -168,11 +170,17 @@ def test_test_endpoint_hits_real_inference():
 
     with TestClient(app) as client:
         _make_user(client)
-        p = _create_profile(client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m").json()
+        p = _create_profile(
+            client, base_url="https://relay.example/v1", api_key=_encrypt_transit("k"), model="m"
+        ).json()
 
         class _OkClient(_Client):
             async def post(self, url, **kwargs):
-                return _Resp(200, "ok", payload={"choices": [{"message": {"role": "assistant", "content": "pong"}}]})
+                return _Resp(
+                    200,
+                    "ok",
+                    payload={"choices": [{"message": {"role": "assistant", "content": "pong"}}]},
+                )
 
         with patch.object(routes.httpx, "AsyncClient", _OkClient):
             r = client.post(f"/api/llm-profiles/{p['id']}/test")
@@ -185,7 +193,10 @@ def test_test_endpoint_hits_real_inference():
 
         with patch.object(routes.httpx, "AsyncClient", _HtmlClient):
             r = client.post(f"/api/llm-profiles/{p['id']}/test")
-        assert r.json() == {"ok": False, "detail": "HTTP 200 但返回的不是有效聊天补全（可能 base_url 缺 /v1，命中网页）"}
+        assert r.json() == {
+            "ok": False,
+            "detail": "HTTP 200 但返回的不是有效聊天补全（可能 base_url 缺 /v1，命中网页）",
+        }
 
 
 def test_build_chat_model_override():
@@ -194,12 +205,16 @@ def test_build_chat_model_override():
 
     s = llm.get_settings()
     with patch.object(llm, "ChatOpenAI", return_value="client") as mock:
-        llm.build_chat_model(llm_config={"api_key": "sk-u", "base_url": "https://x/v1", "model": "m1"})
+        llm.build_chat_model(
+            llm_config={"api_key": "sk-u", "base_url": "https://x/v1", "model": "m1"}
+        )
         kw = mock.call_args.kwargs
         assert kw["api_key"] == "sk-u"
         assert kw["base_url"] == "https://x/v1"
         assert kw["model"] == "m1"
-        assert kw["default_headers"] == {"User-Agent": "ynfight/0.2"}  # 中立 UA，防中转站 WAF 拦 SDK 官方 UA
+        assert kw["default_headers"] == {
+            "User-Agent": "ynfight/0.2"
+        }  # 中立 UA，防中转站 WAF 拦 SDK 官方 UA
 
         llm.build_chat_model()
         kw = mock.call_args.kwargs
@@ -240,7 +255,9 @@ def test_api_key_encrypted_at_rest():
 
     async def _stored_key(profile_id: int) -> str:
         async with async_session_factory() as session:
-            row = await session.scalar(select(LlmProfile.api_key).where(LlmProfile.id == profile_id))
+            row = await session.scalar(
+                select(LlmProfile.api_key).where(LlmProfile.id == profile_id)
+            )
             return row
 
     with TestClient(app) as client:
@@ -258,93 +275,3 @@ def test_api_key_encrypted_at_rest():
         r = _create_profile(client, api_key="sk-plaintext-attempt")
         assert r.status_code == 400
         assert "加密" in r.json()["detail"]
-
-
-# ---------- 对战链路：发起方激活方案 → run_deduction 的 llm_config ----------
-
-def _arm(client, tok, prefix):
-    """新建一位带名奇人（名 = 用户名）+ 造一门异能 + 装进装配 + 解封。"""
-    h = {"Authorization": f"Bearer {tok}"}
-    name = client.get("/api/auth/me", headers=h).json()["username"]
-    r = client.post("/api/abilities", json={"name": f"{prefix}之刃", "effect": "暗影利刃斩杀"}, headers=h)
-    assert r.status_code == 201
-    ld = client.post("/api/loadouts", json={"name": name}, headers=h).json()
-    for a in client.get("/api/abilities/mine", headers=h).json():
-        client.post(f"/api/loadouts/{ld['id']}/abilities/{a['id']}", headers=h)
-    assert client.put(f"/api/loadouts/{ld['id']}", json={"enabled": True}, headers=h).status_code == 200
-    return name
-
-
-def _wait_done(client, battle_id, headers, timeout=12):
-    b = None
-    for _ in range(int(timeout / 0.2)):
-        b = client.get(f"/api/battles/{battle_id}", headers=headers).json()
-        if b["status"] != "pending":
-            return b
-        time.sleep(0.2)
-    return b
-
-
-def _deduce_result(user_a_id: int, fighter_a: str) -> DeductionResult:
-    return DeductionResult(
-        god="上帝视角：甲胜。",
-        narration_a="A 视角：胜。",
-        narration_b="B 视角：败。",
-        winner_side="A",
-        winner_id=user_a_id,
-        result=fighter_a,
-    )
-
-
-def test_battle_uses_challenger_active_profile():
-    """发起方配置了激活方案 → run_deduction 收到 profile_to_llm_config(profile) 作为 llm_config。"""
-    with TestClient(app) as client:
-        tok_a = _make_user(client)
-        tok_b = _make_user(client, "w")
-        h_a = {"Authorization": f"Bearer {tok_a}"}
-        fighter_a = _arm(client, tok_a, "甲")
-        _arm(client, tok_b, "乙")
-        user_b_id = client.get("/api/auth/me", headers={"Authorization": f"Bearer {tok_b}"}).json()["id"]
-        user_a_id = client.get("/api/auth/me", headers=h_a).json()["id"]
-
-        p = _create_profile(client, headers=h_a, label="自定义方案", base_url="http://127.0.0.1:9/v1", api_key=_encrypt_transit("sk-e2e"), model="e2e-model").json()
-        assert p["is_active"] is True
-
-        with (
-            patch("app.services.battle.lifecycle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
-            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-        ):
-            r = client.post("/api/battles", headers=h_a)
-            assert r.status_code == 200
-            b = _wait_done(client, r.json()["id"], h_a)
-
-        assert b["status"] == "done"
-        assert rd.await_count >= 1
-        assert rd.await_args.kwargs["llm_config"] == {
-            "api_key": "sk-e2e",
-            "base_url": "http://127.0.0.1:9/v1",
-            "model": "e2e-model",
-        }
-
-
-def test_battle_falls_back_when_no_profile():
-    """发起方未配置任何方案 → run_deduction 收到 llm_config=None（回退服务器默认）。"""
-    with TestClient(app) as client:
-        tok_a = _make_user(client)
-        tok_b = _make_user(client, "z")
-        h_a = {"Authorization": f"Bearer {tok_a}"}
-        fighter_a = _arm(client, tok_a, "丙")
-        _arm(client, tok_b, "丁")
-        user_b_id = client.get("/api/auth/me", headers={"Authorization": f"Bearer {tok_b}"}).json()["id"]
-        user_a_id = client.get("/api/auth/me", headers=h_a).json()["id"]
-
-        with (
-            patch("app.services.battle.lifecycle.run_deduction", new=AsyncMock(return_value=_deduce_result(user_a_id, fighter_a))) as rd,
-            patch("app.services.battle.lifecycle.pick_opponent", new=AsyncMock(return_value=user_b_id)),
-        ):
-            r = client.post("/api/battles", headers=h_a)
-            assert r.status_code == 200
-            b = _wait_done(client, r.json()["id"], h_a)
-
-        assert b["status"] == "done"
-        assert rd.await_args.kwargs["llm_config"] is None

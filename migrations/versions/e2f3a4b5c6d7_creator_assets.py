@@ -3,10 +3,10 @@
 Revision ID: e2f3a4b5c6d7
 Revises: d1e2f3a4b5c6
 """
-from collections.abc import Sequence
-from hashlib import sha256
 import re
 import unicodedata
+from collections.abc import Sequence
+from hashlib import sha256
 from uuid import uuid4
 
 import sqlalchemy as sa

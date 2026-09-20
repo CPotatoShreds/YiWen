@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -6,13 +7,17 @@ from pydantic import BaseModel, Field
 
 class ScenarioIn(BaseModel):
     name: str = Field(min_length=1, max_length=30)
-    summary: str = Field(min_length=1, max_length=120)
+    subtitle: str = Field(min_length=1, max_length=60)
+    introduction: str = Field(min_length=1, max_length=120)
     background: str = Field(min_length=1, max_length=2000)
+    rules: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(min_length=1, max_length=20)
     victory_condition: str = Field(min_length=1, max_length=300)
+    judgement_rules: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(min_length=1, max_length=20)
 
 
 class ScenarioOut(ScenarioIn):
     id: UUID
+    slug: str
     status: str
     created_by: int
     published_at: datetime | None = None
@@ -22,7 +27,7 @@ class ScenarioOut(ScenarioIn):
 
 
 class RosterIn(BaseModel):
-    character_asset_id: UUID
+    character_id: UUID
     guidance: str = Field(default="", max_length=1000)
 
 
@@ -31,7 +36,6 @@ class RosterOut(BaseModel):
     scenario_id: UUID
     owner_id: int
     owner_name: str
-    kind: str
     name: str
     character_name: str
     character_bio: str
@@ -45,7 +49,7 @@ class RosterOut(BaseModel):
 
 
 class ChallengeIn(BaseModel):
-    character_asset_id: UUID
+    character_id: UUID
 
 
 class ChallengeOut(BaseModel):
@@ -65,6 +69,8 @@ class ScenarioRosterProgressOut(BaseModel):
     first_victory_challenges: int | None = None
     cracked_cards: list[dict] = Field(default_factory=list)
     guess_count: int = 0
+    guess_credits: int = 0
+    guess_rounds: list[dict] = Field(default_factory=list)
     updated_at: datetime | None = None
 
 
@@ -78,6 +84,8 @@ class ScenarioChallengeHistoryOut(BaseModel):
     created_at: datetime | None = None
     finished_at: datetime | None = None
     challenger_character_name: str | None = None
+    challenger_character_id: UUID | None = None
+    strategy: str = ""
 
 
 class ScenarioOwnerChallengeOut(ScenarioChallengeHistoryOut):

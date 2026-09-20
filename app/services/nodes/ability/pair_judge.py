@@ -1,17 +1,18 @@
 """能力对比节点：把双方奇术两两配对，逐对判断是否存在冲突效果，依三相共鸣理论分判高下。
 
-输出结构化判定（PairVerdict），汇总为对比报告喂给推演节点（deducer 的 {discuss_report} 槽位），
-暂时替代讨论节点。本节点只做**逐对对比**，不替推演节点裁断胜负（胜负仍由推演 LLM 结尾句解析）。
+输出结构化判定（PairVerdict），`render_pair_report` 汇总为权威比对结论，经挑战
+derived.comparison_report 注入上帝视角节点的 {comparison_report} 槽位。本节点只做
+**逐对对比**，不替推演裁断胜负。
 
-三相共鸣理论从 DISCUSS_SYSTEM_PROMPT（discusser.py）摘取，保证对比与推演同一套世界观规则。
+三相共鸣理论与各节点共享同一套世界观规则。
 """
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.services.llm.client import build_chat_model
-from app.services.nodes._override import with_system_override
+from app.services.nodes.registry import NodeSpec, build_node
+
 
 class PairVerdict(BaseModel):
     """单对奇术的对比判定。"""
@@ -78,6 +79,15 @@ PAIR_JUDGE_TEMPLATE = ChatPromptTemplate.from_messages(
 )
 
 
+SPEC = NodeSpec(
+    id="scenario_ability_pair",
+    template=PAIR_JUDGE_TEMPLATE,
+    max_tokens=512,
+    temperature=0,
+    schema=PairVerdict,
+)
+
+
 def _render_pair_ability(a) -> str:
     """单门奇术渲染为对比输入文本（有值才附详细解释/因果槽位）。"""
     lines = [f"- {a.name}：{a.effect}"]
@@ -88,16 +98,9 @@ def _render_pair_ability(a) -> str:
     return "\n".join(lines)
 
 
-def build_pair_judge_chain(llm_config: dict | None = None, system_prompt: str | None = None) -> Runnable:
-    """单对奇术对比链：结构化输出 PairVerdict（method="function_calling"）。
-
-    system_prompt 非空时以它覆盖对比系统指令（提示词方案调试用，须保留 {ability_a}/{ability_b}
-    数据槽）；None 用冻结默认，生产行为不变。
-    """
-    template = with_system_override(PAIR_JUDGE_TEMPLATE, system_prompt)
-    return template | build_chat_model(
-        thinking=False, max_tokens=512, temperature=0, llm_config=llm_config
-    ).with_structured_output(PairVerdict, method="function_calling")
+def build_pair_judge_chain(llm_config: dict | None = None) -> Runnable:
+    """单对奇术对比链：结构化输出 PairVerdict（method="function_calling"）。"""
+    return build_node(SPEC, llm_config=llm_config)
 
 
 def render_pair_report(verdicts: list[PairVerdict]) -> str:

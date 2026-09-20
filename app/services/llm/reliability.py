@@ -2,7 +2,7 @@
 
 根因背景：此前 `build_chat_model` 未设超时（langchain_openai 把 `timeout=None` 传给
 httpx，等于无限等待），外部 API 请求一旦僵死会无限 `await`，后台推演任务既不完结也不
-抛异常 → 战斗永久 pending → SSE 永不 done → 前端卡死。本层对所有 LLM 调用施加有界超时，
+抛异常 → 挑战永久停在中间态 → SSE 永不 done → 前端卡死。本层对所有 LLM 调用施加有界超时，
 失败按指数退避重试，耗尽后抛 `ChainFailure` 交由上层降级/中断。
 
 LLM 链路追踪：所有 LLM 调用统一收口在本层。调用方传入 `trace_context`（含 kind / trace_id）
@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.core.metrics import record_llm_call
 
 logger = get_logger("reliability")
 
@@ -172,6 +173,7 @@ async def ainvoke_with_reliability(
                     result = await asyncio.wait_for(chain.ainvoke(kwargs), timeout=LLM_TIMEOUT_SECONDS)
             latency = int((time.monotonic() - start) * 1000)
             logger.info("llm_ok op=%s attempt=%d dur=%.2fs", operation, attempt, latency / 1000)
+            record_llm_call(operation, "ok")
             if trace_context:
                 trace_context.update(
                     {
@@ -203,6 +205,7 @@ async def ainvoke_with_reliability(
                 type(e).__name__,
                 str(e),
             )
+            record_llm_call(operation, "fail")
             if trace_context:
                 _spawn_trace(
                     kind=kind,
@@ -307,6 +310,7 @@ async def astream_with_reliability(
                 type(e).__name__,
                 str(e),
             )
+            record_llm_call(operation, "fail")
             if trace_context:
                 _spawn_trace(
                     kind=kind,
