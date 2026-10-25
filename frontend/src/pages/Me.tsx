@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
+import { BackLink } from "../components/PageShell";
 import { GearIcon } from "../components/icons";
 
 /** 用户信息页：只读占位 —— 展示当前账号基础信息，后续再迭代。 */
@@ -28,9 +29,7 @@ export default function Me() {
           <Link className="btn btn-primary" to="/settings">
             <GearIcon size={15} /> 前往设置
           </Link>
-          <Link className="muted" to="/home">
-            返回首页
-          </Link>
+          <BackLink to="/home" label="返回首页" />
         </div>
       </div>
     </section>

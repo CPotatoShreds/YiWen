@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
+import PageShell from "../components/PageShell";
 import { ScrollIcon } from "../components/icons";
-import { CloudDivider, SealStamp } from "../components/Ornaments";
+import { SealStamp, CloudDivider } from "../components/Ornaments";
 
 type Scenario = { id: string; slug: string; name: string; subtitle: string; introduction: string; background: string; rules: string[]; victory_condition: string; judgement_rules: string[] };
 type Roster = { id: string; name: string; owner_name: string; character_bio: string; ability_count: number; challenge_count: number; challenger_win_rate: number | null; first_victory_avg_challenges: number | null };
@@ -30,22 +31,18 @@ export default function ScenarioDetail() {
         <div><dt>奇术</dt><dd>{roster.ability_count} 门</dd></div>
         <div><dt>胜率</dt><dd>{roster.challenger_win_rate == null ? "暂无" : `${Math.round(roster.challenger_win_rate * 100)}%`}</dd></div>
         <div><dt>首胜</dt><dd>{roster.first_victory_avg_challenges == null ? "暂无" : `${roster.first_victory_avg_challenges.toFixed(1)} 次`}</dd></div>
-        <div><dt>挑战</dt><dd>{roster.challenge_count} 次</dd></div>
+        <div><dt>对局</dt><dd>{roster.challenge_count} 次</dd></div>
       </dl>
     </Link>
   );
-  return <>
-    <div className="section-head scenario-detail-head">
-      <div>
-        <h1 className="section-title"><ScrollIcon size={22} /> {scenario.name}</h1>
-        <p className="muted">{scenario.subtitle}</p>
-      </div>
-      <div className="scenario-detail-head__actions">
-        <Link className="btn btn-primary" to={`/creator/scenarios/new?scenario_id=${scenario.id}`}>排布阵容</Link>
-        <Link className="muted" to="/scenarios">返回小天下集</Link>
-      </div>
-    </div>
-    <CloudDivider />
+  return (
+    <PageShell
+      title={scenario.name}
+      icon={<ScrollIcon size={22} />}
+      subtitle={scenario.subtitle}
+      back={{ to: "/scenarios", label: "返回小天下集" }}
+      actions={<Link className="btn btn-primary" to={`/scenarios/${scenario.slug}/rosters/new`}>立异闻</Link>}
+    >
     <section className="scroll-head">
       <div className="scroll-head__lead">
         <p className="scroll-head__summary">{scenario.introduction}</p>
@@ -67,12 +64,13 @@ export default function ScenarioDetail() {
     <section className="scenario-roster-section">
       <div className="scenario-roster-section__head">
         <div>
-          <h2>阵容</h2>
-          <p className="muted">由异闻师为这个情景提供的挑战方式</p>
+          <h2>异闻</h2>
+          <p className="muted">异闻师在这一卷里留下的、可被挑战的东西</p>
         </div>
       </div>
       <CloudDivider />
-      <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">暂未有可挑战的阵容。</p>}</div>
+      <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有异闻。</p>}</div>
     </section>
-  </>;
+    </PageShell>
+  );
 }

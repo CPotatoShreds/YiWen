@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import type { ScenarioHistoryItem } from "../scenarioModel";
 
 /**
- * 挑战记录列表：阵容页与战斗界面共用。
+ * 对局记录列表：异闻页与对战界面共用。
  * resolveHref 返回该记录详情页链接；挑战进行中时由战斗页自身渲染当前回合。
  */
 export function ScenarioHistory({

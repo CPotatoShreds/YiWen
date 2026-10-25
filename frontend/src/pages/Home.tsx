@@ -12,15 +12,14 @@ export default function Home() {
       <span className="home-gate__seal" aria-hidden="true">
         <SealStamp char="异" size={44} />
       </span>
-      <h1 className="section-title">{user.username}，落座</h1>
-      <p className="muted">要去哪处书场？</p>
+      <h1 className="section-title">欢迎回来，{user.username}</h1>
       <div className="home-gate__actions">
         <Link className="home-gate__choice" to="/scenarios">
           <ScrollIcon size={20} />
           <strong>小天下集</strong>
-          <span>择一卷册，挑战各路奇人</span>
+          <span>择一卷，挑战各路奇人</span>
         </Link>
-        <Link className="home-gate__choice" to="/abilities">
+        <Link className="home-gate__choice" to="/yiwenlu">
           <BookIcon size={20} />
           <strong>异闻录</strong>
           <span>收录自己的奇人与奇术</span>

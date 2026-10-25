@@ -19,9 +19,9 @@ export default function AdminScenarios() {
     finally { setBusy(""); }
   };
   return <div className="admin-page">
-    <div className="admin-toolbar"><div><h2>小天下集卷册</h2><p className="muted">管理卷册草稿、发布状态与下线。</p></div><button className="btn btn-ghost" onClick={() => void load()}>刷新</button></div>
+    <div className="admin-toolbar"><div><h2>小天下集各卷</h2><p className="muted">管理各卷草稿、发布状态与下线。</p></div><button className="btn btn-ghost" onClick={() => void load()}>刷新</button></div>
     {error && <p className="err">{error}</p>}
-    {items.length === 0 ? <div className="empty"><p>暂无卷册。</p></div> : <div className="review-list">{items.map((item) => <article className="review-item" key={item.id}>
+    {items.length === 0 ? <div className="empty"><p>暂无卷。</p></div> : <div className="review-list">{items.map((item) => <article className="review-item" key={item.id}>
       <div className="review-item__head"><h3>{item.name}</h3><span className="muted">{item.subtitle} · {item.status === "published" ? "已发布" : item.status === "deleted" ? "已下线" : "草稿"}</span></div>
       <p>{item.introduction}</p><details><summary>查看背景、规则与判定条件</summary><p>{item.background}</p><p><b>卷规则：</b></p><ul>{item.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul><p><b>胜利条件：</b>{item.victory_condition}</p><p><b>判定规则：</b></p><ul>{item.judgement_rules.map((rule) => <li key={rule}>{rule}</li>)}</ul></details>
       <div className="review-item__actions">{item.status === "draft" && <button className="btn btn-primary" disabled={busy === item.id} onClick={() => void action(item, "publish")}>发布</button>}{item.status !== "deleted" && <button className="btn btn-danger" disabled={busy === item.id} onClick={() => void action(item, "delete")}>下线</button>}</div>

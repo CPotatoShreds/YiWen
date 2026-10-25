@@ -33,8 +33,8 @@ const verdictOf = (item: ScenarioHistoryItem): { text: string; tone: string } =>
 };
 
 /**
- * 记录阅读页（账册行阅）：本阵容的逐局簿册——每局一行，选中的一局就地展开为行迹书页。
- * 单主视角、上帝门控与对战页同规则（未看破全部只见己方正文；守方始终只见自己）。
+ * 记录阅读页（账册行阅）：本异闻的逐局簿册——每局一行，选中的一局就地展开为行迹书页。
+ * 单主视角、推演门控与对战页同规则（未看破全部只见己方叙述；守方始终只见自己）。
  */
 export default function ScenarioRecords() {
   const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
@@ -95,7 +95,7 @@ export default function ScenarioRecords() {
 
   return (
     <section className="panel world-story scenario-challenge">
-      <Link className="scenario-back" to={backHref} aria-label="退出并返回阵容详情">
+      <Link className="scenario-back" to={backHref} aria-label="退出并返回异闻详情">
         <ChevronLeftIcon size={20} />
       </Link>
       <header className="scenario-challenge__masthead">
@@ -109,7 +109,7 @@ export default function ScenarioRecords() {
       </header>
       {!items.length ? (
         <div className="records-empty">
-          <p className="muted">尚无记录。完成第一场挑战后，本册会从第一笔写起。</p>
+          <p className="muted">尚无记录。完成第一场对局后，本册会从第一笔写起。</p>
         </div>
       ) : (
         <div className="records-ledger" role="list">
@@ -160,7 +160,7 @@ export default function ScenarioRecords() {
                               <SealStamp char={detail.won ? "胜" : "负"} size={34} />
                             </span>
                             <div>
-                              <strong>{detail.won ? "挑战目标已达成" : "挑战目标未达成"}</strong>
+                              <strong>{detail.won ? "对局目标已达成" : "对局目标未达成"}</strong>
                               {detail.derived?.reason && <p>{detail.derived.reason}</p>}
                             </div>
                           </div>

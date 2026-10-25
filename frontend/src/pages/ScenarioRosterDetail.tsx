@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, ScrollIcon } from "../components/icons";
 import { CardBack, SealStamp } from "../components/Ornaments";
+import { BackLink } from "../components/PageShell";
 import { ScenarioHistory } from "../components/ScenarioHistory";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
 
@@ -212,9 +213,7 @@ export default function ScenarioRosterDetail() {
               </div>
             )}
           </div>
-          <Link className="roster-metrics__back" to={`/scenarios/${detail.scenario.slug}`}>
-            返回卷册
-          </Link>
+          <BackLink to={`/scenarios/${detail.scenario.slug}`} label="返回卷" />
         </div>
 
         <div
@@ -294,20 +293,20 @@ export default function ScenarioRosterDetail() {
         </div>
       </section>
 
-      {/* 下区：挑战记录 + 当前卡线索（各自内部滚动） */}
+      {/* 下区：对局记录 + 当前卡线索（各自内部滚动） */}
       <section className="roster-book">
         <div className="roster-book__page">
           <header className="roster-book__header">
             <div className="roster-book__header-left">
               <BookIcon size={16} />
-              <h2>挑战记录</h2>
+              <h2>对局记录</h2>
             </div>
             <span className="roster-book__meta">左页 · 翻阅</span>
           </header>
           <div className="roster-book__body">
             <ScenarioHistory
               items={detail.my_challenges}
-              emptyText="完成第一场挑战后，这里会留下记录。"
+              emptyText="完成第一场对局后，这里会留下记录。"
               resolveHref={(item) =>
                 isInProgress(item.status)
                   ? `/scenarios/${scenarioSlug}/rosters/${rosterId}/battle`

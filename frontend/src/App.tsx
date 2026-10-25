@@ -10,7 +10,7 @@ import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
 import Home from "./pages/Home";
 import Me from "./pages/Me";
-import CreatorStudio from "./pages/CreatorStudio";
+import Yiwenlu from "./pages/Yiwenlu";
 import Settings from "./pages/Settings";
 import Scenarios from "./pages/Scenarios";
 import ScenarioDetail from "./pages/ScenarioDetail";
@@ -27,17 +27,28 @@ import AdminTraffic from "./pages/admin/AdminTraffic";
 import AdminScenarios from "./pages/admin/AdminScenarios";
 import { InkMountains, SealStamp } from "./components/Ornaments";
 
+/** 会话恢复中的占位。不可 return null —— 那会让刷新后出现一瞬白屏。 */
+function AppLoading() {
+  return (
+    <div className="app-loading" role="status" aria-busy="true" aria-label="载入中">
+      <span className="skeleton app-loading__bar" />
+    </div>
+  );
+}
+
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
-  // 会话恢复完成前保持当前页（不闪跳登录），避免刷新后被误判为登出
-  if (initializing) return null;
-  return user ? children : <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (initializing) return <AppLoading />;
+  // 记住来处：深链（分享、书签）不能被「请先登录」这一跳吃掉
+  return user ? children : <Navigate to="/login" replace state={{ from: location }} />;
 }
 
 function RequireAdmin({ children }: { children: React.ReactElement }) {
   const { user, initializing } = useAuth();
-  if (initializing) return null;
-  return user?.is_admin ? children : <Navigate to="/" replace />;
+  if (initializing) return <AppLoading />;
+  // 未登录的情况由外层 RequireAuth 拦下并带上 returnTo，这里只处理「已登录但非管理员」
+  return user?.is_admin ? children : <Navigate to="/home" replace />;
 }
 
 /** 卷末：远山墨影 + 收卷印。认证页（正门）不落款。 */
@@ -70,14 +81,19 @@ export default function App() {
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />
-              <Route path="/" element={<Navigate to="/scenarios" replace />} />
+              <Route path="/" element={<Navigate to="/home" replace />} />
               <Route path="/home" element={<RequireAuth><Home /></RequireAuth>} />
               <Route path="/me" element={<RequireAuth><Me /></RequireAuth>} />
-              <Route path="/abilities" element={<RequireAuth><CreatorStudio /></RequireAuth>} />
-              <Route path="/creator" element={<RequireAuth><CreatorStudio /></RequireAuth>} />
-              <Route path="/creator/scenarios/new" element={<RequireAuth><ScenarioComposer /></RequireAuth>} />
+              <Route path="/yiwenlu" element={<RequireAuth><Yiwenlu /></RequireAuth>} />
+              <Route path="/yiwenlu/characters/:id" element={<RequireAuth><Yiwenlu kind="character" /></RequireAuth>} />
+              <Route path="/yiwenlu/abilities/:id" element={<RequireAuth><Yiwenlu kind="ability" /></RequireAuth>} />
+              {/* 旧地址兼容重定向 */}
+              <Route path="/abilities" element={<Navigate to="/yiwenlu" replace />} />
+              <Route path="/creator" element={<Navigate to="/yiwenlu" replace />} />
               <Route path="/scenarios" element={<RequireAuth><Scenarios /></RequireAuth>} />
               <Route path="/scenarios/:slug" element={<RequireAuth><ScenarioDetail /></RequireAuth>} />
+              {/* 立异闻：与 /rosters/:rosterId 同枝。v7 静态段优先于动态段，故 new 不会被当成 rosterId */}
+              <Route path="/scenarios/:slug/rosters/new" element={<RequireAuth><ScenarioComposer /></RequireAuth>} />
               <Route path="/scenarios/:scenarioSlug/rosters/:rosterId" element={<RequireAuth><ScenarioRosterDetail /></RequireAuth>} />
               <Route path="/scenarios/:scenarioSlug/rosters/:rosterId/battle" element={<RequireAuth><ScenarioBattle /></RequireAuth>} />
               <Route path="/scenarios/:scenarioSlug/rosters/:rosterId/records" element={<RequireAuth><ScenarioRecords /></RequireAuth>} />

@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { returnTo } from "../nav";
 import { InkMountains, Lantern, SealStamp, SwordsmanScene } from "../components/Ornaments";
 
 /** 登录页：居中卡片 + 明确层级 + 口令可见切换 + 错误提示 + 条款微文案。 */
 export default function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -20,7 +22,8 @@ export default function Login() {
     setErr("");
     try {
       await login(username.trim(), password);
-      nav("/home");
+      // 回到被拦下的那一处；没有来处才落到首页。用 replace，避免后退键又回到登录页
+      nav(returnTo(location.state) ?? "/home", { replace: true });
     } catch (e2: any) {
       setErr(e2?.message || "登录失败，请稍后重试");
       setBusy(false); // 登录失败保持表单可用；成功后不再恢复（页面即将跳转）
@@ -49,7 +52,7 @@ export default function Login() {
           </span>
           <h1>异闻录</h1>
         </div>
-        <p className="auth__sub">登录，重返书场</p>
+        <p className="auth__sub">登录，继续你的行迹</p>
 
         {err && (
           <div className="auth-alert" role="alert">

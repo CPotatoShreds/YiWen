@@ -1,6 +1,6 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
+import PageShell from "./PageShell";
 import { BarChart3Icon, BookIcon, ScrollIcon, TargetIcon, UsersIcon } from "./icons";
-import { CloudDivider } from "./Ornaments";
 
 const links = [
   { to: "/admin", label: "仪表盘", icon: TargetIcon, end: true },
@@ -12,18 +12,13 @@ const links = [
 
 export default function AdminLayout() {
   return (
-    <div className="admin-shell">
-      <div className="section-head admin-heading">
-        <div>
-          <span className="eyebrow">异闻司</span>
-          <h1 className="section-title">后台案牍</h1>
-        </div>
-        <p className="muted">只为管理员开放的异闻录内务</p>
-        <div className="section-head__exit">
-          <Link className="muted" to="/home">返回首页</Link>
-        </div>
-      </div>
-      <CloudDivider />
+    <PageShell
+      width="wide"
+      eyebrow="异闻司"
+      title="后台案牍"
+      subtitle="只为管理员开放的异闻录内务"
+      back={{ to: "/home", label: "返回首页" }}
+    >
       <nav className="admin-subnav" aria-label="后台导航">
         {links.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? "is-active" : ""}>
@@ -32,6 +27,6 @@ export default function AdminLayout() {
         ))}
       </nav>
       <Outlet />
-    </div>
+    </PageShell>
   );
 }

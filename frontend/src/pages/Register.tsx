@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { returnTo } from "../nav";
 import { InkMountains, Lantern, SealStamp, SwordsmanScene } from "../components/Ornaments";
 
 /** 注册页：邮箱 + 用户名 + 口令（邮箱为找回口令凭证，注册时不做验证）。 */
 export default function Register() {
   const { register } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -26,7 +28,8 @@ export default function Register() {
     setErr("");
     try {
       await register(username.trim(), password, email.trim());
-      nav("/home");
+      // 注册多为直接进入，通常没有来处；有则返回原目标
+      nav(returnTo(location.state) ?? "/home", { replace: true });
     } catch (e2: any) {
       setErr(e2?.message || "注册失败，请稍后重试");
       setBusy(false);

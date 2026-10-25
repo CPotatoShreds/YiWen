@@ -21,7 +21,7 @@ export default function Privacy() {
           <p className="muted">本政策为模板文本，正式运营前请经法务审阅替换。</p>
         </div>
         <p className="auth__foot">
-          <Link to="/">返回首页</Link>
+          <Link to="/home">返回首页</Link>
           <span className="muted">　·　</span>
           <Link to="/terms">用户协议</Link>
         </p>

@@ -6,7 +6,15 @@ import { startScenarioChallenge } from "../scenarioChallenge";
 import { SealStamp } from "../components/Ornaments";
 import { BookIcon, ChevronLeftIcon, RefreshIcon, XIcon } from "../components/icons";
 import { ScenarioManuscript } from "../components/ScenarioNarrative";
-import { STAGE_STEPS, STAGE_TEXT, isInProgress, type Message, type ScenarioHistoryItem, type Stage } from "../scenarioModel";
+import {
+  STAGE_STEPS,
+  STAGE_TEXT,
+  chineseNumber,
+  isInProgress,
+  type Message,
+  type ScenarioHistoryItem,
+  type Stage,
+} from "../scenarioModel";
 import type { Character } from "../types";
 
 type Scenario = {
@@ -22,7 +30,14 @@ type Scenario = {
 };
 type RosterContext = {
   scenario: Scenario;
-  roster: { character_name: string; ability_count: number };
+  roster: {
+    character_name: string;
+    character_bio: string;
+    ability_count: number;
+    challenger_win_rate: number | null;
+  };
+  viewer_role?: "challenger" | "owner";
+  my_progress?: { attempts: number; cracked_cards: { index: number; cracked: boolean }[] } | null;
   my_challenges: ScenarioHistoryItem[];
 };
 type Challenge = {
@@ -40,6 +55,7 @@ type Challenge = {
   god_unlocked?: boolean;
   derived?: { comparison_report?: string; achieved?: boolean; reason?: string };
 };
+type Ability = { id: string; name: string };
 
 const ORDER: Record<Stage, number> = {
   loading: 0,
@@ -61,30 +77,35 @@ const stageFromStatus = (status: string): Stage =>
         : "ready";
 
 /**
- * 对战页：归属阵容（擂台）的常驻地址，起笔前后的唯一对战页面。
- * 单栏书页 + 单主视角（上帝遮挡块 → 己方正文）；猜词入口本轮搁置；往期记录在独立的记录阅读页。
+ * 对战页：归属异闻（擂台）的常驻地址，起笔前后的唯一对战页面。
+ * 两段式：起笔前是「对决信息 + 操作台」，点「发起推演」后整页换成「行迹书页」。
+ * 单主视角（推演遮挡块 → 己方叙述正文）；往期记录在独立的记录阅读页。
  */
 export default function ScenarioBattle() {
   const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
   const [context, setContext] = useState<RosterContext | null>(null);
   const [characters, setCharacters] = useState<Character[] | null>(null);
+  const [abilities, setAbilities] = useState<Ability[] | null>(null);
   const [contextToken, setContextToken] = useState(0);
   const [characterId, setCharacterId] = useState("");
   const [strategy, setStrategy] = useState("");
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [stage, setStage] = useState<Stage>("loading");
-  const [liveGod, setLiveGod] = useState("");
+  const [view, setView] = useState<"booting" | "draft" | "book">("booting");
+  const [liveDeduction, setLiveDeduction] = useState("");
   const [liveOwn, setLiveOwn] = useState("");
   const [streamRetry, setStreamRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const ownSideRef = useRef<"challenger" | "guardian">("challenger");
-  const resolved = useRef(false);
+  const bootedFor = useRef<string | null>(null);
+  const startedHere = useRef(false);
+  const lastNumber = useRef(0);
   const pendingDerive = useRef(false);
   const deriveRef = useRef<() => void>(() => {});
 
-  // 阵容上下文（擂台）与自家奇人
+  // 异闻上下文（擂台）与自家奇人
   useEffect(() => {
     if (!scenarioSlug || !rosterId) return;
     let alive = true;
@@ -96,22 +117,33 @@ export default function ScenarioBattle() {
     };
   }, [scenarioSlug, rosterId, contextToken]);
 
+  // 自家奇人与奇术名（后者只用于人物榜的招式摘要，取不到就退化为 —）
   useEffect(() => {
-    api<Character[]>("/creator/characters")
-      .then(setCharacters)
-      .catch(() => setCharacters([]));
+    let alive = true;
+    Promise.allSettled([api<Character[]>("/creator/characters"), api<Ability[]>("/creator/abilities")]).then(
+      ([self, arts]) => {
+        if (!alive) return;
+        setCharacters(self.status === "fulfilled" ? self.value : []);
+        setAbilities(arts.status === "fulfilled" ? arts.value : []);
+      },
+    );
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // 首屏若这座擂台上有未终局的回合，直接续上；没有就等新局
+  // 首屏若这座擂台上有未终局的回合，直接续上；没有就停在新局
   useEffect(() => {
-    if (!context || resolved.current) return;
-    resolved.current = true;
+    if (!context || !rosterId || bootedFor.current === rosterId) return;
+    bootedFor.current = rosterId;
     const live = context.my_challenges.find((item) => isInProgress(item.status));
     if (live) {
       setCharacterId(live.challenger_character_id ?? "");
       setCurrentId(live.id);
+      return;
     }
-  }, [context]);
+    setView("draft");
+  }, [context, rosterId]);
 
   // 载入当前回合并订阅实时行迹
   useEffect(() => {
@@ -127,11 +159,21 @@ export default function ScenarioBattle() {
       .then((data) => {
         if (!alive) return;
         setChallenge(data);
+        lastNumber.current = data.challenge_number;
         ownSideRef.current = data.viewer_role === "owner" ? "guardian" : "challenger";
         const next: Stage = stageFromStatus(data.status);
         setStage((current) => (ORDER[next] >= ORDER[current] || current === "loading" ? next : current));
         const prior = data.messages.find((message) => message.role === "challenger");
         if (prior) setStrategy(prior.text ?? "");
+        if (data.status === "failed") {
+          startedHere.current = false;
+          pendingDerive.current = false;
+          setView("draft");
+          return;
+        }
+        // 已进入推演/终局，或策略已落库 → 书页；尚在比对且不是本会话起笔的（刷新续局）→ 操作台
+        if (prior || data.status === "resolving" || data.status === "won" || data.status === "lost") setView("book");
+        else setView(startedHere.current ? "book" : "draft");
       })
       .catch((cause: Error) => alive && setError(cause.message));
     return () => {
@@ -153,14 +195,18 @@ export default function ScenarioBattle() {
       `/scenario-challenges/${currentId}/stream`,
       {
         onEvent: (event) => {
-          if (event.type === "god_progress") {
-            // 上帝遮挡流：只收到累计字数，前端按字数合成遮挡符号（真实文本不出站）
+          if (event.type === "deduction_progress") {
+            // 推演遮挡流：只收到累计字数，前端按字数合成遮挡符号（真实文本不出站）
             // 密度 1 符 / 20 字、上限 240 符——稳定增长且不撑爆版面
             const chars = Number(event.chars ?? 0);
-            setLiveGod("❖".repeat(Math.min(240, Math.max(1, Math.ceil(chars / 20)))));
+            setLiveDeduction("❖".repeat(Math.min(240, Math.max(1, Math.ceil(chars / 20)))));
             setStage((current) => (ORDER["thinking"] >= ORDER[current] ? "thinking" : current));
-          } else if (event.type === "view_chunk") {
-            // 服务端已按侧别过滤：本连接只会收到己方转写
+          } else if (event.type === "narration_snapshot") {
+            // 断线重连补发：服务端累计全文整体替换（修复重连后中间缺段/叙述重流叠字）
+            if (event.side === ownSideRef.current) setLiveOwn(String(event.text ?? ""));
+            setStage((current) => (ORDER["views"] >= ORDER[current] ? "views" : current));
+          } else if (event.type === "narration_chunk") {
+            // 服务端已按侧别过滤：本连接只会收到己方叙述
             if (event.side === ownSideRef.current) setLiveOwn((current) => current + String(event.text ?? ""));
             setStage((current) => (ORDER["views"] >= ORDER[current] ? "views" : current));
           } else if (event.type === "turn") {
@@ -172,11 +218,15 @@ export default function ScenarioBattle() {
                   ? { ...current, messages: [...current.messages, turn] }
                   : current,
             );
-            setLiveGod("");
+            setLiveDeduction("");
             setLiveOwn("");
           } else if (event.type === "error") {
-            setError(String(event.message ?? "衍算未能完成"));
+            // 流已判死：先停重连，再退回操作台让玩家带着原策略重试
+            terminal = true;
+            pendingDerive.current = false;
+            setError(String(event.message ?? "推演未能完成"));
             setStage("compare");
+            setView("draft");
             setChallenge((current) => (current ? { ...current, status: "failed" } : current));
           } else if (event.type === "done") terminal = true;
         },
@@ -225,41 +275,80 @@ export default function ScenarioBattle() {
 
   const canSubmitStrategy =
     !!challenge && challenge.status === "active" && challenge.won === null && stage === "ready";
-  // 本次是从战斗台发起的：比对完成的那一刻自动提交策略，免二次点击
+  // 从操作台发起的：比对完成的那一刻自动提交策略，免二次点击
   useEffect(() => {
-    if (!pendingDerive.current || !canSubmitStrategy) return;
+    if (view !== "book" || !pendingDerive.current || !canSubmitStrategy) return;
     pendingDerive.current = false;
     deriveRef.current();
-  }, [canSubmitStrategy]);
+  }, [view, canSubmitStrategy]);
 
   // 仅装配 1-4 门奇术的自家奇人可出战（与后端 _character_snapshot 的约束一致）
   const available = useMemo(
     () => (characters ?? []).filter((c) => c.ability_ids.length >= 1 && c.ability_ids.length <= 4),
     [characters],
   );
+  const abilityNames = useMemo(
+    () => new Map((abilities ?? []).map((item) => [item.id, item.name])),
+    [abilities],
+  );
 
   if (!context)
     return error ? <p className="err">{error}</p> : <div className="skeleton" style={{ height: 320 }} />;
 
   const failed = challenge?.status === "failed";
-  const hasRun = !!challenge && !failed;
-  const owner = challenge?.viewer_role === "owner";
+  const owner = challenge?.viewer_role === "owner" || context.viewer_role === "owner";
   const own: "challenger" | "guardian" = owner ? "guardian" : "challenger";
-  const ownLabel = owner ? challenge?.roster.character_name ?? "" : challenge?.challenger.character_name ?? "";
+  const ownLabel = owner
+    ? context.roster.character_name
+    : (challenge?.challenger.character_name ?? available.find((c) => c.id === characterId)?.name ?? "");
+  const preview = context.viewer_role === "owner" || !!challenge?.is_preview;
   const backHref = `/scenarios/${scenarioSlug}/rosters/${rosterId}`;
   const recordsHref = `${backHref}/records`;
 
+  const cards = context.my_progress?.cracked_cards ?? [];
+  const cracked = cards.filter((card) => card.cracked).length;
+  const abilityTotal = context.roster.ability_count || cards.length;
+  const winRate =
+    context.roster.challenger_win_rate == null
+      ? "暂无胜负"
+      : `挑战者胜率 ${Math.round(context.roster.challenger_win_rate * 100)}%`;
+  const attempts = context.my_progress?.attempts ?? 0;
+  // 新局的场次：/scenarios 有 10s 缓存，用「已推演次数」与本会话见过的最大场次兜底，页码不回退
+  const nextRun = Math.max(attempts + 1, lastNumber.current + 1);
+  const runNumber = challenge?.challenge_number ?? nextRun;
+  // 已起笔但策略未落库：人物榜锁住，只改策略
+  const locked = !!currentId && !challenge?.messages.some((message) => message.role === "challenger") && !failed;
+
+  const artsOf = (character: Character) => {
+    const names = character.ability_ids
+      .map((id) => abilityNames.get(id))
+      .filter((name): name is string => !!name);
+    if (!names.length) return character.ability_ids.length ? `${character.ability_ids.length} 门` : "—";
+    const head = names.slice(0, 2).join(" / ");
+    return names.length > 2 ? `${head} +${names.length - 2}` : head;
+  };
+
+  const scrollTop = () => window.scrollTo({ top: 0 });
+
   const begin = async () => {
     if (!rosterId || !characterId || busy) return;
-    setBusy(true);
+    startedHere.current = true;
+    // 乐观切页：立刻换成书页，比对期由书页显示已写下的策略
+    setView("book");
+    setChallenge(null);
+    setStage("loading");
+    setLiveDeduction("");
+    setLiveOwn("");
     setError("");
+    setBusy(true);
     try {
       const id = await startScenarioChallenge(rosterId, characterId);
       pendingDerive.current = true;
-      setLiveGod("");
-      setLiveOwn("");
       setCurrentId(id);
+      scrollTop();
     } catch (cause) {
+      startedHere.current = false;
+      setView("draft");
       setError(cause instanceof Error ? cause.message : "起笔失败");
     } finally {
       setBusy(false);
@@ -270,6 +359,7 @@ export default function ScenarioBattle() {
     if (!currentId || !canSubmitStrategy) return;
     setError("");
     setStage("thinking");
+    setView("book");
     setChallenge((current) => (current ? { ...current, status: "resolving" } : current));
     try {
       await api(`/scenario-challenges/${currentId}/derive`, {
@@ -277,32 +367,58 @@ export default function ScenarioBattle() {
         body: JSON.stringify({ strategy: strategy.trim() }),
       });
     } catch (cause) {
-      setStage("ready");
-      setChallenge((current) => (current ? { ...current, status: "active" } : current));
+      // 服务端可能已收下这次提交（双击/重连竞态）：先以详情为准，再决定回操作台还是留在书页
       setError(cause instanceof Error ? cause.message : "推演启动失败");
+      try {
+        const data = await api<Challenge>(`/scenario-challenges/${currentId}`);
+        setChallenge(data);
+        const next = stageFromStatus(data.status);
+        setStage(next);
+        if (data.status === "resolving" || data.status === "won" || data.status === "lost") {
+          pendingDerive.current = false;
+          setView("book");
+          return;
+        }
+      } catch {
+        // 详情也取不到：把乐观改写的 resolving 撤回，保证操作台能再次提交
+        setStage("ready");
+        setChallenge((current) => (current ? { ...current, status: "active" } : current));
+      }
+      pendingDerive.current = false;
+      setView("draft");
     }
   };
 
   // 再战：清空当前回合但不离开擂台，沿用本场的奇人与策略
   const restart = () => {
     if (challenge) setCharacterId(challenge.challenger.character_id ?? characterId);
+    startedHere.current = false;
     pendingDerive.current = false;
-    setLiveGod("");
+    setLiveDeduction("");
     setLiveOwn("");
+    setError("");
     setCurrentId(null);
+    setStage("loading");
+    setView("draft");
+    scrollTop();
   };
 
   deriveRef.current = derive;
 
-  const strategyField = (
-    <label htmlFor="battle-strategy">
-      挑战者策略意图 <small className="muted">{strategy.length}/1000</small>
-    </label>
-  );
+  const submitLabel = locked
+    ? canSubmitStrategy
+      ? "开始推演"
+      : stage === "compare"
+        ? "奇术比对中…"
+        : "等待比对"
+    : busy
+      ? "正在起笔…"
+      : "发起推演";
+  const submitDisabled = locked ? !canSubmitStrategy || busy : !characterId || busy || characters === null;
 
   return (
-    <section className="panel world-story scenario-challenge">
-      <Link className="scenario-back" to={backHref} aria-label="退出并返回阵容详情">
+    <section className={`panel world-story scenario-challenge is-${view === "book" ? "book" : "draft"}`}>
+      <Link className="scenario-back" to={backHref} aria-label="退出并返回异闻详情">
         <ChevronLeftIcon size={20} />
       </Link>
       <header className="scenario-challenge__masthead">
@@ -321,143 +437,199 @@ export default function ScenarioBattle() {
           </span>
         </div>
       </header>
-      <div className="scenario-stagebar" aria-label="推演进度">
-        {STAGE_STEPS.map((step, index) => (
-          <span className={currentId && ORDER[stage] >= ORDER[step] ? "is-done" : ""} key={step}>
-            <i>{index + 1}</i>
-            {STAGE_TEXT[step]}
-          </span>
-        ))}
-      </div>
-      <div className="world-story__brief scenario-brief">
-        <p className="scenario-brief__goal">
-          <strong>挑战目标：</strong>
-          {context.scenario.victory_condition}
-        </p>
-        <details className="scenario-fold">
-          <summary>卷规则 · 最高优先级</summary>
-          <ul>{context.scenario.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-        </details>
-        <details className="scenario-fold">
-          <summary>补充判定规则</summary>
-          <ul>{context.scenario.judgement_rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-        </details>
-        {challenge?.derived?.comparison_report && (
-          <details className="scenario-fold">
-            <summary>查看奇术比对报告</summary>
-            <p className="scenario-fold__prose">{challenge.derived.comparison_report}</p>
-          </details>
-        )}
-      </div>
-      <div className="scenario-challenge__layout is-solo">
-        <ScenarioManuscript
-          messages={challenge?.messages ?? []}
-          own={own}
-          ownLabel={ownLabel}
-          title={challenge ? `第 ${challenge.challenge_number} 次推演` : "行迹"}
-          liveText={liveOwn}
-          liveGod={liveGod}
-          note={!currentId ? "等待起笔" : challenge?.won === null ? "实时落墨" : "本场结局已记录"}
-          emptyText={
-            hasRun
-              ? "奇术比对完成后，整场推演将一次成卷。"
-              : "选定奇人、写下策略，发起推演，行迹将在此逐字落墨。"
-          }
-          pending={stage === "thinking" || stage === "views"}
-        >
-          {!currentId || failed ? (
-            <div className="scenario-guidance">
-              <label htmlFor="battle-character">出战奇人</label>
-              <select
-                id="battle-character"
-                value={characterId}
-                onChange={(event) => setCharacterId(event.target.value)}
-                disabled={busy || characters === null}
-              >
-                <option value="">请选择奇人</option>
-                {available.map((character) => (
-                  <option key={character.id} value={character.id}>
-                    {character.name}
-                  </option>
-                ))}
-              </select>
-              {characters !== null && !available.length && (
-                <p className="muted">
-                  暂无可用奇人，请先在 <Link to="/creator">创作台</Link> 装配 1-4 门奇术。
+
+      {view === "booting" ? (
+        <div className="skeleton" style={{ height: 420, margin: 24 }} />
+      ) : view === "book" ? (
+        <div className="scenario-book">
+          <aside className="scenario-rail">
+            <div className="scenario-stages" aria-label="推演进度">
+              {STAGE_STEPS.map((step, index) => {
+                const reached = !!currentId && ORDER[stage] >= ORDER[step];
+                const running = !!currentId && stage === step && stage !== "result";
+                return (
+                  <span
+                    className={`scenario-stage${reached ? " is-done" : ""}${running ? " is-active" : ""}`}
+                    key={step}
+                  >
+                    <i className="scenario-stage__dot" aria-hidden="true" />
+                    <b className="scenario-stage__no">{String(index + 1).padStart(2, "0")}</b>
+                    <span className="scenario-stage__label">{STAGE_TEXT[step]}</span>
+                  </span>
+                );
+              })}
+            </div>
+            {stage === "result" && challenge && (
+              <div className={`scenario-result ${challenge.won ? "is-won" : "is-lost"}`}>
+                <span className="scenario-result__seal">
+                  <SealStamp char={challenge.won ? "胜" : "负"} size={40} />
+                </span>
+                <div className="scenario-result__body">
+                  <strong>
+                    {challenge.won ? "本次推演：对局目标已达成" : "本次推演：对局目标未达成"}
+                  </strong>
+                  {challenge.derived?.reason && <p>{challenge.derived.reason}</p>}
+                  {!owner && !challenge.is_preview && !challenge.god_unlocked && (
+                    <p className="muted">待你看破这条异闻的全部奇术，推演全文会在书页上开启。</p>
+                  )}
+                  <div className="scenario-result__actions">
+                    <button className="btn btn-primary" onClick={restart}>
+                      <RefreshIcon size={15} />
+                      换策略再推演
+                    </button>
+                    <Link className="btn btn-ghost" to={`${recordsHref}?run=${challenge.id}`}>
+                      <BookIcon size={15} />
+                      回看本局
+                    </Link>
+                    <Link className="btn btn-ghost" to={backHref}>
+                      <XIcon size={15} />
+                      返回详情
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && <p className="err">{error}</p>}
+          </aside>
+          <ScenarioManuscript
+            variant="book"
+            messages={challenge?.messages ?? []}
+            own={own}
+            ownLabel={ownLabel}
+            liveText={liveOwn}
+            liveDeduction={liveDeduction}
+            emptyText=""
+            runningHead={{ left: context.scenario.name, right: preview ? "创作台试炼" : `第 ${runNumber} 次推演` }}
+            folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="scenario-info">
+            <div className="scenario-info__main">
+              <div className="scenario-info__block">
+                <div className="scenario-info__label">
+                  <span className="eyebrow">对局目标</span>
+                </div>
+                <p className="scenario-info__goal">{context.scenario.victory_condition}</p>
+              </div>
+              <div className="scenario-opponent">
+                <div className="scenario-opponent__head">
+                  <span className="eyebrow">本场对手</span>
+                  <strong>{context.roster.character_name}</strong>
+                  <span className="chip chip--ability">{abilityTotal} 门奇术</span>
+                </div>
+                <p className="scenario-opponent__bio">{context.roster.character_bio || "此人未留行状。"}</p>
+                <p className="scenario-opponent__stats">
+                  <span>
+                    已看破 {cracked} / {abilityTotal} 门
+                  </span>
+                  <span>{winRate}</span>
+                </p>
+              </div>
+              <p className="scenario-info__meta">
+                <span>{preview ? "创作台试炼" : `本场已推演 ${attempts} 次`}</span>
+                <span>{locked ? STAGE_TEXT[stage] : preview ? "试炼" : `第 ${nextRun} 次`}</span>
+              </p>
+            </div>
+            <div className="scenario-info__rules">
+              <section className="scenario-rules">
+                <h3 className="scenario-rules__title">
+                  卷规则<span className="scenario-rules__badge">最高优先级</span>
+                </h3>
+                <ol className="scenario-rules__list">
+                  {context.scenario.rules.map((rule) => (
+                    <li key={rule}>{rule}</li>
+                  ))}
+                </ol>
+              </section>
+              <section className="scenario-rules scenario-rules--dim">
+                <h3 className="scenario-rules__title">
+                  补充判定<span className="scenario-rules__badge">含糊即未发生</span>
+                </h3>
+                <ul className="scenario-rules__list">
+                  {context.scenario.judgement_rules.map((rule) => (
+                    <li key={rule}>{rule}</li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+          </div>
+
+          <div className="scenario-divider">
+            <span>其二 · 起笔</span>
+          </div>
+
+          <section className="scenario-console">
+            <div className="scenario-picker">
+              <div className="scenario-picker__head">
+                <span className="eyebrow">出战奇人</span>
+                <span className="scenario-picker__hint">
+                  {characters === null ? "载入中" : `共 ${available.length} 位`}
+                  {characters !== null && available.length > 4 && <span className="scenario-picker__more"> · 可滚</span>}
+                </span>
+              </div>
+              <div className="scenario-picker__list" role="radiogroup" aria-label="出战奇人">
+                {characters === null
+                  ? [0, 1, 2].map((row) => <span className="scenario-picker__ghost" key={row} />)
+                  : available.map((character) => (
+                      <label className="scenario-picker__row" key={character.id}>
+                        <input
+                          type="radio"
+                          name="battle-character"
+                          value={character.id}
+                          checked={characterId === character.id}
+                          onChange={() => setCharacterId(character.id)}
+                          disabled={locked || busy}
+                        />
+                        <span className="scenario-picker__mark" aria-hidden="true" />
+                        <span className="scenario-picker__body">
+                          <b>{character.name}</b>
+                          <small>{character.bio || "未留行状"}</small>
+                        </span>
+                        <span className="scenario-picker__arts">{artsOf(character)}</span>
+                      </label>
+                    ))}
+              </div>
+              {characters !== null && !available.length ? (
+                <p className="scenario-picker__empty">
+                  暂无可用奇人，请先在 <Link to="/yiwenlu">创作台</Link> 装配 1-4 门奇术。
+                </p>
+              ) : (
+                <p className="scenario-picker__foot">
+                  {locked
+                    ? `本局奇人已定${ownLabel ? ` · ${ownLabel}` : ""}，只可改策略。`
+                    : "选定后仍可改，起笔那一刻才算数。"}
                 </p>
               )}
-              {strategyField}
+            </div>
+
+            <div className="scenario-sheet">
+              <div className="scenario-sheet__head">
+                <span className="eyebrow">策略意图</span>
+                <span className="scenario-sheet__count">
+                  {strategy.length} / 1000
+                </span>
+              </div>
               <textarea
                 id="battle-strategy"
-                rows={5}
                 maxLength={1000}
                 value={strategy}
                 onChange={(event) => setStrategy(event.target.value)}
                 placeholder="告诉奇人该如何应对这场推演；留空则由奇人自行应对。"
               />
-              <button
-                className="btn btn-primary"
-                disabled={!characterId || busy}
-                onClick={() => void begin()}
-              >
-                {busy ? "正在起笔…" : "发起推演"}
-              </button>
-            </div>
-          ) : (
-            challenge &&
-            challenge.won === null &&
-            stage !== "result" && (
-              <div className="scenario-guidance">
-                {strategyField}
-                <textarea
-                  id="battle-strategy"
-                  value={strategy}
-                  onChange={(event) => setStrategy(event.target.value)}
-                  placeholder="写下希望奇人优先采取的策略，也可以留空跳过"
-                  disabled={!canSubmitStrategy && stage !== "compare"}
-                />
-                <button
-                  className="btn btn-primary"
-                  disabled={!canSubmitStrategy}
-                  onClick={() => void derive()}
-                >
-                  {strategy.trim() ? "开始推演" : "跳过指导并推演"}
+              <div className="scenario-sheet__foot">
+                <p className="muted">
+                  {locked ? "比对完成后点「开始推演」，或留空让奇人自行应对。" : "留空则由奇人自行应对。"}
+                </p>
+                <button className="btn btn-primary" disabled={submitDisabled} onClick={() => void (locked ? derive() : begin())}>
+                  {submitLabel}
                 </button>
               </div>
-            )
-          )}
-        </ScenarioManuscript>
-      </div>
-      {error && <p className="err">{error}</p>}
-      {stage === "result" && challenge && (
-        <div className={`scenario-result ${challenge.won ? "is-won" : "is-lost"}`}>
-          <span className="scenario-result__seal">
-            <SealStamp char={challenge.won ? "胜" : "负"} size={48} />
-          </span>
-          <div className="scenario-result__body">
-            <strong>
-              {challenge.won ? "本次推演：挑战目标已达成" : "本次推演：挑战目标未达成"}
-            </strong>
-            {challenge.derived?.reason && <p>{challenge.derived.reason}</p>}
-            {!owner && !challenge.is_preview && !challenge.god_unlocked && (
-              <p className="muted">待你看破这套阵容的全部奇术，上帝视角会在书页上开启。</p>
-            )}
-            <div className="scenario-result__actions">
-              <button className="btn btn-primary" onClick={restart}>
-                <RefreshIcon size={15} />
-                换策略再推演
-              </button>
-              <Link className="btn btn-ghost" to={`${recordsHref}?run=${challenge.id}`}>
-                <BookIcon size={15} />
-                回看本局
-              </Link>
-              <Link className="btn btn-ghost" to={backHref}>
-                <XIcon size={15} />
-                返回详情
-              </Link>
+              {error && <p className="err">{error}</p>}
             </div>
-          </div>
-        </div>
+          </section>
+        </>
       )}
     </section>
   );

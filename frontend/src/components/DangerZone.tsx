@@ -58,7 +58,7 @@ export default function DangerZone() {
       <p className="muted">导出你的创作与推演数据（JSON）。</p>
       <button className="btn" onClick={exportData} disabled={busy}>导出我的数据</button>
       <p className="muted" style={{ marginTop: 16 }}>
-        注销账号：名号与邮箱将被匿名化且不可恢复，已登录会话全部失效；你创作的奇术、奇人与阵容会保留但归属显示为已注销。
+        注销账号：名号与邮箱将被匿名化且不可恢复，已登录会话全部失效；你创作的奇术、奇人与异闻会保留但归属显示为已注销。
       </p>
       <form onSubmit={deleteAccount} className="inline-form">
         <input
