@@ -1,15 +1,19 @@
 """小天下集单次挑战的 SSE 发布/订阅通道（跨实例事件总线）。
 
 设计边界（docs/plans/2026-09-13-sse-scope-refactor.md）：SSE 只服务"满足条件的
-LLM 节点输出"——上帝视角以遮挡进度（god_progress，只发累计字数）呈现，双方视角
-逐字转写（view_chunk，带 side）实时推送；阶段进度改由前端轮询驱动，stage 事件
+LLM 节点输出"——推演以遮挡进度（deduction_progress，只发累计字数）呈现，双侧
+叙述（narration_chunk，带 side）实时推送；阶段进度改由前端轮询驱动，stage 事件
 已退场；回放流随之移除（终态由端点查库短路），快照仅保留进程内 _emitted。
+叙述内容断线续传（docs/plans/2026-10-02-sse-view-resume.md）：narration_chunk 在
+_fanout 单入口处同步累积进 _view_buffers（本地发布与 relay 转发共用该入口，
+任意实例的通道对象都持有完整缓冲），订阅快照前置一帧 narration_snapshot（累计全文，
+替换语义）；终态随通道退场，非持久回放。
 
 拓扑：
 - 实时：publish() 先投本地订阅者队列，再向 Redis 全局频道广播信封（origin=实例号）。
   各实例的 relay 协程收到他人实例的事件后转投本地订阅者；自身 origin 跳过，防回环双投。
 - 侧别过滤：订阅者登记侧别（challenger/guardian），带 side 的事件只投递给同侧
-  订阅者（防守方收到挑战者正文；无 side 事件如 done/error/god_progress 全体广播）。
+  订阅者（防守方收到挑战者叙述正文；无 side 事件如 done/error/deduction_progress 全体广播）。
 - 降级：Redis 不可用时退化为单进程模式（本地投递照旧，跨实例能力暂失），
   仅在状态翻转时打一条 warning 防刷屏。
 """
@@ -55,20 +59,31 @@ class ScenarioChallengeStream:
         self.challenge_id = challenge_id
         self._subscribers: dict[asyncio.Queue, str | None] = {}  # 队列 → 订阅侧别（None=不过滤）
         self._emitted: list[dict] = []  # 本地快照：仅 done/error 等无侧别终局事件
+        self._view_buffers: dict[str, str] = {}  # side → 叙述累计全文（重连补发用，随通道退场）
 
     def _fanout(self, event: dict) -> None:
         side = event.get("side")
+        if event.get("type") == "narration_chunk" and side is not None:
+            self._view_buffers[side] = self._view_buffers.get(side, "") + str(event.get("text", ""))
         for queue, subscriber_side in list(self._subscribers.items()):
             if side is not None and subscriber_side is not None and side != subscriber_side:
                 continue  # 侧别不符：守方连接不投挑战者事件（含逐字正文）
             queue.put_nowait(event)
 
     async def subscribe(self, side: str | None = None) -> tuple[asyncio.Queue, list[dict]]:
-        """登记本地订阅者（登记侧别用于过滤）并返回 (队列, 本地快照)。"""
+        """登记本地订阅者（登记侧别用于过滤）并返回 (队列, 本地快照)。
+
+        快照含：该侧已累计的叙述全文（narration_snapshot，替换语义，供断线重连补发）
+        与 done/error 等终局事件——view_snapshot 恒在最前。
+        """
         queue: asyncio.Queue = asyncio.Queue()
         self._subscribers[queue] = side
         SSE_STREAMS_ACTIVE.inc()
-        return queue, list(self._emitted)
+        snapshot: list[dict] = []
+        if side is not None and self._view_buffers.get(side):
+            snapshot.append({"type": "narration_snapshot", "side": side, "text": self._view_buffers[side]})
+        snapshot.extend(self._emitted)
+        return queue, snapshot
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._subscribers.pop(queue, None)

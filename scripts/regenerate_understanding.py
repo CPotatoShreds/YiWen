@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.db.base import async_session_factory
 from app.models.ability import Ability
-from app.services.ability_understanding import ensure_ability_understanding
+from app.services.ability.understanding import ensure_ability_understanding
 
 SEM = asyncio.Semaphore(8)
 

@@ -1,7 +1,9 @@
-# 未执行计划索引
+# 计划档案索引
 
 | 文件 | 主题 | 状态 | 创建 |
 |---|---|---|---|
+| [2026-10-02-deduction-narration-split.md](2026-10-02-deduction-narration-split.md) | 推演/叙述解耦与全面重命名（三段独立任务 + 术语更替） | ✅ 已完成（2026-10-02） | 2026-10-02 |
+| [2026-10-02-sse-view-resume.md](2026-10-02-sse-view-resume.md) | SSE 叙述内容断线续传（narration_snapshot 补发） | ✅ 已完成（2026-10-02） | 2026-10-02 |
 | [2026-09-15-battle-merge-single-view.md](2026-09-15-battle-merge-single-view.md) | 对战页合并 + 单主视角 + 猜词搁置（含上帝门控） | ✅ 已完成（2026-09-15，含视觉核验） | 2026-09-15 |
 | [2026-09-13-sse-scope-refactor.md](2026-09-13-sse-scope-refactor.md) | SSE 职责收缩（上帝遮挡流/stage 退场/侧别过滤） | ✅ 已完成（2026-09-15，pytest 62/62） | 2026-09-13 |
 | [2026-09-12-sse-bus-refactor.md](2026-09-12-sse-bus-refactor.md) | SSE 事件总线外置 + 猜词轮次锁 DB 化 | ✅ 已完成（2026-09-12，双实例实测 PASS） | 2026-09-12 |

@@ -1,5 +1,7 @@
 # 当前数据模型与接口
 
+> 状态：2026-10-02 复核，与迁移 head `e5f6a7b8c9d0` 对齐（本轮：推演/叙述/检定三站解耦 + 术语更替）。
+
 本文以 `app/models`、`app/schemas` 和 `app/api/routes` 的当前实现为准。
 
 ## 领域边界
@@ -20,14 +22,14 @@
 | `scenario_rosters` | 卷阵容，引用 `character_id`，并保存名称、介绍和奇术快照；不区分官方/玩家 |
 | `scenario_roster_revisions` | 阵容修订快照（`revision_number` 唯一递增）；仅属于小天下集内容域 |
 | `scenario_roster_abilities` / `scenario_roster_revision_abilities` | 阵容当前/修订的奇术快照，不随用户资产修改而变化 |
-| `scenario_challenge_runs` | 单次挑战的卷、守方、挑战者快照，以及消息、猜词和派生结果 JSON |
+| `scenario_challenge_runs` | 单次挑战的卷、守方、挑战者快照，以及消息、猜词、派生结果 JSON 和 `deduction_text`（推演站 checkpoint，终局保留审计） |
 | `scenario_roster_progress` | `(roster_id, challenger_id)` 维度的挑战进度和看破卡片 |
 | `llm_profiles` | 用户自配模型方案，api_key 经 Fernet 加密落库 |
 | `refresh_tokens` | 刷新令牌 sha256 哈希，支持旋转与吊销 |
 | `admin_audit_logs` | 管理操作审计（操作者/动作/对象/详情） |
 | `llm_traces` / `request_logs` | LLM 与 HTTP 审计记录 |
 
-`Ability.understanding` 是由可靠性层异步生成的三相因果槽位 JSON；编辑奇术后会重新调度生成，比对节点（`pair_judge._render_pair_ability`）会把它作为因果槽位附入逐对对比输入。奇人介绍 `bio` 沿用旧版奇人风格字段的语义；`style`/`tactic` 已从当前模型删除。
+`Ability.understanding` 是由可靠性层异步生成的三相因果槽位 JSON；编辑奇术后会重新调度生成。当前仅用于 API 回显（创作者/管理员查看），**未进入**逐对比对与推演输入（比对渲染见 `services/ability/pair_comparison.py` 的 `render_ability`，只含 name/effect/detail）。奇人介绍 `bio` 沿用旧版奇人风格字段的语义；`style`/`tactic` 已从当前模型删除。
 
 删除奇术会先解除所有奇人绑定；删除奇人会使已发布阵容的 `character_id` 置空，但阵容和挑战快照继续保留。
 
@@ -56,7 +58,7 @@
 
 管理员卷：`/admin/scenarios/**`，只有管理员可创建、编辑、发布或下线卷。
 
-挑战：`POST /scenario-rosters/{roster_id}/challenges`（请求体使用 `character_id`）、`GET /scenario-challenges/{id}`、`GET /scenario-challenges/{id}/stream`、以及 `actions`、`guess`、`guess/verify`、`derive`。
+挑战：`POST /scenario-rosters/{roster_id}/challenges`（请求体使用 `character_id`）、`GET /scenario-challenges/{id}`、`GET /scenario-challenges/{id}/stream`（SSE 事件：`deduction_progress`/`narration_chunk`/`narration_snapshot`/`turn`/`done`/`error`）、以及 `actions`、`guess`、`guess/verify`、`derive`。术语注：原「上帝视角」现称「推演」、原「视角转写」现称「叙述」；API 字段 `omniscient`（turn JSON 内）与 `god_unlocked`（详情响应）为兼容保留旧名。
 
 ## 认证接口
 

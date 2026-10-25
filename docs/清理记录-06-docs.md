@@ -51,3 +51,4 @@
 - 全库 grep：`后端改动影响 / 交接文档 / collection-chain-stability / langfuse / 锁版本 / fc2d3e4f5a6b` 零残留。
 - `docs/` 最终结构（17 个文件）：现役文档 3 份（product-design / current-model-api / 数据库备份与恢复）+ plans 历史计划 8 份 + 清理记录 6 份。
 - 遗留提醒：`scripts/compare_collection_reply_chains.py` 的输出目标正是已删的稳定性报告——该脚本本身是坏脚本（引用已删节点），留给 scripts 站处置。
+  - 2026-10-01 已处置：该脚本连同其余 4 个死脚本（seed_users / backfill_test_guess_rounds / exp_three_phase / import_legacy_assets）一并删除，见当日全仓审查清理。

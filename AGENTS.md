@@ -58,7 +58,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 
 ### 项目定位与技术栈
 
-- `ynfight` 是“异闻录”AI 奇术对战平台（现役玩法为「小天下集」）：异闻师创建奇术、装配奇人，向公开阵容发起挑战；LLM 依据双方奇术与策略一次性推演对决并检定胜利条件，挑战者可依据推演与逐轮点评猜守方实际奇术，全部看破后解锁上帝视角。
+- `ynfight` 是“异闻录”AI 奇术对战平台（现役玩法为「小天下集」）：异闻师创建奇术、装配奇人，向公开阵容发起挑战；LLM 依据双方奇术与策略一次性推演对决并检定胜利条件，挑战者可依据推演与逐轮点评猜守方实际奇术，全部看破后解锁推演全文。
 - 后端是 Python 3.12 + FastAPI + async SQLAlchemy 2.x + Pydantic v2 + Alembic，由 `uv` 管理依赖，代码主要在 `app/api/`、`app/models/`、`app/schemas/`、`app/services/`。
 - 前端是 `frontend/` 下的 React + TypeScript + Vite，使用纯 CSS（`frontend/src/index.css`），依赖由 npm 和 `frontend/package-lock.json` 管理。
 - 开发数据库默认是 Docker PostgreSQL；测试使用独立测试库。数据库结构变更必须通过 `migrations/versions/` 的 Alembic 迁移完成。
@@ -77,7 +77,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 - **编排属 services，路由只做 HTTP 壳**：后台编排协程在 `app/services/scenario/flows.py`；对外脱敏纯函数在 `app/services/scenario/views.py`；`api/routes/scenario_domain.py` 只做参数校验与响应组装。依赖方向永远是 api → services，绝不反向。
 - **单件根级、多件成包**：横切单文件工具放 services 根（如 `mail.py`）；内容多文件才立包（如 `llm/`）。域不再使用单文件包。
 - **已删除域不要复活**：battle、loadout、board、collection（旧收藏集对战）、friend、leaderboard、notification、anecdote、prompt_debug、管理员试验场（test_battle/test_* 表）均已移除；遇到旧文档或 `__pycache__` 提及它们，以代码现状为准。
-- 后台任务：业务代码 `dispatch("任务名", ...)` 派发，inline 与 arq 双模式共用 `services/scenario/tasks_registry.py` 注册表；新增后台任务在 `flows.py` 实现协程并在注册表登记。
+- 后台任务：业务代码 `dispatch("任务名", ...)` 派发，inline 与 arq 双模式共用 `services/scenario/tasks_registry.py` 注册表；现役任务：scenario_prepare（比对）、scenario_deduction（推演站）、scenario_narration（叙述站）、scenario_judgement（检定站）、guess_round、guess_verify。推演三站解耦（2026-10-02）：推演站产全文落 `deduction_text` 列后扇出叙述+检定，后到者结算；术语上「上帝视角」已更名「推演」、视角转写更名「叙述」（提示词正文冻结不改，SSE 事件为 deduction_progress/narration_chunk/narration_snapshot，API 字段 `omniscient`/`god_unlocked` 为兼容保留旧名）。
 - `app/services/guess/pipeline.py` 是猜词管道：切分（纯正则）→ 原子×奇术并发配对 → 玩家主动检定三环节，回调式逐结果落库。
 - `app/services/llm/reliability.py` 统一收口所有 LLM 调用（硬超时、退避重试、并发闸、llm_traces 追踪）；新增 LLM 调用必须沿用这层。
 - LLM 配置默认来自 `.env` 的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`（OpenAI 兼容协议，不区分 provider）；用户自配方案（llm_profiles，api_key 经 Fernet 加密落库）可覆盖默认。不要把密钥写入代码、测试或提交。
@@ -86,7 +86,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 
 - `app/services/nodes/`（含 `nodes/ability/understanding.py`）中的推演、判定、转写、猜词与三相奇术理论提示词是用户手调内容，默认冻结；任何提示词文字、示例、约束或措辞调整必须先征得用户同意。移动文件、修正 docstring 中的模块指引不受此限，但提示词常量必须逐字节保持（迁移后用脚本比对验证）。
 - 前端遵循古镇纸墨风：宣纸暖白、暖炭墨、朱砂主色，命中态克制使用墨绿；禁止 emoji、紫蓝渐变和 Tailwind/Framer Motion，图标使用 `frontend/src/components/icons.tsx`。
-- 后端字段名和 API 路径保持英文稳定；用户可见术语遵循说书语系（奇术、奇人、异闻师、卷、阵容、挑战、看破、道出猜测等），以现行前端文案为准。
+- 后端字段名和 API 路径保持英文稳定；用户可见术语遵循说书语系，完整清单见 `docs/product-design.md` 开头的术语字典（唯一真相），现役条目为：小天下集（若干卷的集合）、卷、异闻、立异闻（创建动作）、对局、推演（LLM 行迹演算）、奇术、奇人、异闻师、道出猜测、看破。原「情景/卷册/阵容/排布阵容/挑战记录」等旧称在界面文案中一律退役。
 - 不要为了“整理”删除历史字段或旧数据兼容逻辑（如存量 JSON 的“半对”判定、`snippet` 字段回退）。删列/删表类改动必须先核对模型、迁移和数据实况，并征得用户同意。
 
 ### 协作与工作区

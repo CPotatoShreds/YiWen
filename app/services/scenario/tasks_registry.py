@@ -11,7 +11,9 @@ from app.services.scenario import flows
 
 _TASK_ATTRS = {
     "scenario_prepare": "prepare_scenario_challenge",
-    "scenario_resolve": "resolve_scenario_action",
+    "scenario_deduction": "run_scenario_deduction",
+    "scenario_narration": "run_scenario_narration",
+    "scenario_judgement": "run_scenario_judgement",
     "guess_round": "run_guess_round",
     "guess_verify": "run_guess_verify",
 }

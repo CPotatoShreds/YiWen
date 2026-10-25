@@ -17,9 +17,13 @@ ynfight/
 │   ├── db/           # 数据库引擎与会话
 │   ├── models/       # ORM 模型（用户、奇术、奇人、行迹…）
 │   ├── schemas/      # Pydantic 校验模型
-│   └── services/     # 业务逻辑（奇术管理、奇人抽选、摇签、LLM 铺陈与猜奇术…）
+│   └── services/     # 业务逻辑（奇术理解与逐对比对、挑战推演编排、猜词管道、LLM 可靠性…）
+├── migrations/       # Alembic 数据库迁移
 ├── tests/            # pytest 测试
 ├── frontend/         # React 前端（古镇纸墨风格）
+├── scripts/          # 运维与种子脚本（备份/恢复、开发造数）
+├── deploy/           # 生产部署（compose、Dockerfile、部署说明）
+├── docs/             # 产品设计、数据模型与接口、运维文档
 ├── pyproject.toml    # uv 项目配置与依赖
 └── .python-version   # Python 3.12
 ```
@@ -48,7 +52,7 @@ uv run ruff check .
 uv run alembic upgrade head
 ```
 
-数据库为本地 Docker PostgreSQL（`postgres:16-alpine`，用户/库均为 `ynfight`，端口 5432），连接串在 `.env` 的 `DATABASE_URL`（默认 `postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight`）。测试会重建独立的 `ynfight_test` 库，不碰开发数据。
+数据库为本地 Docker PostgreSQL（`postgres:16-alpine`，用户/库均为 `ynfight`，端口 5432），另含 Redis（端口 6380，用于比对缓存、SSE 总线、限流与登录锁定），两者均由 `docker compose up -d` 一并启动。连接串在 `.env` 的 `DATABASE_URL`（默认 `postgresql+asyncpg://ynfight:ynfight@localhost:5432/ynfight`）。测试会重建独立的 `ynfight_test` 库，不碰开发数据。
 
 > 备选：如需单文件 SQLite 本地调试，把 `.env` 的 `DATABASE_URL` 改为 `sqlite+aiosqlite:///./ynfight.db` 即可。
 

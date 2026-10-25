@@ -75,11 +75,11 @@ async def test_side_filtering_only_delivers_matching_side():
     challenger_queue, _ = await channel.subscribe(side="challenger")
     guardian_queue, _ = await channel.subscribe(side="guardian")
 
-    await channel.publish({"type": "view_chunk", "side": "challenger", "text": "挑战者正文"}, replay=False)
-    await channel.publish({"type": "view_chunk", "side": "guardian", "text": "守方正文"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "挑战者叙述"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "守方叙述"}, replay=False)
 
-    assert (await asyncio.wait_for(challenger_queue.get(), 1.0))["text"] == "挑战者正文"
-    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["text"] == "守方正文"
+    assert (await asyncio.wait_for(challenger_queue.get(), 1.0))["text"] == "挑战者叙述"
+    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["text"] == "守方叙述"
     assert challenger_queue.empty()  # 未投递守方正文
     assert guardian_queue.empty()  # 未投递挑战者正文
 
@@ -107,7 +107,7 @@ async def test_cross_instance_live_delivery_via_relay():
             relay = await _start_relay()
             try:
                 publisher = ScenarioChallengeStream(cid)  # 模拟 A 实例（不在本进程注册表）
-                payload = {"type": "view_chunk", "side": "challenger", "text": "跨实例"}
+                payload = {"type": "narration_chunk", "side": "challenger", "text": "跨实例"}
                 # pub/sub 是 at-most-once：极端时序下可能错过单次发布，重试投递
                 with patch.object(stream_module, "INSTANCE_ID", "inst-a"):
                     await publisher.publish(payload, replay=False)
@@ -119,7 +119,7 @@ async def test_cross_instance_live_delivery_via_relay():
                     except TimeoutError:
                         with patch.object(stream_module, "INSTANCE_ID", "inst-a"):
                             await publisher.publish(payload, replay=False)
-                assert event == {"type": "view_chunk", "side": "challenger", "text": "跨实例"}
+                assert event == {"type": "narration_chunk", "side": "challenger", "text": "跨实例"}
             finally:
                 relay.cancel()
                 await asyncio.gather(relay, return_exceptions=True)
@@ -155,3 +155,49 @@ async def test_done_event_cleans_registry_and_snapshot():
     # 本地快照保留无侧别终局事件，供同实例晚到订阅者补发
     _, snapshot = await channel.subscribe(side="challenger")
     assert {"type": "done", "status": "won"} in snapshot
+
+
+async def test_midway_subscribe_gets_view_snapshot():
+    """中途订阅：快照首帧 narration_snapshot 携带该侧累计全文（replay=False 的 chunk 也进缓冲）。"""
+    channel = ScenarioChallengeStream(uuid.uuid4())
+    await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "剑光"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "掠过檐角"}, replay=False)
+    _, snapshot = await channel.subscribe(side="challenger")
+    assert snapshot[0] == {"type": "narration_snapshot", "side": "challenger", "text": "剑光掠过檐角"}
+
+
+async def test_view_snapshot_side_isolation():
+    """快照补发按侧隔离：challenger 订阅只拿到 challenger 累计，不含守方文本。"""
+    channel = ScenarioChallengeStream(uuid.uuid4())
+    await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "己方"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "守方"}, replay=False)
+    _, challenger_snapshot = await channel.subscribe(side="challenger")
+    _, guardian_snapshot = await channel.subscribe(side="guardian")
+    assert challenger_snapshot[0]["text"] == "己方"
+    assert guardian_snapshot[0]["text"] == "守方"
+
+
+async def test_cross_instance_view_snapshot():
+    """跨实例：A 实例发布经 relay 到 B 实例通道后，B 的订阅快照含 A 的累计文本（_fanout 单入口覆盖 relay 路径）。"""
+    cid = uuid.uuid4()
+    try:
+        with patch.object(stream_module, "INSTANCE_ID", "inst-b"):
+            mine = stream_module.get_scenario_stream(cid)  # 本"实例"（B）注册的通道
+            relay = await _start_relay()
+            try:
+                payload = {"type": "narration_chunk", "side": "challenger", "text": "跨实例"}
+                for _ in range(5):  # pub/sub at-most-once：错过即重试投递
+                    with patch.object(stream_module, "INSTANCE_ID", "inst-a"):
+                        await ScenarioChallengeStream(cid).publish(payload, replay=False)
+                    _, snapshot = await mine.subscribe(side="challenger")
+                    if snapshot and snapshot[0].get("type") == "narration_snapshot":
+                        assert snapshot[0]["text"] == "跨实例"
+                        break
+                    await asyncio.sleep(0.3)
+                else:
+                    pytest.fail("跨实例快照未在重试窗口内收到")
+            finally:
+                relay.cancel()
+                await asyncio.gather(relay, return_exceptions=True)
+    finally:
+        stream_module._registry.pop(cid, None)

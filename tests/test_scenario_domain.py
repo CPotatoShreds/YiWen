@@ -83,7 +83,7 @@ def test_roster_is_public_and_author_trial_is_excluded_from_stats():
 
 
 def test_challenge_prepares_before_actions_and_accepts_action_asynchronously():
-    with TestClient(app) as client, patch("app.services.scenario.flows.prepare_scenario_challenge", _no_background_work), patch("app.services.scenario.flows.resolve_scenario_action", _no_background_work):
+    with TestClient(app) as client, patch("app.services.scenario.flows.prepare_scenario_challenge", _no_background_work), patch("app.services.scenario.flows.run_scenario_deduction", _no_background_work):
         admin_name, admin = _user(client, "streamadm")
         _promote(admin_name)
         scenario = client.post("/api/admin/scenarios", headers=admin, json=_scenario_payload("流式追捕")).json()

@@ -16,18 +16,18 @@ from app.services.nodes.ability.pair_judge import SPEC as _ABILITY_PAIR
 from app.services.nodes.ability.understanding import SPEC as _UNDERSTANDING
 from app.services.nodes.guess.matcher import SPEC_PAIR, SPEC_VERIFY
 from app.services.nodes.registry import NodeSpec, resolve_model_id
-from app.services.nodes.scenario.challenger_view import SPEC as _CHALLENGER_VIEW
-from app.services.nodes.scenario.god import SPEC as _GOD
-from app.services.nodes.scenario.guardian_view import SPEC as _GUARDIAN_VIEW
+from app.services.nodes.scenario.deduction import SPEC as _DEDUCTION
 from app.services.nodes.scenario.judge import SPEC as _JUDGE
+from app.services.nodes.scenario.narration_challenger import SPEC as _NARRATION_CHALLENGER
+from app.services.nodes.scenario.narration_guardian import SPEC as _NARRATION_GUARDIAN
 
 NODES: dict[str, NodeSpec] = {
     spec.id: spec
     for spec in (
-        _GOD,
+        _DEDUCTION,
         _JUDGE,
-        _CHALLENGER_VIEW,
-        _GUARDIAN_VIEW,
+        _NARRATION_CHALLENGER,
+        _NARRATION_GUARDIAN,
         _ABILITY_PAIR,
         _UNDERSTANDING,
         SPEC_PAIR,

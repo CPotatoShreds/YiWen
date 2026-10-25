@@ -1,4 +1,4 @@
-"""小天下集对外视图的纯函数：脱敏公开形状、看破卡片与上帝门控（路由端点与 flows 共用）。"""
+"""小天下集对外视图的纯函数：脱敏公开形状、看破卡片与推演门控（路由端点与 flows 共用）。"""
 
 from app.models.scenario_domain import ScenarioRosterProgress
 
@@ -84,14 +84,14 @@ def guess_cards(progress: ScenarioRosterProgress | None, abilities: list[dict]) 
     return cards
 
 
-def god_unlocked(progress: ScenarioRosterProgress | None, abilities: list[dict]) -> bool:
-    """上帝视角解锁：该挑战者对本阵容全部奇术均已看破（逐阵容累积进度，解锁后永久开放）。"""
+def deduction_unlocked(progress: ScenarioRosterProgress | None, abilities: list[dict]) -> bool:
+    """推演全文解锁：该挑战者对本阵容全部奇术均已看破（逐阵容累积进度，解锁后永久开放）。"""
     cards = guess_cards(progress, abilities)
     return bool(cards) and all(bool(card.get("cracked")) for card in cards)
 
 
 def visible_turn(message: dict, *, unlocked: bool) -> dict:
-    """挑战者可见的回合形状：永远只含己方视角正文；上帝全文仅在看破全部后携带（守方正文不给）。"""
+    """挑战者可见的回合形状：永远只含己方叙述正文；推演全文仅在看破全部后携带（守方正文不给）。"""
     if message.get("role") != "views":
         return message
     visible = {key: value for key, value in message.items() if key not in {"guardian_text", "omniscient"}}

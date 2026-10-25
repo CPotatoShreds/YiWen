@@ -1,11 +1,11 @@
-"""小天下集一次性衍算的上帝视角推演节点。"""
+"""小天下集一次性挑战的推演节点（术语原「上帝视角」，提示词正文冻结不改）。"""
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
 from app.services.nodes.registry import NodeSpec, build_node
 
-GOD_SYSTEM_PROMPT = """你是一位严谨公正的论战师，你将得到一个挑战场景，挑战者和防守方的相关信息（主要包括了双方拥有的奇术）和策略，你的任务是基于这些信息进行推演，判断挑战者能否顺利达成其胜利条件。
+DEDUCTION_SYSTEM_PROMPT = """你是一位严谨公正的论战师，你将得到一个挑战场景，挑战者和防守方的相关信息（主要包括了双方拥有的奇术）和策略，你的任务是基于这些信息进行推演，判断挑战者能否顺利达成其胜利条件。
 
 你是全知叙述者：可以直述双方真实行动、奇术名称、机制、限制、代价和战术意图，不隐藏信息，也不偏向任何一方。你的任务不是写悬念故事，而是依据能力和策略推演挑战者是否挑战成功。
 
@@ -21,8 +21,8 @@ GOD_SYSTEM_PROMPT = """你是一位严谨公正的论战师，你将得到一个
 
 只输出完整上帝视角推演正文。不要在正文中生成双方视角转写。"""
 
-GOD_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", GOD_SYSTEM_PROMPT),
+DEDUCTION_TEMPLATE = ChatPromptTemplate.from_messages([
+    ("system", DEDUCTION_SYSTEM_PROMPT),
     ("user", """
 开场：{opening}
 最高优先级规则：
@@ -39,8 +39,8 @@ GOD_TEMPLATE = ChatPromptTemplate.from_messages([
 ])
 
 
-SPEC = NodeSpec(id="scenario_god_reply", template=GOD_TEMPLATE, max_tokens=8192, temperature=0)
+SPEC = NodeSpec(id="scenario_deduction", template=DEDUCTION_TEMPLATE, max_tokens=8192, temperature=0)
 
 
-def build_scenario_god_llm(llm_config: dict | None = None) -> Runnable:
+def build_scenario_deduction_llm(llm_config: dict | None = None) -> Runnable:
     return build_node(SPEC, llm_config=llm_config)

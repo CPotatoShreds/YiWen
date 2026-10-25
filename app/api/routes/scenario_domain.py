@@ -48,7 +48,7 @@ from app.services.scenario.flows import now as _now
 from app.services.scenario.normalization import normalize_title, slugify_title
 from app.services.scenario.stream import get_scenario_stream
 from app.services.scenario.views import (
-    god_unlocked as _god_unlocked,
+    deduction_unlocked as _deduction_unlocked,
     guess_cards as _guess_cards,
     public_cards as _public_cards,
     public_guess_rounds as _public_guess_rounds,
@@ -85,7 +85,7 @@ async def _unique_scenario_slug(db: AsyncSession, name: str, scenario_id: UUID) 
 async def _character_snapshot(db: AsyncSession, character_id: UUID, owner_id: int) -> tuple[str, str, list[dict]]:
     character = await db.get(Character, character_id)
     if character is None or character.owner_id != owner_id:
-        raise HTTPException(404, "私有奇人不存在")
+        raise HTTPException(404, "奇人不存在")
     links = list((await db.scalars(select(CharacterAbility).where(CharacterAbility.character_id == character.id).order_by(CharacterAbility.position))).all())
     if not 1 <= len(links) <= 4:
         raise HTTPException(400, "奇人必须装配 1-4 门奇术")
@@ -547,8 +547,8 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
         progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": current.id})
         abilities = list(challenge.roster_snapshot.get("abilities", []))
         cards = _guess_cards(progress, abilities)
-        # 上帝门控：未全破只给己方视角；全破后附上帝全文；守方正文始终不下发（试炼为作者自看，保持全量）
-        unlocked = challenge.is_preview or _god_unlocked(progress, abilities)
+        # 推演门控：未全破只给己方视角；全破后附推演全文；守方正文始终不下发（试炼为作者自看，保持全量）
+        unlocked = challenge.is_preview or _deduction_unlocked(progress, abilities)
         messages = challenge.messages if challenge.is_preview else [_visible_turn(message, unlocked=unlocked) for message in (challenge.messages or [])]
         return {
             "id": challenge.id,
@@ -562,7 +562,7 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
             "roster": challenge.roster_snapshot,
             "challenger": challenge.challenger_snapshot,
             "messages": messages,
-            "god_unlocked": unlocked,
+            "god_unlocked": unlocked,  # API 契约字段名保持英文稳定；仅函数/术语换新
             "guess_attempts": challenge.guess_attempts,
             "guesses": _public_guess_rounds(challenge.guesses),
             "guess_rounds": _public_guess_rounds(progress.guess_rounds if progress else []),
@@ -609,7 +609,7 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
 
 @challenge_router.get("/scenario-challenges/{challenge_id}/stream")
 async def challenge_stream(challenge_id: UUID, current: Annotated[User, Depends(get_current_user)]) -> StreamingResponse:
-    """小天下集推演实时流：上帝遮挡进度与己方视角逐字转写（阶段进度由前端轮询驱动）。"""
+    """小天下集推演实时流：推演遮挡进度与己方叙述逐字转写（阶段进度由前端轮询驱动）。"""
     async with async_session_factory() as db:
         challenge = await db.get(ScenarioChallengeRun, challenge_id)
         roster = await db.get(ScenarioRoster, challenge.roster_id) if challenge else None
@@ -661,7 +661,7 @@ async def challenge_action(challenge_id: UUID, payload: dict, current: Annotated
     challenge.messages = [*challenge.messages, {"role": "challenger", "text": text, "created_at": _now().isoformat()}]
     challenge.status = "resolving"
     await db.commit()
-    await dispatch("scenario_resolve", challenge.id)
+    await dispatch("scenario_deduction", challenge.id)
     return {"challenge_id": challenge.id, "status": challenge.status, "text": text}
 
 
@@ -735,7 +735,7 @@ async def challenge_derive(challenge_id: UUID, payload: dict, current: Annotated
     challenge.messages = [{"role": "challenger", "text": strategy, "skipped": not bool(strategy), "created_at": _now().isoformat()}]
     challenge.status = "resolving"
     await db.commit()
-    await dispatch("scenario_resolve", challenge.id)
+    await dispatch("scenario_deduction", challenge.id)
     return {"status": challenge.status, "challenge_id": challenge.id}
 
 

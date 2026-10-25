@@ -1,7 +1,7 @@
 """能力对比节点：把双方奇术两两配对，逐对判断是否存在冲突效果，依三相共鸣理论分判高下。
 
 输出结构化判定（PairVerdict），`render_pair_report` 汇总为权威比对结论，经挑战
-derived.comparison_report 注入上帝视角节点的 {comparison_report} 槽位。本节点只做
+derived.comparison_report 注入推演节点的 {comparison_report} 槽位。本节点只做
 **逐对对比**，不替推演裁断胜负。
 
 三相共鸣理论与各节点共享同一套世界观规则。

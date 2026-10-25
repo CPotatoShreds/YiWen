@@ -1,8 +1,8 @@
-"""SSE 职责收缩验收：god 遮挡流（真实文本不出站）、stage 退场、按侧别投递。
+"""SSE 职责验收：推演遮挡流（真实文本不出站）、按侧别投递、三站任务（推演→叙述+检定→后到者结算）。
 
-不经过 HTTP 缓冲层：直接驱动真实的 `resolve_scenario_action` 后台任务与
+不经过 HTTP 缓冲层：直接驱动真实的推演站（`run_scenario_deduction`，链式派发叙述+检定）与
 `challenge_stream` 端点生成器（SSE 需要真实流式传输，TestClient 会缓冲整包）。
-不调用真实 LLM：桩掉比对/上帝/双方转写/检定节点（延迟桩保证订阅先建立）。
+不调用真实 LLM：桩掉比对/推演/双侧叙述/检定节点（延迟桩保证订阅先建立）。
 """
 
 import asyncio
@@ -26,9 +26,9 @@ from app.models.user import User
 from app.services.scenario import flows
 from app.services.scenario import stream as stream_module
 
-_GOD_TEXT = "上帝真实全文不可出站"
-_CHALLENGER_TEXT = "挑战者视角全文"
-_GUARDIAN_TEXT = "守方视角全文"
+_GOD_TEXT = "推演真实全文不可出站"
+_CHALLENGER_TEXT = "挑战者侧叙述全文"
+_GUARDIAN_TEXT = "守方侧叙述全文"
 
 
 @pytest.fixture(autouse=True)
@@ -52,9 +52,9 @@ class _FakeChain:
 def _llm_patches() -> list:
     return [
         patch("app.services.scenario.flows.compare_scenario_abilities", lambda *a, **k: _noop_compare()),
-        patch("app.services.scenario.flows.build_scenario_god_llm", lambda *a, **k: _FakeChain(_GOD_TEXT)),
-        patch("app.services.scenario.flows.build_scenario_challenger_view_stream_llm", lambda *a, **k: _FakeChain(_CHALLENGER_TEXT)),
-        patch("app.services.scenario.flows.build_scenario_guardian_view_stream_llm", lambda *a, **k: _FakeChain(_GUARDIAN_TEXT)),
+        patch("app.services.scenario.flows.build_scenario_deduction_llm", lambda *a, **k: _FakeChain(_GOD_TEXT)),
+        patch("app.services.scenario.flows.build_scenario_narration_challenger_stream_llm", lambda *a, **k: _FakeChain(_CHALLENGER_TEXT)),
+        patch("app.services.scenario.flows.build_scenario_narration_guardian_stream_llm", lambda *a, **k: _FakeChain(_GUARDIAN_TEXT)),
         patch(
             "app.services.scenario.flows.build_scenario_judge_llm",
             lambda *a, **k: _FakeChain(SimpleNamespace(achieved=True, reason="达成目标")),
@@ -116,7 +116,7 @@ async def _drain(queue: asyncio.Queue, timeout: float = 10.0) -> list[dict]:
 
 
 async def test_resolve_publishes_shielded_god_and_side_scoped_events():
-    """真实后台任务的发布契约：god 只发 chars、view_chunk 带侧、turn 按侧拆分、stage 退场。"""
+    """三站链路的发布契约：推演只发 chars、narration_chunk 带侧、turn 按侧拆分、结算随双齐。"""
     challenge, _, _ = await _seed_resolving_challenge()
     stream = stream_module.get_scenario_stream(challenge.id)
     challenger_queue, _ = await stream.subscribe(side="challenger")
@@ -125,20 +125,20 @@ async def test_resolve_publishes_shielded_god_and_side_scoped_events():
     with ExitStack() as stack:
         for p in _llm_patches():
             stack.enter_context(p)
-        await asyncio.wait_for(flows.resolve_scenario_action(challenge.id), timeout=15)
-
-    challenger_events = await _drain(challenger_queue)
-    guardian_events = await _drain(guardian_queue)
+        await asyncio.wait_for(flows.run_scenario_deduction(challenge.id), timeout=15)
+        # 三站链式派发：deduction await 返回时叙述/检定仍在飞，必须在 patch 作用域内等终局
+        challenger_events = await _drain(challenger_queue)
+        guardian_events = await _drain(guardian_queue)
 
     # 挑战者侧：字体契约
     c_types = [e["type"] for e in challenger_events]
     assert "stage" not in c_types and "god" not in c_types
-    assert "god_progress" in c_types and "turn" in c_types and "done" in c_types
+    assert "deduction_progress" in c_types and "turn" in c_types and "done" in c_types
     c_blob = json.dumps(challenger_events, ensure_ascii=False)
-    assert _GOD_TEXT not in c_blob  # 核心：上帝明文全程不出站（未看破全部门控锁死）
-    progress = [e for e in challenger_events if e["type"] == "god_progress"]
+    assert _GOD_TEXT not in c_blob  # 核心：推演明文全程不出站（未看破全部门控锁死）
+    progress = [e for e in challenger_events if e["type"] == "deduction_progress"]
     assert all(set(e.keys()) == {"type", "chars"} for e in progress) and progress[-1]["chars"] > 0
-    c_chunks = [e for e in challenger_events if e["type"] == "view_chunk"]
+    c_chunks = [e for e in challenger_events if e["type"] == "narration_chunk"]
     assert c_chunks and all(e["side"] == "challenger" for e in c_chunks)
     c_turn = next(e["turn"] for e in challenger_events if e["type"] == "turn")
     # 门控（未看破全部）：挑战者 turn 只含己方正文，无守方正文、无上帝全文
@@ -146,24 +146,25 @@ async def test_resolve_publishes_shielded_god_and_side_scoped_events():
     assert "guardian_text" not in c_turn and "omniscient" not in c_turn
     assert c_turn["achieved"] is True and c_turn["reason"]
 
-    # 守方侧：无挑战者正文、无上帝文本，turn 为守方形状
+    # 守方侧：无挑战者叙述正文、无推演文本，turn 为守方形状
     g_blob = json.dumps(guardian_events, ensure_ascii=False)
     assert _GOD_TEXT not in g_blob and _CHALLENGER_TEXT not in g_blob
-    g_chunks = [e for e in guardian_events if e["type"] == "view_chunk"]
+    g_chunks = [e for e in guardian_events if e["type"] == "narration_chunk"]
     assert g_chunks and all(e["side"] == "guardian" for e in g_chunks)
     g_turn = next(e["turn"] for e in guardian_events if e["type"] == "turn")
     assert g_turn == {"role": "guardian", "text": _GUARDIAN_TEXT, "created_at": g_turn["created_at"]}
     assert "done" in [e["type"] for e in guardian_events]
 
-    # 落库的回合仍含两侧与上帝全文（归档授权逻辑不变）
+    # 落库的回合仍含两侧叙述与推演全文（归档授权逻辑不变）；站间 checkpoint 已落
     async with async_session_factory() as db:
         stored = await db.get(ScenarioChallengeRun, challenge.id)
         assert stored.status == "won"
         assert stored.messages[-1]["omniscient"] == _GOD_TEXT
+        assert stored.deduction_text == _GOD_TEXT
 
 
 async def test_god_gate_detail_locked_then_unlocked():
-    """看破门控（详情接口）：未全破无上帝/守方正文；全破后附上帝全文；守方始终只见自己。"""
+    """看破门控（详情接口）：未全破无推演/守方正文；全破后附推演全文；守方始终只见自己。"""
     abilities = [{"name": "术一", "effect": "e1"}, {"name": "术二", "effect": "e2"}]
     turn = {"role": "views", "challenger_text": _CHALLENGER_TEXT, "guardian_text": _GUARDIAN_TEXT,
             "omniscient": _GOD_TEXT, "achieved": True, "reason": "达成", "created_at": "seed"}
@@ -180,7 +181,7 @@ async def test_god_gate_detail_locked_then_unlocked():
     assert view["challenger_text"] == _CHALLENGER_TEXT
     assert "omniscient" not in view and "guardian_text" not in view
 
-    # 全破 → 永久解锁（附上帝全文；守方正文仍不给）
+    # 全破 → 永久解锁（附推演全文；守方正文仍不给）
     async with async_session_factory() as db:
         progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": challenger.id})
         progress.cracked_cards = [{"index": 1, "cracked": True}, {"index": 2, "cracked": True}]
@@ -191,7 +192,7 @@ async def test_god_gate_detail_locked_then_unlocked():
     view = detail["messages"][-1]
     assert view["omniscient"] == _GOD_TEXT and "guardian_text" not in view
 
-    # 守方：只见自己正文、无上帝
+    # 守方：只见自己正文、无推演全文
     async with async_session_factory() as db:
         owner_detail = await scenario_domain.challenge_detail(challenge.id, current=owner, db=db)
     assert owner_detail["viewer_role"] == "owner"
@@ -200,7 +201,7 @@ async def test_god_gate_detail_locked_then_unlocked():
 
 
 async def test_resolve_turn_carries_god_only_when_unlocked():
-    """SSE turn 门控：全破的挑战者回合携带上帝全文（仍无守方正文）。"""
+    """SSE turn 门控：全破的挑战者回合携带推演全文（仍无守方正文）。"""
     challenge, _, _ = await _seed_resolving_challenge(
         roster_abilities=[{"name": "术一", "effect": "e1"}], cracked=[{"index": 1, "cracked": True}],
     )
@@ -210,9 +211,9 @@ async def test_resolve_turn_carries_god_only_when_unlocked():
     with ExitStack() as stack:
         for p in _llm_patches():
             stack.enter_context(p)
-        await asyncio.wait_for(flows.resolve_scenario_action(challenge.id), timeout=15)
+        await asyncio.wait_for(flows.run_scenario_deduction(challenge.id), timeout=15)
+        events = await _drain(challenger_queue)  # patch 作用域内等终局（同上）
 
-    events = await _drain(challenger_queue)
     turn = next(e["turn"] for e in events if e["type"] == "turn")
     assert turn["omniscient"] == _GOD_TEXT
     assert "guardian_text" not in turn

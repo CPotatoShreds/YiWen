@@ -4,8 +4,6 @@
 - 不带 --revoke：把指定异闻师设为管理员（后台可登录）
 - 带 --revoke：取消其管理员权限
 - 用户名不存在时打印提示并退出码 1
-
-导出 set_admin() 供测试直接复用。
 """
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ import asyncio
 from sqlalchemy import select
 
 from app.db.base import async_session_factory
-from app.models.user import User
+from app.models.user import ROLE_ADMIN, ROLE_USER, User
 
 
 async def set_admin(username: str, admin: bool = True) -> bool:
@@ -25,7 +23,8 @@ async def set_admin(username: str, admin: bool = True) -> bool:
         user = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
         if user is None:
             return False
-        user.is_admin = admin
+        # is_admin 是 @property（派生自 role），给它赋值会 AttributeError——必须改底层列
+        user.role = ROLE_ADMIN if admin else ROLE_USER
         await db.commit()
         return True
 

@@ -132,6 +132,7 @@ class ScenarioChallengeRun(Base):
     verify_in_flight: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     guess_granted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     derived: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    deduction_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # 推演站 checkpoint：推演全文，供叙述/检定读取；终局保留审计
     __table_args__ = (
         Index("ix_scenario_challenge_runs_roster_challenger_created", "roster_id", "challenger_id", text("created_at DESC")),
         Index("ix_scenario_challenge_runs_roster_created", "roster_id", text("created_at DESC")),
