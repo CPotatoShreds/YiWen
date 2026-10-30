@@ -48,6 +48,12 @@
   --space-8: 34px;
   --space-12: 56px;
 
+  /* 返回钮：视觉 34、命中 44（对齐 HIG 44pt / Material 48dp 的下界）、骑出版心 16。
+     三者同源，改尺寸只动这里。 */
+  --back-size: 34px;
+  --back-hit: 44px;
+  --back-offset: 16px;
+
   /* 容器宽度层级：全站只有这几档，由 PageShell 的 width 参数选，不在页面里另写 max-width */
   --width-page: 1080px;   /* 常规文档页 */
   --width-wide: 1180px;   /* 双栏工作台、后台表格 */
@@ -153,56 +159,97 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 .section-head .section-title { margin: 0; }
 .section-head .muted { flex: 1; }
 
-/* ---------- 跳转的三类边（唯一出处，见 DESIGN.md「导航与跳转」） ---------- */
-/* 向上边：退回上一层。左向箭头 + 淡墨文字，全站仅此一种样子 */
+/* ---------- 跳转的两类边（唯一出处，见 DESIGN.md「导航与跳转」） ---------- */
+/* 向上边：退回上一层。全站唯一形态 —— 34px 圆钮骑在版心左缘外。
+   定位宿主由页面给：文档页是 .page-shell__lead（与标题同高），
+   异闻详情是 .roster-page、沉浸页是 .scenario-challenge（落标题上方）。 */
 .nav-back {
+  position: absolute;
+  top: 0;
+  left: calc(-1 * var(--back-offset));
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: var(--back-size);
+  height: var(--back-size);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--accent-strong);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+/* 命中区扩到 44×44：视觉仍是 34，指针不必精准对进圆内 */
+.nav-back::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--back-size) - var(--back-hit)) / 2);
+  border-radius: 50%;
+}
+.nav-back:hover { border-color: var(--accent); background: var(--accent-soft); }
+.nav-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* 窗口窄到版心两侧放不下这枚钮时，归位到版心内（1228 = wide 档 1180 + 左右 padding 48） */
+@media (max-width: 1228px) {
+  .nav-back { left: 0; }
+}
+
+/* 同一页内部的「回到上一条」不是上一层，保持文字形态，与页面级返回区分开 */
+.nav-inline {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  width: fit-content;
+  padding: 0;
   border: 0;
   background: transparent;
-  padding: 0;
   color: var(--muted);
   font: inherit;
   font-size: 13px;
-  text-decoration: none;
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease);
 }
-.nav-back svg { transition: transform var(--dur-fast) var(--ease); }
-.nav-back:hover { color: var(--accent-strong); text-decoration: none; }
-.nav-back:hover svg { transform: translateX(-2px); }
-.nav-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.nav-inline svg { transition: transform var(--dur-fast) var(--ease); }
+.nav-inline:hover { color: var(--accent-strong); }
+.nav-inline:hover svg { transform: translateX(-2px); }
+.nav-inline:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 
-/* 平级边：横向去往另一个主分支。右向箭头，与向上边方向相反 */
-.nav-entry {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--muted);
-  font-size: 13px;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease);
-}
-.nav-entry svg { transition: transform var(--dur-fast) var(--ease); }
-.nav-entry:hover { color: var(--accent-strong); text-decoration: none; }
-.nav-entry:hover svg { transform: translateX(2px); }
-.nav-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-
-/* 统一页面骨架：返回位独占一行 ─ 标题位 ─ 主操作位 */
+/* 统一页面骨架：返回钮 ─ 标题位 ─ 主操作位 */
 /* 文档型页面的版心：宽度只在这里定，页面组件通过 PageShell 的 width 档选择 */
-.page-shell { max-width: var(--width-page); margin-inline: auto; }
+.page-shell {
+  position: relative;
+  max-width: var(--width-page);
+  margin-inline: auto;
+  /* 标题上方的留白带：既是视觉呼吸，也正好是返回钮的站位。
+     这里必须是 padding 不能是 margin —— margin 会穿透父元素折叠，钮就贴到标题上了。 */
+  padding-top: var(--back-size);
+}
 .page-shell--wide { max-width: var(--width-wide); }
 .page-shell--read { max-width: var(--width-read); }
 
-.page-shell__head { display: grid; gap: var(--space-2); margin: var(--space-8) 0 var(--space-3); }
-.page-shell__back-row:empty { display: none; }
+.page-shell__head { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); }
 .page-shell__title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .page-shell__lead { display: grid; gap: var(--space-1); min-width: 0; }
-.page-shell__lead .section-title { display: flex; align-items: center; gap: 9px; margin-bottom: 0; }
+
+/* 文档页的返回钮：挂在标题行内、绝对定位到标题左侧的留白里。
+   纵向由标题行自身决定（top:50% + 位移），因此永远与标题同高，与副标题无关；
+   横向右缘恒距内容 16px（= --back-offset），不压字、不吃版心宽度。 */
+.page-shell .nav-back {
+  top: 50%;
+  left: calc(-1 * (var(--back-size) + var(--back-offset)));
+  transform: translateY(-50%);
+}
+.page-shell__lead .section-title { position: relative; display: flex; align-items: center; gap: 9px; margin-bottom: 0; }
 .page-shell__lead .section-title svg { flex: none; color: var(--accent-strong); }
 .page-shell__side { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+/* 窄屏版心两侧放不下这枚钮（<1280 = wide 1180 + 左右 padding 48 + 间距 16 + 钮 34）：
+   让定位宿主退回 .page-shell，钮回到标题上方的留白带（.page-shell 的 padding-top），
+   标题与下方内容仍然同一条左基线 —— 移动端不右移标题，视觉上更稳。
+   必须写在上面的 .section-title 之后：同优先级，后写的 position 才会生效 */
+@media (max-width: 1279px) {
+  .page-shell__lead .section-title { position: static; }
+  .page-shell .nav-back { top: 0; left: 0; transform: none; }
+}
 
 /* ---------- 小天下集（卷册与世界线） ---------- */
 .world-feed { display: grid; gap: 14px; }
@@ -576,11 +623,10 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 .home-gate__choice svg { color: var(--accent-strong); }
 .home-gate__choice strong { font-family: var(--font-display); font-size: 17px; }
 .home-gate__choice span { color: var(--muted); font-size: 13px; }
+/* 账号页已有 PageShell 页头，卡片不再整屏居中，否则会被推到页头下方很远 */
 .me-page {
   display: grid;
   justify-items: center;
-  align-content: center;
-  min-height: calc(100dvh - 122px); /* 容器上下 padding（26+96）之外整屏居中 */
   padding: 24px 0;
 }
 .me-card {
@@ -1325,25 +1371,18 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 /* 沉浸式页面不套 PageShell，但同样要有版心：自带 --width-page，不再依赖外层容器 */
 .scenario-challenge { max-width: var(--width-page); margin-inline: auto; position: relative; overflow: visible; background: color-mix(in srgb, var(--surface) 90%, var(--ground)); }
 /* 退出擂台：骑在卡片左缘的圆形返回钮，与轮盘箭头同一套装帧 */
-.scenario-back {
-  position: absolute;
-  top: 20px;
-  left: -16px;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--accent-strong);
-  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-.scenario-back:hover { border-color: var(--accent); background: var(--accent-soft); }
+/* 沉浸页沿用同一个 .nav-back，只改落点：这两页纸面上沿更紧，钮下沉 20px */
+.scenario-challenge > .nav-back { top: 20px; }
 .scenario-challenge__masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 12px 24px 18px; border-bottom: 1px solid var(--line-strong); }
 .scenario-challenge__masthead h1 { margin-top: 5px; font-size: 28px; }
 .scenario-challenge__masthead .muted { margin-top: 5px; }
+/* 沉浸页页头让开返回钮：宽屏把左内边距推到钮的右缘之外 */
+.scenario-challenge__masthead { padding-left: 40px; }
+@media (max-width: 640px) {
+  /* 窄屏左侧没有余量，改成上下错开：钮回到与文档页相同的 top，标题压到钮下方 */
+  .scenario-challenge > .nav-back { top: 0; }
+  .scenario-challenge__masthead { padding: calc(var(--back-size) + 8px) 24px 18px; }
+}
 .scenario-manuscript, .scenario-guess-panel, .scenario-record-panel { min-width: 0; border: 1px solid var(--line); background: var(--surface); }
 .scenario-manuscript > header, .scenario-guess-panel > header, .scenario-record-panel > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 15px 18px 12px; border-bottom: 1px solid var(--line); }
 .scenario-manuscript h2, .scenario-guess-panel h2, .scenario-record-panel h2 { margin-top: 3px; font-size: 18px; }
@@ -1382,7 +1421,9 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 @media (max-width: 640px) { .scenario-challenge__back, .scenario-challenge__masthead { padding-inline: 16px; } .scenario-challenge__masthead { flex-direction: column; gap: 10px; } .scenario-challenge__masthead h1 { font-size: 24px; } .scenario-manuscript__body { min-height: 340px; padding-inline: 16px; } }
 
 /* ---------- 阵容详情页（roster-* 布局；色值/字体全走主题 tokens） ---------- */
-.roster-page { max-width: var(--width-page); margin-inline: auto; display: flex; flex-direction: column; gap: 18px; }
+/* 异闻详情不套 PageShell（它的页头是奇人信息卡片），但返回钮要落在与文档页同一位置，
+   所以这里补一个同样的定位宿主与 34px 留白带 */
+.roster-page { position: relative; padding-top: var(--back-size); max-width: var(--width-page); margin-inline: auto; display: flex; flex-direction: column; gap: 18px; }
 
 /* 上区两栏面板：奇人信息 + 奇术轮盘 */
 .roster-stage {

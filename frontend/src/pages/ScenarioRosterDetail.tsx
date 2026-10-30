@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, ScrollIcon } from "../components/icons";
 import { CardBack, SealStamp } from "../components/Ornaments";
-import { BackLink } from "../components/PageShell";
+import { BackButton } from "../components/PageShell";
 import { ScenarioHistory } from "../components/ScenarioHistory";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
 
@@ -176,6 +176,8 @@ export default function ScenarioRosterDetail() {
 
   return (
     <div className="roster-page">
+      {/* 返回钮与文档页同落点：版心左缘外、内容上方一条 34px 的带里 */}
+      <BackButton to={`/scenarios/${detail.scenario.slug}`} label="返回卷" />
       {/* 上区：奇人信息 + 奇术卡扇形轮盘 */}
       <section className="roster-stage">
         <div className="roster-metrics">
@@ -213,7 +215,6 @@ export default function ScenarioRosterDetail() {
               </div>
             )}
           </div>
-          <BackLink to={`/scenarios/${detail.scenario.slug}`} label="返回卷" />
         </div>
 
         <div

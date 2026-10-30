@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { SealStamp } from "../components/Ornaments";
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
+import { BookIcon, ChevronRightIcon } from "../components/icons";
 import { ScenarioManuscript } from "../components/ScenarioNarrative";
+import { BackButton } from "../components/PageShell";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
 
 type Challenge = {
@@ -58,7 +59,7 @@ export default function ScenarioRecords() {
   }, [scenarioSlug, rosterId]);
 
   const owner = context?.viewer_role === "owner";
-  // 守方视角：他人挑战 + 自己的创作台试炼（预览局），按时间倒序混排
+  // 守方视角：他人挑战 + 自己的异闻录试炼（预览局），按时间倒序混排
   const items = owner
     ? [
         ...(context?.owner_challenges ?? []),
@@ -95,9 +96,7 @@ export default function ScenarioRecords() {
 
   return (
     <section className="panel world-story scenario-challenge">
-      <Link className="scenario-back" to={backHref} aria-label="退出并返回异闻详情">
-        <ChevronLeftIcon size={20} />
-      </Link>
+      <BackButton to={backHref} label="退出并返回异闻详情" />
       <header className="scenario-challenge__masthead">
         <div>
           <h1>{context.scenario.name} · 往期记录</h1>
@@ -125,7 +124,7 @@ export default function ScenarioRecords() {
                   onClick={() => setParams(open ? {} : { run: item.id }, { replace: true })}
                 >
                   <span className="records-row__no">
-                    {item.is_preview ? "创作台试炼" : `第 ${item.challenge_number} 次推演`}
+                    {item.is_preview ? "异闻录试炼" : `第 ${item.challenge_number} 次推演`}
                   </span>
                   {owner && !item.is_preview && item.challenger_character_name && (
                     <span className="records-row__who">{item.challenger_character_name}</span>

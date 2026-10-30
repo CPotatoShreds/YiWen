@@ -4,8 +4,9 @@ import { api } from "../api";
 import { streamEvents } from "../sse";
 import { startScenarioChallenge } from "../scenarioChallenge";
 import { SealStamp } from "../components/Ornaments";
-import { BookIcon, ChevronLeftIcon, RefreshIcon, XIcon } from "../components/icons";
+import { BookIcon, RefreshIcon, XIcon } from "../components/icons";
 import { ScenarioManuscript } from "../components/ScenarioNarrative";
+import { BackButton } from "../components/PageShell";
 import {
   STAGE_STEPS,
   STAGE_TEXT,
@@ -418,14 +419,12 @@ export default function ScenarioBattle() {
 
   return (
     <section className={`panel world-story scenario-challenge is-${view === "book" ? "book" : "draft"}`}>
-      <Link className="scenario-back" to={backHref} aria-label="退出并返回异闻详情">
-        <ChevronLeftIcon size={20} />
-      </Link>
+      <BackButton to={backHref} label="退出并返回异闻详情" />
       <header className="scenario-challenge__masthead">
         <div>
           <h1>{context.scenario.name}</h1>
           <p className="muted">{context.scenario.subtitle}</p>
-          {challenge?.is_preview && <p className="muted">创作台试炼 · 不计入统计</p>}
+          {challenge?.is_preview && <p className="muted">异闻录试炼 · 不计入统计</p>}
         </div>
         <div className="scenario-challenge__actions">
           <Link className="btn btn-ghost" to={recordsHref}>
@@ -499,7 +498,7 @@ export default function ScenarioBattle() {
             liveText={liveOwn}
             liveDeduction={liveDeduction}
             emptyText=""
-            runningHead={{ left: context.scenario.name, right: preview ? "创作台试炼" : `第 ${runNumber} 次推演` }}
+            runningHead={{ left: context.scenario.name, right: preview ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
             folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
           />
         </div>
@@ -528,7 +527,7 @@ export default function ScenarioBattle() {
                 </p>
               </div>
               <p className="scenario-info__meta">
-                <span>{preview ? "创作台试炼" : `本场已推演 ${attempts} 次`}</span>
+                <span>{preview ? "异闻录试炼" : `本场已推演 ${attempts} 次`}</span>
                 <span>{locked ? STAGE_TEXT[stage] : preview ? "试炼" : `第 ${nextRun} 次`}</span>
               </p>
             </div>
@@ -593,7 +592,7 @@ export default function ScenarioBattle() {
               </div>
               {characters !== null && !available.length ? (
                 <p className="scenario-picker__empty">
-                  暂无可用奇人，请先在 <Link to="/yiwenlu">创作台</Link> 装配 1-4 门奇术。
+                  暂无可用奇人，请先在 <Link to="/yiwenlu">异闻录</Link> 装配 1-4 门奇术。
                 </p>
               ) : (
                 <p className="scenario-picker__foot">

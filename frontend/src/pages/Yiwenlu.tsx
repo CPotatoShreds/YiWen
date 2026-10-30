@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api";
-import { BookIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
+import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
 import { EmptyScroll, SealStamp } from "../components/Ornaments";
-import PageShell, { BackLink, EntryLink } from "../components/PageShell";
+import PageShell from "../components/PageShell";
 
 type Kind = "character" | "ability";
 type Ability = { id: string; name: string; effect: string; detail: string };
@@ -248,13 +248,12 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
 
   return (
     <PageShell
-        width="wide"
-        title="异闻录"
-        icon={<BookIcon size={19} />}
-        subtitle={<span>奇人 <b>{characters.length}</b> 位 · 奇术 <b>{abilities.length}</b> 门，皆为小天下集所用。</span>}
-        back={false}
-        actions={<EntryLink to="/scenarios">浏览小天下集</EntryLink>}
-      >
+      width="wide"
+      title="异闻录"
+      icon={<BookIcon size={19} />}
+      subtitle={<span>奇人 <b>{characters.length}</b> 位 · 奇术 <b>{abilities.length}</b> 门，皆为小天下集所用。</span>}
+      back={{ to: "/home", label: "返回首页" }}
+    >
       <div className="codex__body">
         {/* ---------- 左：名册 ---------- */}
         <aside className="codex__rail">
@@ -322,7 +321,11 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
         {/* ---------- 右：查看 / 编辑一体 ---------- */}
         <div className="codex__main">
           {lastTrail && !isNew && (
-            <BackLink as="button" label={`回到 ${lastTrail.name}`} onClick={() => backTo(lastTrail)} />
+            /* 这不是「返回上一层」，而是同一页内退回刚看过的那一条，所以用文字形态 */
+            <button type="button" className="nav-inline" onClick={() => backTo(lastTrail)} aria-label={`回到 ${lastTrail.name}`}>
+              <ChevronLeftIcon size={14} />
+              <span>回到 {lastTrail.name}</span>
+            </button>
           )}
 
           <article className="codex__sheet">
