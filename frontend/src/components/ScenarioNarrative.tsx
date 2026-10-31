@@ -24,8 +24,23 @@ function Prose({ text }: { text: string }) {
 }
 
 /**
+ * 推演占位：三道墨线先后写过去，第三道只走到一半便停笔，随后整体转呼吸。
+ * 纯 CSS 驱动、零计时器——React 卸载即等于「停」，无需清理逻辑。契约上明说「在写，没写完」，
+ * 故不宣称完成；观感上是一条正在落墨的纸页，而非通用骨架屏。
+ */
+export function ScenarioVeil() {
+  return (
+    <div className="scenario-veil" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
+
+/**
  * 行迹书页（单主视角）：己方叙述正文是书页主文；推演全文（看破解锁后）以独立条目先呈，
- * 直播期由"遮挡块 → 己方逐字"在同一区域接替。不再有视角切换与视角标签。
+ * 直播期由"实时推演正文 → 己方逐字"在同一区域接替。不再有视角切换与视角标签。
  *
  * 两种形态：
  * - `page`（默认）：书页标题头（行迹 / 第 N 次推演），记录页展开行用它；
@@ -40,6 +55,7 @@ export function ScenarioManuscript({
   title,
   liveText = "",
   liveDeduction = "",
+  placeholder,
   note,
   emptyText,
   variant = "page",
@@ -52,6 +68,7 @@ export function ScenarioManuscript({
   title?: ReactNode;
   liveText?: string;
   liveDeduction?: string;
+  placeholder?: ReactNode;
   note?: ReactNode;
   emptyText: string;
   variant?: "page" | "book";
@@ -59,6 +76,11 @@ export function ScenarioManuscript({
   folio?: { left: ReactNode; right: ReactNode };
 }) {
   const bare = variant === "book";
+  // 同屏唯一真源：推演正文要么由实时块承担，要么由结算后的 turn.omniscient 承担，绝不并排。
+  // 必须看 messages 而不是只靠「turn 事件到达时清空 live」——2 秒轮询可能先一步把回合写进
+  // messages，那一帧若只靠清空就会双份显示。
+  const settled = messages.some((message) => message.role === "views");
+  const liveGod = liveDeduction !== "" && !settled;
 
   const ownTextOf = (message: Message): string =>
     own === "challenger"
@@ -78,7 +100,7 @@ export function ScenarioManuscript({
       );
       return;
     }
-    if (message.omniscient) {
+    if (message.omniscient && !liveGod) {
       entries.push(
         <article className="ink-entry ink-entry--god" key={`god-${message.created_at}-${index}`}>
           {!bare && <span>推演 · 看破已全</span>}
@@ -120,22 +142,22 @@ export function ScenarioManuscript({
       )}
       <div className="scenario-manuscript__body">
         {entries}
-        {/* 遮挡块与逐字互斥：第一个字到达就撤掉方块，正文从开头起长 */}
-        {liveDeduction && !liveText && (
-          <article className="ink-entry ink-entry--veil is-streaming">
-            {!bare && <span>推演中</span>}
-            <p className="ink-veil" aria-label="推演进度">
-              {liveDeduction}
-            </p>
+        {/* 推演正文与己方叙述各成一条、各自渲染：解锁者在转写阶段会同时持有两段，
+            旧的「有己方叙述就撤推演块」互斥会把推演正文整块吞掉 */}
+        {liveGod && (
+          <article className="ink-entry ink-entry--god is-streaming">
+            {!bare && <span>推演 · 正在落墨</span>}
+            <Prose text={liveDeduction} />
           </article>
         )}
+        {placeholder}
         {liveText && (
           <article className="ink-entry is-streaming">
             {!bare && <span>{ownLabel} · 正在落墨</span>}
             <Prose text={liveText} />
           </article>
         )}
-        {!bare && !entries.length && !liveText && !liveDeduction && (
+        {!bare && !entries.length && !liveText && !liveGod && !placeholder && (
           <div className="scenario-opening">
             <EmptyScroll size={132} />
             <span>{emptyText}</span>

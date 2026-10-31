@@ -609,7 +609,7 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
 
 @challenge_router.get("/scenario-challenges/{challenge_id}/stream")
 async def challenge_stream(challenge_id: UUID, current: Annotated[User, Depends(get_current_user)]) -> StreamingResponse:
-    """小天下集推演实时流：推演遮挡进度与己方叙述逐字转写（阶段进度由前端轮询驱动）。"""
+    """小天下集推演实时流：推演正文（仅对该局已解锁者）与己方叙述逐字转写（阶段进度由前端轮询驱动）。"""
     async with async_session_factory() as db:
         challenge = await db.get(ScenarioChallengeRun, challenge_id)
         roster = await db.get(ScenarioRoster, challenge.roster_id) if challenge else None

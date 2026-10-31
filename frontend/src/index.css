@@ -1622,12 +1622,10 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 /* ── 对战页/记录页改版（单栏 · 单主视角 · 记录账册）── */
 .scenario-challenge__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 
-/* 上帝条目（看破解锁后呈现）与直播遮挡块 */
+/* 上帝条目（看破解锁后呈现） */
 .ink-entry--god { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 34%, transparent); }
 .ink-entry--god::before { background: var(--accent-strong); }
 .ink-entry--god > span { color: var(--accent-strong); }
-.ink-entry--veil { border-left-style: dotted; }
-.ink-veil { color: var(--muted); letter-spacing: .32em; word-break: break-all; line-height: 2.1; }
 
 /* 记录阅读页：账册行阅 */
 .records-empty { padding: 42px 24px; text-align: center; }
@@ -1734,18 +1732,10 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-sheet .err { margin-top: 12px; }
 
 /* ---------- 其三 · 行迹书页 ---------- */
-/* 左轨放进度与终局，右侧是高度固定、内部可滚的纸页 */
+/* 左轨只在有终局/错误时存在（is-solo 退回单栏），右侧是高度固定、内部可滚的纸页 */
 .scenario-book { display: grid; grid-template-columns: minmax(196px, 236px) minmax(0, 1fr); gap: 22px; align-items: start; padding: 20px 24px 24px; }
+.scenario-book.is-solo { grid-template-columns: minmax(0, 1fr); }
 .scenario-rail { position: sticky; top: 18px; display: grid; gap: 18px; min-width: 0; }
-.scenario-stages { position: relative; display: grid; gap: 2px; }
-.scenario-stages::before { content: ""; position: absolute; left: 6px; top: 15px; bottom: 15px; width: 1px; background: var(--line); }
-.scenario-stage { position: relative; display: grid; grid-template-columns: 16px auto 1fr; align-items: baseline; column-gap: 9px; padding: 7px 0; color: var(--muted); font-size: 11.5px; }
-.scenario-stage__dot { align-self: center; justify-self: start; width: 7px; height: 7px; margin-left: 3px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); transition: background var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease); }
-.scenario-stage__no { color: var(--line-strong); font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; }
-.scenario-stage.is-done { color: var(--accent-strong); }
-.scenario-stage.is-done .scenario-stage__no { color: var(--accent); }
-.scenario-stage.is-done .scenario-stage__dot { border-color: var(--accent); background: var(--accent); }
-.scenario-stage.is-active .scenario-stage__dot { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .scenario-manuscript--book { display: flex; flex-direction: column; height: clamp(460px, 68vh, 780px); margin: 0; padding: 0 clamp(18px, 3vw, 40px); }
 .scenario-manuscript__running, .scenario-manuscript__folio { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--muted); font-family: var(--font-seal); font-size: 11.5px; letter-spacing: .12em; }
 .scenario-manuscript__running { padding: 12px 0 10px; border-bottom: 1px solid var(--line-strong); }
@@ -1769,8 +1759,32 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-manuscript--book .ink-entry p { max-width: none; font-size: 17px; line-height: var(--lh); text-indent: 2em; overflow-wrap: anywhere; }
 .scenario-manuscript--book .ink-entry p + p { margin-top: 0; }
 .scenario-manuscript--book .ink-entry--god { padding: 0; border-left: 0; background: none; }
-.scenario-manuscript--book .ink-entry--veil { border-left: 0; }
-.scenario-manuscript--book .ink-veil { line-height: var(--lh); letter-spacing: .3em; }
+
+/* 推演占位：三道墨线先后落笔，第三道只走到半途便停笔，随后整体转呼吸。
+   纯 CSS 驱动、零计时器——卸载即停，不会留下需要清理的 interval。
+   时间轴：0–15s 第一行 · 14–35s 第二行（1s 交叠，像连续行笔）· 35–45s 第三行停在 55%
+   · 45s 起呼吸。行高吃 --lh，与书页格线同节奏。 */
+.scenario-veil { display: grid; align-content: start; animation: veil-breathe 4.2s ease-in-out 45s infinite; }
+.scenario-veil span { position: relative; display: block; height: var(--lh, 38px); }
+.scenario-veil span::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, rgba(var(--ink-rgb), .34), rgba(var(--ink-rgb), .13));
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation-timing-function: cubic-bezier(.25, .7, .3, 1);
+  animation-fill-mode: both;
+}
+.scenario-veil span:nth-child(1)::before { width: 68%; animation-name: veil-write; animation-duration: 15s; }
+.scenario-veil span:nth-child(2)::before { width: 84%; animation-name: veil-write; animation-duration: 21s; animation-delay: 14s; }
+.scenario-veil span:nth-child(3)::before { width: 76%; animation-name: veil-write-half; animation-duration: 10s; animation-delay: 35s; }
+@keyframes veil-write { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes veil-write-half { from { transform: scaleX(0); } to { transform: scaleX(.55); } }
+@keyframes veil-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 
 /* 终局落在左轨：印章在上，理由可滚，操作竖排 */
 .scenario-rail .scenario-result { flex-direction: column; gap: 12px; margin: 0; padding: 14px; border-color: var(--line-strong); }
@@ -1781,16 +1795,9 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-rail .scenario-result__actions .btn { width: 100%; }
 .scenario-rail .err { margin: 0; font-size: 12px; }
 
-/* ---------- 两段切换：入场只做一次轻推入，进度条 60ms 阶梯 ---------- */
+/* ---------- 两段切换：入场只做一次轻推入 ---------- */
 .scenario-challenge.is-draft > .scenario-info, .scenario-challenge.is-draft > .scenario-divider, .scenario-challenge.is-draft > .scenario-console { animation: rise .28s var(--ease) both; }
-.scenario-challenge.is-book > .scenario-stages { animation: rise .28s var(--ease) both; }
-.scenario-challenge.is-book .scenario-stage { animation: rise .28s var(--ease) both; }
-/* 以下四行是刻意排的 60ms 阶梯，改一档就等于打断节奏——故不套 --dur-* token */
-.scenario-challenge.is-book .scenario-stage:nth-child(2) { animation-delay: .06s; }
-.scenario-challenge.is-book .scenario-stage:nth-child(3) { animation-delay: .12s; }
-.scenario-challenge.is-book .scenario-stage:nth-child(4) { animation-delay: .18s; }
-.scenario-challenge.is-book .scenario-stage:nth-child(5) { animation-delay: .24s; }
-.scenario-challenge.is-book .scenario-book { animation: rise .4s var(--ease) .16s both; }
+.scenario-challenge.is-book .scenario-book { animation: rise .4s var(--ease) both; }
 
 @media (max-width: 860px) {
   .scenario-info { grid-template-columns: 1fr; }
@@ -1806,21 +1813,18 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 @media (max-width: 960px) {
   .scenario-book { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 20px; }
   .scenario-rail { display: contents; }
-  .scenario-stages { order: 1; }
   .scenario-manuscript--book { order: 2; height: clamp(400px, 60vh, 620px); padding-inline: 14px; }
   .scenario-rail .scenario-result, .scenario-rail .err { order: 3; }
 }
 @media (max-width: 760px) {
-  /* 窄屏没侧栏空间：进度压成一行序号，终局落到纸页下方 */
-  .scenario-stages { grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; }
-  .scenario-stages::before { display: none; }
-  .scenario-stage { grid-template-columns: auto auto; justify-content: center; column-gap: 4px; padding: 0; }
-  .scenario-stage__dot, .scenario-stage__label { display: none; }
   .scenario-manuscript--book { padding-inline: 10px; }
   .scenario-manuscript--book .scenario-manuscript__body { --lh: 33px; }
   .scenario-manuscript--book .ink-entry p { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scenario-challenge.is-draft > .scenario-info, .scenario-challenge.is-draft > .scenario-divider, .scenario-challenge.is-draft > .scenario-console,
-  .scenario-challenge.is-book > .scenario-stages, .scenario-challenge.is-book .scenario-stage, .scenario-challenge.is-book .scenario-book { animation: none; }
+  .scenario-challenge.is-book .scenario-book { animation: none; }
+  /* 占位停成静态：三道线按最终长度压淡，不再生长也不再呼吸 */
+  .scenario-veil { animation: none; opacity: .5; }
+  .scenario-veil span::before { animation: none; transform: scaleX(1); }
 }

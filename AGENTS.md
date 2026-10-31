@@ -77,7 +77,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 - **编排属 services，路由只做 HTTP 壳**：后台编排协程在 `app/services/scenario/flows.py`；对外脱敏纯函数在 `app/services/scenario/views.py`；`api/routes/scenario_domain.py` 只做参数校验与响应组装。依赖方向永远是 api → services，绝不反向。
 - **单件根级、多件成包**：横切单文件工具放 services 根（如 `mail.py`）；内容多文件才立包（如 `llm/`）。域不再使用单文件包。
 - **已删除域不要复活**：battle、loadout、board、collection（旧收藏集对战）、friend、leaderboard、notification、anecdote、prompt_debug、管理员试验场（test_battle/test_* 表）均已移除；遇到旧文档或 `__pycache__` 提及它们，以代码现状为准。
-- 后台任务：业务代码 `dispatch("任务名", ...)` 派发，inline 与 arq 双模式共用 `services/scenario/tasks_registry.py` 注册表；现役任务：scenario_prepare（比对）、scenario_deduction（推演站）、scenario_narration（叙述站）、scenario_judgement（检定站）、guess_round、guess_verify。推演三站解耦（2026-10-02）：推演站产全文落 `deduction_text` 列后扇出叙述+检定，后到者结算；术语上「上帝视角」已更名「推演」、视角转写更名「叙述」（提示词正文冻结不改，SSE 事件为 deduction_progress/narration_chunk/narration_snapshot，API 字段 `omniscient`/`god_unlocked` 为兼容保留旧名）。
+- 后台任务：业务代码 `dispatch("任务名", ...)` 派发，inline 与 arq 双模式共用 `services/scenario/tasks_registry.py` 注册表；现役任务：scenario_prepare（比对）、scenario_deduction（推演站）、scenario_narration（叙述站）、scenario_judgement（检定站）、guess_round、guess_verify。推演三站解耦（2026-10-02）：推演站产全文落 `deduction_text` 列后扇出叙述+检定，后到者结算；术语上「上帝视角」已更名「推演」、视角转写更名「叙述」（提示词正文冻结不改，SSE 事件为 deduction_chunk/narration_chunk/narration_snapshot（另有 deduction_snapshot 供断线重连；推演正文只对该局已解锁者下发，未解锁者推演期零事件），API 字段 `omniscient`/`god_unlocked` 为兼容保留旧名）。
 - `app/services/guess/pipeline.py` 是猜词管道：切分（纯正则）→ 原子×奇术并发配对 → 玩家主动检定三环节，回调式逐结果落库。
 - `app/services/llm/reliability.py` 统一收口所有 LLM 调用（硬超时、退避重试、并发闸、llm_traces 追踪）；新增 LLM 调用必须沿用这层。
 - LLM 配置默认来自 `.env` 的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`（OpenAI 兼容协议，不区分 provider）；用户自配方案（llm_profiles，api_key 经 Fernet 加密落库）可覆盖默认。不要把密钥写入代码、测试或提交。

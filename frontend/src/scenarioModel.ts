@@ -12,13 +12,13 @@ export type Message = {
 
 export const STAGE_TEXT: Record<Stage, string> = {
   loading: "正在接入小天下集",
-  compare: "奇术比对中",
-  ready: "等待你的指导",
+  // 比对与推演对读者是同一段等待（都是「全知推演正在落墨」），文案不给中间态
+  compare: "推演中",
+  ready: "推演中",
   thinking: "推演中",
   views: "正在转写双方视角",
   result: "本次推演已成卷",
 };
-export const STAGE_STEPS: Stage[] = ["compare", "ready", "thinking", "views", "result"];
 
 export type ScenarioHistoryItem = {
   id: string;

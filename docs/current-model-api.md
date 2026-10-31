@@ -58,7 +58,7 @@
 
 管理员卷：`/admin/scenarios/**`，只有管理员可创建、编辑、发布或下线卷。
 
-挑战：`POST /scenario-rosters/{roster_id}/challenges`（请求体使用 `character_id`）、`GET /scenario-challenges/{id}`、`GET /scenario-challenges/{id}/stream`（SSE 事件：`deduction_progress`/`narration_chunk`/`narration_snapshot`/`turn`/`done`/`error`）、以及 `actions`、`guess`、`guess/verify`、`derive`。术语注：原「上帝视角」现称「推演」、原「视角转写」现称「叙述」；API 字段 `omniscient`（turn JSON 内）与 `god_unlocked`（详情响应）为兼容保留旧名。
+挑战：`POST /scenario-rosters/{roster_id}/challenges`（请求体使用 `character_id`）、`GET /scenario-challenges/{id}`、`GET /scenario-challenges/{id}/stream`（SSE 事件：`deduction_chunk`/`deduction_snapshot`/`narration_chunk`/`narration_snapshot`/`turn`/`done`/`error`）、以及 `actions`、`guess`、`guess/verify`、`derive`。术语注：原「上帝视角」现称「推演」、原「视角转写」现称「叙述」；API 字段 `omniscient`（turn JSON 内）与 `god_unlocked`（详情响应）为兼容保留旧名。
 
 ## 认证接口
 

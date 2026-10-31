@@ -116,7 +116,11 @@ def _failed_challenge(challenge_id: UUID, message: str, *, keep: bool = False) -
 
 
 async def run_scenario_deduction(challenge_id: UUID) -> None:
-    """推演站：全知推演全文流式生成（只播字数进度），落 deduction_text 站间 checkpoint 后扇出叙述+检定。"""
+    """推演站：全知推演全文流式生成，落 deduction_text 站间 checkpoint 后扇出叙述+检定。
+
+    正文只在「本就该看见全篇」的局里直播（试炼局 / 已看破全部奇术），其余局推演期一条事件
+    都不发，占位由前端自演——可见性判定与 _settle_if_ready 同一判据，避免两处口径漂移。
+    """
     stream = get_scenario_stream(challenge_id)
     try:
         async with async_session_factory() as db:
@@ -129,6 +133,12 @@ async def run_scenario_deduction(challenge_id: UUID) -> None:
             messages = list(challenge.messages)
             comparison_report = str((challenge.derived or {}).get("comparison_report", ""))
             action = str(messages[-1].get("text", "")) if messages else ""
+            # 与 _settle_if_ready 结算侧同一条判据：试炼恒开，否则全部奇术已看破
+            progress = await db.get(
+                ScenarioRosterProgress,
+                {"roster_id": challenge.roster_id, "challenger_id": challenge.challenger_id},
+            )
+            god_live = challenge.is_preview or deduction_unlocked(progress, list(roster.get("abilities", [])))
 
         action_fact = f"挑战者奇人“{challenger.get('character_name', '挑战者奇人')}”执行行动意图：\n“{action}”"
         god_kwargs = {
@@ -146,9 +156,9 @@ async def run_scenario_deduction(challenge_id: UUID) -> None:
             "comparison_report": comparison_report or "（无直接冲突的奇术比对结论）",
             "action": action_fact,
         }
-        # 推演流式：真实文本不出站，只发累计字数供前端合成遮挡进度
+        # 推演流式：解锁者实时读正文（与结算后 turn.omniscient 同源，切换零跳动）；
+        # 未解锁者一条事件都不收。必须带 side——侧别过滤在 _fanout 里，守方结构上收不到。
         deduction_parts: list[str] = []
-        deduction_chars = 0
         async for chunk in astream_with_reliability(
             build_scenario_deduction_llm(),
             god_kwargs,
@@ -158,8 +168,8 @@ async def run_scenario_deduction(challenge_id: UUID) -> None:
         ):
             text = str(chunk)
             deduction_parts.append(text)
-            deduction_chars += len(text)
-            await stream.publish({"type": "deduction_progress", "chars": deduction_chars}, replay=False)
+            if god_live:
+                await stream.publish({"type": "deduction_chunk", "side": "challenger", "text": text}, replay=False)
         deduction = "".join(deduction_parts).strip()
 
         async with async_session_factory() as db:

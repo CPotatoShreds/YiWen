@@ -1,4 +1,4 @@
-"""SSE 职责验收：推演遮挡流（真实文本不出站）、按侧别投递、三站任务（推演→叙述+检定→后到者结算）。
+"""SSE 职责验收：推演正文只对解锁者直播、按侧别投递、三站任务（推演→叙述+检定→后到者结算）。
 
 不经过 HTTP 缓冲层：直接驱动真实的推演站（`run_scenario_deduction`，链式派发叙述+检定）与
 `challenge_stream` 端点生成器（SSE 需要真实流式传输，TestClient 会缓冲整包）。
@@ -67,7 +67,8 @@ async def _noop_compare():
 
 
 async def _seed_resolving_challenge(*, roster_abilities: list[dict] | None = None, cracked: list[dict] | None = None,
-                                    status: str = "resolving", messages: list[dict] | None = None) -> tuple[ScenarioChallengeRun, User, User]:
+                                    status: str = "resolving", messages: list[dict] | None = None,
+                                    is_preview: bool = False) -> tuple[ScenarioChallengeRun, User, User]:
     """落库最小闭环数据：挑战者/守方/卷/阵容/挑战，返回 (挑战, 挑战者, 守方)。"""
     async with async_session_factory() as db:
         tag = uuid4().hex[:8]
@@ -88,7 +89,7 @@ async def _seed_resolving_challenge(*, roster_abilities: list[dict] | None = Non
         db.add(roster)
         await db.flush()
         challenge = ScenarioChallengeRun(
-            roster_id=roster.id, challenger_id=challenger.id, status=status,
+            roster_id=roster.id, challenger_id=challenger.id, status=status, is_preview=is_preview,
             scenario_snapshot={"name": "职责卷", "rules": [], "judgement_rules": [], "victory_condition": "胜", "background": "开场"},
             roster_snapshot={"character_name": "守风", "guidance": "守住结界", "abilities": roster_abilities or []},
             challenger_snapshot={"character_name": "逐影", "abilities": []},
@@ -116,7 +117,7 @@ async def _drain(queue: asyncio.Queue, timeout: float = 10.0) -> list[dict]:
 
 
 async def test_resolve_publishes_shielded_god_and_side_scoped_events():
-    """三站链路的发布契约：推演只发 chars、narration_chunk 带侧、turn 按侧拆分、结算随双齐。"""
+    """未解锁局：推演期一条推演事件都不发、narration_chunk 带侧、turn 按侧拆分、结算随双齐。"""
     challenge, _, _ = await _seed_resolving_challenge()
     stream = stream_module.get_scenario_stream(challenge.id)
     challenger_queue, _ = await stream.subscribe(side="challenger")
@@ -133,11 +134,10 @@ async def test_resolve_publishes_shielded_god_and_side_scoped_events():
     # 挑战者侧：字体契约
     c_types = [e["type"] for e in challenger_events]
     assert "stage" not in c_types and "god" not in c_types
-    assert "deduction_progress" in c_types and "turn" in c_types and "done" in c_types
+    assert "deduction_chunk" not in c_types and "deduction_progress" not in c_types
+    assert "turn" in c_types and "done" in c_types
     c_blob = json.dumps(challenger_events, ensure_ascii=False)
-    assert _GOD_TEXT not in c_blob  # 核心：推演明文全程不出站（未看破全部门控锁死）
-    progress = [e for e in challenger_events if e["type"] == "deduction_progress"]
-    assert all(set(e.keys()) == {"type", "chars"} for e in progress) and progress[-1]["chars"] > 0
+    assert _GOD_TEXT not in c_blob  # 核心：未看破全部，推演明文一字不出站（占位由前端自演）
     c_chunks = [e for e in challenger_events if e["type"] == "narration_chunk"]
     assert c_chunks and all(e["side"] == "challenger" for e in c_chunks)
     c_turn = next(e["turn"] for e in challenger_events if e["type"] == "turn")
@@ -207,6 +207,7 @@ async def test_resolve_turn_carries_god_only_when_unlocked():
     )
     stream = stream_module.get_scenario_stream(challenge.id)
     challenger_queue, _ = await stream.subscribe(side="challenger")
+    guardian_queue, _ = await stream.subscribe(side="guardian")
 
     with ExitStack() as stack:
         for p in _llm_patches():
@@ -217,6 +218,37 @@ async def test_resolve_turn_carries_god_only_when_unlocked():
     turn = next(e["turn"] for e in events if e["type"] == "turn")
     assert turn["omniscient"] == _GOD_TEXT
     assert "guardian_text" not in turn
+
+    # 解锁者推演期即时读到正文：拼起来与落库全文一致，且全程带侧
+    chunks = [e for e in events if e["type"] == "deduction_chunk"]
+    assert chunks and all(e["side"] == "challenger" for e in chunks)
+    assert "".join(e["text"] for e in chunks) == _GOD_TEXT
+
+    # 同一场的守方订阅者：推演正文一字都收不到
+    guardian_events = await _drain(guardian_queue, timeout=1.0)
+    assert _GOD_TEXT not in json.dumps(guardian_events, ensure_ascii=False)
+    assert not [e for e in guardian_events if e["type"].startswith("deduction_")]
+
+
+async def test_preview_challenge_streams_god_like_unlocked():
+    """试炼局（作者自看）与「已全破」等价：无需任何看破进度也直播推演正文。"""
+    challenge, _, _ = await _seed_resolving_challenge(
+        roster_abilities=[{"name": "术一", "effect": "e1"}, {"name": "术二", "effect": "e2"}],
+        is_preview=True,
+    )
+    stream = stream_module.get_scenario_stream(challenge.id)
+    challenger_queue, _ = await stream.subscribe(side="challenger")
+
+    with ExitStack() as stack:
+        for p in _llm_patches():
+            stack.enter_context(p)
+        await asyncio.wait_for(flows.run_scenario_deduction(challenge.id), timeout=15)
+        events = await _drain(challenger_queue)
+
+    chunks = [e for e in events if e["type"] == "deduction_chunk"]
+    assert "".join(e["text"] for e in chunks) == _GOD_TEXT
+    turn = next(e["turn"] for e in events if e["type"] == "turn")
+    assert turn["omniscient"] == _GOD_TEXT
 
 
 async def test_stream_endpoint_passes_subscriber_side():

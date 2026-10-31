@@ -5,10 +5,9 @@ import { streamEvents } from "../sse";
 import { startScenarioChallenge } from "../scenarioChallenge";
 import { SealStamp } from "../components/Ornaments";
 import { BookIcon, RefreshIcon, XIcon } from "../components/icons";
-import { ScenarioManuscript } from "../components/ScenarioNarrative";
+import { ScenarioManuscript, ScenarioVeil } from "../components/ScenarioNarrative";
 import { BackButton } from "../components/PageShell";
 import {
-  STAGE_STEPS,
   STAGE_TEXT,
   chineseNumber,
   isInProgress,
@@ -94,7 +93,7 @@ export default function ScenarioBattle() {
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [stage, setStage] = useState<Stage>("loading");
   const [view, setView] = useState<"booting" | "draft" | "book">("booting");
-  const [liveDeduction, setLiveDeduction] = useState("");
+  const [liveDeduction, setLiveDeduction] = useState(""); // 推演正文原文（已解锁者逐字；未解锁者恒空）
   const [liveOwn, setLiveOwn] = useState("");
   const [streamRetry, setStreamRetry] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -196,11 +195,13 @@ export default function ScenarioBattle() {
       `/scenario-challenges/${currentId}/stream`,
       {
         onEvent: (event) => {
-          if (event.type === "deduction_progress") {
-            // 推演遮挡流：只收到累计字数，前端按字数合成遮挡符号（真实文本不出站）
-            // 密度 1 符 / 20 字、上限 240 符——稳定增长且不撑爆版面
-            const chars = Number(event.chars ?? 0);
-            setLiveDeduction("❖".repeat(Math.min(240, Math.max(1, Math.ceil(chars / 20)))));
+          if (event.type === "deduction_chunk") {
+            // 推演正文逐字（只有本就该看全文的局才下）：本连接只收己方侧
+            if (event.side === ownSideRef.current) setLiveDeduction((current) => current + String(event.text ?? ""));
+            setStage((current) => (ORDER["thinking"] >= ORDER[current] ? "thinking" : current));
+          } else if (event.type === "deduction_snapshot") {
+            // 断线重连补发：服务端累计正文整体替换（推演先于叙述，故先于 narration_snapshot 到达）
+            if (event.side === ownSideRef.current) setLiveDeduction(String(event.text ?? ""));
             setStage((current) => (ORDER["thinking"] >= ORDER[current] ? "thinking" : current));
           } else if (event.type === "narration_snapshot") {
             // 断线重连补发：服务端累计全文整体替换（修复重连后中间缺段/叙述重流叠字）
@@ -409,13 +410,18 @@ export default function ScenarioBattle() {
   const submitLabel = locked
     ? canSubmitStrategy
       ? "开始推演"
-      : stage === "compare"
-        ? "奇术比对中…"
-        : "等待比对"
+      : "推演中…" // 比对与推演对读者是同一段等待，不给中间态文案
     : busy
       ? "正在起笔…"
       : "发起推演";
   const submitDisabled = locked ? !canSubmitStrategy || busy : !characterId || busy || characters === null;
+
+  // 推演没有中间节点可标：占位动画自首字到达即撤（正文接管后不必再演）
+  const showVeil = !!currentId && !failed && stage !== "result" && !liveDeduction && !liveOwn;
+  // 左轨只剩终局与错误；其余时候不占那 196–236px 的空列
+  const rail = stage === "result" || !!error;
+  // 就绪态对内只存活一个轮询周期（自动提交），对外文案已并入「推演中」，配色跟着走
+  const pillStage: Stage = currentId && stage === "ready" ? "thinking" : stage;
 
   return (
     <section className={`panel world-story scenario-challenge is-${view === "book" ? "book" : "draft"}`}>
@@ -431,7 +437,7 @@ export default function ScenarioBattle() {
             <BookIcon size={15} />
             翻阅往期
           </Link>
-          <span className={`scenario-stream-status is-${currentId ? stage : "ready"}`}>
+          <span className={`scenario-stream-status is-${currentId ? pillStage : "ready"}`}>
             {currentId ? STAGE_TEXT[stage] : "等待起笔"}
           </span>
         </div>
@@ -440,56 +446,42 @@ export default function ScenarioBattle() {
       {view === "booting" ? (
         <div className="skeleton" style={{ height: 420, margin: 24 }} />
       ) : view === "book" ? (
-        <div className="scenario-book">
-          <aside className="scenario-rail">
-            <div className="scenario-stages" aria-label="推演进度">
-              {STAGE_STEPS.map((step, index) => {
-                const reached = !!currentId && ORDER[stage] >= ORDER[step];
-                const running = !!currentId && stage === step && stage !== "result";
-                return (
-                  <span
-                    className={`scenario-stage${reached ? " is-done" : ""}${running ? " is-active" : ""}`}
-                    key={step}
-                  >
-                    <i className="scenario-stage__dot" aria-hidden="true" />
-                    <b className="scenario-stage__no">{String(index + 1).padStart(2, "0")}</b>
-                    <span className="scenario-stage__label">{STAGE_TEXT[step]}</span>
+        <div className={`scenario-book${rail ? "" : " is-solo"}`}>
+          {rail && (
+            <aside className="scenario-rail">
+              {stage === "result" && challenge && (
+                <div className={`scenario-result ${challenge.won ? "is-won" : "is-lost"}`}>
+                  <span className="scenario-result__seal">
+                    <SealStamp char={challenge.won ? "胜" : "负"} size={40} />
                   </span>
-                );
-              })}
-            </div>
-            {stage === "result" && challenge && (
-              <div className={`scenario-result ${challenge.won ? "is-won" : "is-lost"}`}>
-                <span className="scenario-result__seal">
-                  <SealStamp char={challenge.won ? "胜" : "负"} size={40} />
-                </span>
-                <div className="scenario-result__body">
-                  <strong>
-                    {challenge.won ? "本次推演：对局目标已达成" : "本次推演：对局目标未达成"}
-                  </strong>
-                  {challenge.derived?.reason && <p>{challenge.derived.reason}</p>}
-                  {!owner && !challenge.is_preview && !challenge.god_unlocked && (
-                    <p className="muted">待你看破这条异闻的全部奇术，推演全文会在书页上开启。</p>
-                  )}
-                  <div className="scenario-result__actions">
-                    <button className="btn btn-primary" onClick={restart}>
-                      <RefreshIcon size={15} />
-                      换策略再推演
-                    </button>
-                    <Link className="btn btn-ghost" to={`${recordsHref}?run=${challenge.id}`}>
-                      <BookIcon size={15} />
-                      回看本局
-                    </Link>
-                    <Link className="btn btn-ghost" to={backHref}>
-                      <XIcon size={15} />
-                      返回详情
-                    </Link>
+                  <div className="scenario-result__body">
+                    <strong>
+                      {challenge.won ? "本次推演：对局目标已达成" : "本次推演：对局目标未达成"}
+                    </strong>
+                    {challenge.derived?.reason && <p>{challenge.derived.reason}</p>}
+                    {!owner && !challenge.is_preview && !challenge.god_unlocked && (
+                      <p className="muted">待你看破这条异闻的全部奇术，推演全文会在书页上开启。</p>
+                    )}
+                    <div className="scenario-result__actions">
+                      <button className="btn btn-primary" onClick={restart}>
+                        <RefreshIcon size={15} />
+                        换策略再推演
+                      </button>
+                      <Link className="btn btn-ghost" to={`${recordsHref}?run=${challenge.id}`}>
+                        <BookIcon size={15} />
+                        回看本局
+                      </Link>
+                      <Link className="btn btn-ghost" to={backHref}>
+                        <XIcon size={15} />
+                        返回详情
+                      </Link>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            {error && <p className="err">{error}</p>}
-          </aside>
+              )}
+              {error && <p className="err">{error}</p>}
+            </aside>
+          )}
           <ScenarioManuscript
             variant="book"
             messages={challenge?.messages ?? []}
@@ -497,6 +489,7 @@ export default function ScenarioBattle() {
             ownLabel={ownLabel}
             liveText={liveOwn}
             liveDeduction={liveDeduction}
+            placeholder={showVeil ? <ScenarioVeil /> : undefined}
             emptyText=""
             runningHead={{ left: context.scenario.name, right: preview ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
             folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}

@@ -85,16 +85,16 @@ async def test_side_filtering_only_delivers_matching_side():
 
 
 async def test_no_side_events_broadcast_to_all_sides():
-    """无 side 事件（god_progress/done/error）对全部订阅者广播。"""
+    """无 side 事件（done/error）对全部订阅者广播。"""
     cid = uuid.uuid4()
     channel = ScenarioChallengeStream(cid)
     challenger_queue, _ = await channel.subscribe(side="challenger")
     guardian_queue, _ = await channel.subscribe(side="guardian")
 
-    await channel.publish({"type": "god_progress", "chars": 42}, replay=False)
+    await channel.publish({"type": "done", "status": "won"}, replay=False)
 
-    assert (await asyncio.wait_for(challenger_queue.get(), 1.0))["chars"] == 42
-    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["chars"] == 42
+    assert (await asyncio.wait_for(challenger_queue.get(), 1.0))["status"] == "won"
+    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["status"] == "won"
 
 
 async def test_cross_instance_live_delivery_via_relay():
@@ -164,6 +164,23 @@ async def test_midway_subscribe_gets_view_snapshot():
     await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "掠过檐角"}, replay=False)
     _, snapshot = await channel.subscribe(side="challenger")
     assert snapshot[0] == {"type": "narration_snapshot", "side": "challenger", "text": "剑光掠过檐角"}
+
+
+async def test_midway_subscribe_gets_deduction_snapshot_before_narration():
+    """中途订阅：先补推演正文、再补叙述（推演必先于叙述），且两桶互不污染。"""
+    channel = ScenarioChallengeStream(uuid.uuid4())
+    await channel.publish({"type": "deduction_chunk", "side": "challenger", "text": "推演"}, replay=False)
+    await channel.publish({"type": "deduction_chunk", "side": "challenger", "text": "正文"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "己方叙述"}, replay=False)
+
+    _, snapshot = await channel.subscribe(side="challenger")
+    assert [event["type"] for event in snapshot] == ["deduction_snapshot", "narration_snapshot"]
+    assert snapshot[0]["text"] == "推演正文"
+    assert snapshot[1]["text"] == "己方叙述"
+
+    # 守方侧不持有任何推演正文（该局未解锁时压根不会发布，这里直证缓冲按侧隔离）
+    _, guardian_snapshot = await channel.subscribe(side="guardian")
+    assert guardian_snapshot == []
 
 
 async def test_view_snapshot_side_isolation():
