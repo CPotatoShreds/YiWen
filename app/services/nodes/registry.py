@@ -46,6 +46,8 @@ def build_node(spec: NodeSpec, *, llm_config: dict | None = None) -> Runnable:
     """按 NodeSpec 构建 LLM 链路。
 
     - 结构化输出一律 `method="function_calling"`（DeepSeek 对 json_schema 返回 400），收敛于此一处。
+    - 同时强制 `tool_choice=<schema 名>`：缺省 `auto` 时模型可以不调工具、只回一段自由文本，
+      langchain 解析不出 `tool_calls` 就返回 None，调用方按"无结果"静默丢弃。
     - `pipes_template=False` 时只返回模型链，调用方自行 format_messages（保留对 build_chat_model 的桩兼容）。
     """
     tail: Runnable = build_chat_model(
@@ -55,7 +57,9 @@ def build_node(spec: NodeSpec, *, llm_config: dict | None = None) -> Runnable:
         llm_config=llm_config,
     )
     if spec.schema is not None:
-        tail = tail.with_structured_output(spec.schema, method="function_calling")
+        tail = tail.with_structured_output(
+            spec.schema, method="function_calling", tool_choice=spec.schema.__name__
+        )
     else:
         tail = tail | StrOutputParser()
     if not spec.pipes_template:

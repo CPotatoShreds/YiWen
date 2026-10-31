@@ -25,6 +25,17 @@ def profile_to_llm_config(profile: LlmProfile | None) -> dict | None:
     }
 
 
+def _disable_thinking_body(model: str) -> dict:
+    """按模型家族生成「关闭思考」的 extra_body。
+
+    qwen 只认 `chat_template_kwargs.enable_thinking`，DeepSeek 只认 `thinking.type`；
+    发错字段等于没发（思考照常开，输出额度被思考过程吃光、正文为空）。
+    """
+    if model.lower().startswith("qwen"):
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    return {"thinking": {"type": "disabled"}}
+
+
 def build_chat_model(
     thinking: bool = True,
     max_tokens: int | None = None,
@@ -33,7 +44,8 @@ def build_chat_model(
 ) -> ChatOpenAI:
     """构造配置好的 ChatOpenAI。
 
-    - thinking=False 时通过 extra_body 禁用 DeepSeek 思考模式（提速降本，质量略降）。
+    - thinking=False 时通过 extra_body 禁用思考模式（提速降本，质量略降），参数字段按
+      最终模型家族分流，见 `_disable_thinking_body`。
     - `max_tokens`：输出上限（None 时用模型默认）。一次性推演完整对战这类长输出场景需显式调大，
       否则输出被截断会导致结尾句缺失。
     - `temperature`：采样温度（None 时用模型默认）。分析类节点（如比对、检定）需要低温度、稳定的
@@ -64,5 +76,5 @@ def build_chat_model(
     if temperature is not None:
         kwargs["temperature"] = temperature
     if not thinking:
-        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        kwargs["extra_body"] = _disable_thinking_body(kwargs["model"])
     return ChatOpenAI(**kwargs)

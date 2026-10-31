@@ -82,7 +82,7 @@ PAIR_JUDGE_TEMPLATE = ChatPromptTemplate.from_messages(
 SPEC = NodeSpec(
     id="scenario_ability_pair",
     template=PAIR_JUDGE_TEMPLATE,
-    max_tokens=512,
+    max_tokens=2048,
     temperature=0,
     schema=PairVerdict,
 )
