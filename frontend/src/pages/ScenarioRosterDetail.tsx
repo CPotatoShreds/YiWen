@@ -302,7 +302,6 @@ export default function ScenarioRosterDetail() {
               <BookIcon size={16} />
               <h2>对局记录</h2>
             </div>
-            <span className="roster-book__meta">左页 · 翻阅</span>
           </header>
           <div className="roster-book__body">
             <ScenarioHistory
@@ -323,7 +322,6 @@ export default function ScenarioRosterDetail() {
               <span className="roster-book__mark">当前卡</span>
               <h2>{current?.cracked ? current.name || "已看破奇术" : `第 ${current?.index ?? "?"} 门奇术`}</h2>
             </div>
-            <span className="roster-book__meta">右页 · 行迹线索</span>
           </header>
           <div className="roster-book__body">
             {clues.length ? (

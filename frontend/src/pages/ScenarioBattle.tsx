@@ -507,15 +507,17 @@ export default function ScenarioBattle() {
                   <span>{winRate}</span>
                 </p>
               </div>
-              <p className="scenario-info__meta">
-                <span>{preview ? "异闻录试炼" : `本场已推演 ${attempts} 次`}</span>
-                <span>{locked ? STAGE_TEXT[stage] : preview ? "试炼" : `第 ${nextRun} 次`}</span>
-              </p>
+              {!preview && (
+                <p className="scenario-info__meta">
+                  <span>本场已推演 {attempts} 次</span>
+                  <span>{locked ? STAGE_TEXT[stage] : `第 ${nextRun} 次`}</span>
+                </p>
+              )}
             </div>
             <div className="scenario-info__rules">
               <section className="scenario-rules">
                 <h3 className="scenario-rules__title">
-                  卷规则<span className="scenario-rules__badge">最高优先级</span>
+                  卷规则
                 </h3>
                 <ol className="scenario-rules__list">
                   {context.scenario.rules.map((rule) => (
@@ -525,7 +527,7 @@ export default function ScenarioBattle() {
               </section>
               <section className="scenario-rules scenario-rules--dim">
                 <h3 className="scenario-rules__title">
-                  补充判定<span className="scenario-rules__badge">含糊即未发生</span>
+                  补充判定
                 </h3>
                 <ul className="scenario-rules__list">
                   {context.scenario.judgement_rules.map((rule) => (
@@ -536,20 +538,17 @@ export default function ScenarioBattle() {
             </div>
           </div>
 
-          <div className="scenario-divider">
-            <span>其二 · 起笔</span>
-          </div>
+          <div className="scenario-divider" />
 
           <section className="scenario-console">
             <div className="scenario-picker">
               <div className="scenario-picker__head">
-                <span className="eyebrow">出战奇人</span>
+                <span className="eyebrow">奇人</span>
                 <span className="scenario-picker__hint">
                   {characters === null ? "载入中" : `共 ${available.length} 位`}
-                  {characters !== null && available.length > 4 && <span className="scenario-picker__more"> · 可滚</span>}
                 </span>
               </div>
-              <div className="scenario-picker__list" role="radiogroup" aria-label="出战奇人">
+              <div className="scenario-picker__list" role="radiogroup" aria-label="奇人">
                 {characters === null
                   ? [0, 1, 2].map((row) => <span className="scenario-picker__ghost" key={row} />)
                   : available.map((character) => (
@@ -571,22 +570,16 @@ export default function ScenarioBattle() {
                       </label>
                     ))}
               </div>
-              {characters !== null && !available.length ? (
+              {characters !== null && !available.length && (
                 <p className="scenario-picker__empty">
                   暂无可用奇人，请先在 <Link to="/yiwenlu">异闻录</Link> 装配 1-4 门奇术。
-                </p>
-              ) : (
-                <p className="scenario-picker__foot">
-                  {locked
-                    ? `本局奇人已定${ownLabel ? ` · ${ownLabel}` : ""}，只可改策略。`
-                    : "选定后仍可改，起笔那一刻才算数。"}
                 </p>
               )}
             </div>
 
             <div className="scenario-sheet">
               <div className="scenario-sheet__head">
-                <span className="eyebrow">策略意图</span>
+                <span className="eyebrow">策略</span>
                 <span className="scenario-sheet__count">
                   {strategy.length} / 1000
                 </span>
@@ -596,12 +589,9 @@ export default function ScenarioBattle() {
                 maxLength={1000}
                 value={strategy}
                 onChange={(event) => setStrategy(event.target.value)}
-                placeholder="告诉奇人该如何应对这场推演；留空则由奇人自行应对。"
+                placeholder="告诉奇人该如何应对这场推演。"
               />
               <div className="scenario-sheet__foot">
-                <p className="muted">
-                  {locked ? "比对完成后点「开始推演」，或留空让奇人自行应对。" : "留空则由奇人自行应对。"}
-                </p>
                 <button className="btn btn-primary" disabled={submitDisabled} onClick={() => void (locked ? derive() : begin())}>
                   {submitLabel}
                 </button>

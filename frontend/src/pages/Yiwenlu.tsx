@@ -251,7 +251,7 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       width="wide"
       title="异闻录"
       icon={<BookIcon size={19} />}
-      subtitle={<span>奇人 <b>{characters.length}</b> 位 · 奇术 <b>{abilities.length}</b> 门，皆为小天下集所用。</span>}
+      subtitle={<span>奇人 <b>{characters.length}</b> 位 · 奇术 <b>{abilities.length}</b> 门</span>}
       back={{ to: "/home", label: "返回首页" }}
     >
       <div className="codex__body">

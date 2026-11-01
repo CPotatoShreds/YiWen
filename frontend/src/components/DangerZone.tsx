@@ -65,7 +65,7 @@ export default function DangerZone() {
           ref={confirmRef}
           className="input"
           type="password"
-          placeholder={`输入 ${user?.username ?? ""} 的口令以确认注销`}
+          placeholder={`输入 ${user?.username ?? ""} 的密码以确认注销`}
           autoComplete="current-password"
         />
         <button className="btn" disabled={busy}>注销账号</button>

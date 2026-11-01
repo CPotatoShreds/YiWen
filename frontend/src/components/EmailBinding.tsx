@@ -33,7 +33,7 @@ export default function EmailBinding() {
     <div className="panel">
       <h2 className="panel-title">绑定邮箱</h2>
       <p className="muted">
-        {email ? `当前绑定：${email}（换绑同样需要新邮箱验证）` : "尚未绑定。绑定后可用邮箱找回口令。"}
+        {email ? `当前绑定：${email}（换绑同样需要新邮箱验证）` : "尚未绑定。绑定后可用邮箱找回密码。"}
       </p>
       {sent ? (
         <p className="muted">验证链接已寄出（15 分钟内有效），请到邮箱点击完成绑定。</p>

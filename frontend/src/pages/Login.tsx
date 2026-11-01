@@ -3,8 +3,9 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { returnTo } from "../nav";
 import { InkMountains, Lantern, SealStamp, SwordsmanScene } from "../components/Ornaments";
+import { EyeIcon, EyeOffIcon } from "../components/icons";
 
-/** 登录页：居中卡片 + 明确层级 + 口令可见切换 + 错误提示 + 条款微文案。 */
+/** 登录页：居中卡片 + 明确层级 + 密码可见切换 + 错误提示 + 条款微文案。 */
 export default function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
@@ -78,9 +79,9 @@ export default function Login() {
 
           <div className="field">
             <div className="field-label-row">
-              <label htmlFor="login-password">口令</label>
+              <label htmlFor="login-password">密码</label>
               <Link className="field-link" to="/forgot-password">
-                忘记口令？
+                忘记密码？
               </Link>
             </div>
             <div className="input-wrap">
@@ -97,9 +98,9 @@ export default function Login() {
                 type="button"
                 className="input-trail"
                 onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? "隐藏口令" : "显示口令"}
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
               >
-                {showPassword ? "隐藏" : "显示"}
+                {showPassword ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
               </button>
             </div>
           </div>
@@ -110,7 +111,7 @@ export default function Login() {
         </form>
 
         <p className="auth__foot">
-          还没有名号？<Link to="/register">立即注册</Link>
+          还没有账号？<Link to="/register">立即注册</Link>
         </p>
         <p className="auth-legal">
           登录即表示同意

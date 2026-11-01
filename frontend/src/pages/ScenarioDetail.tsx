@@ -41,7 +41,7 @@ export default function ScenarioDetail() {
       icon={<ScrollIcon size={22} />}
       subtitle={scenario.subtitle}
       back={{ to: "/scenarios", label: "返回小天下集" }}
-      actions={<Link className="btn btn-primary" to={`/scenarios/${scenario.slug}/rosters/new`}>立异闻</Link>}
+      actions={<Link className="btn btn-primary" to={`/scenarios/${scenario.slug}/rosters/new`}>拓印异闻</Link>}
     >
     <section className="scroll-head">
       <div className="scroll-head__lead">
@@ -65,7 +65,6 @@ export default function ScenarioDetail() {
       <div className="scenario-roster-section__head">
         <div>
           <h2>异闻</h2>
-          <p className="muted">异闻师在这一卷里留下的、可被挑战的东西</p>
         </div>
       </div>
       <CloudDivider />

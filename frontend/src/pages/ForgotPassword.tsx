@@ -30,7 +30,7 @@ export default function ForgotPassword() {
           <span className="brand__mark">
             <SealStamp char="异" size={40} />
           </span>
-          <h1>找回口令</h1>
+          <h1>找回密码</h1>
         </div>
         {sent ? (
           <p className="auth__sub">若该邮箱已绑定账号，重置链接已寄出（15 分钟内有效），请查收邮件。</p>

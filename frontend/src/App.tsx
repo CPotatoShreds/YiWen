@@ -92,7 +92,7 @@ export default function App() {
               <Route path="/creator" element={<Navigate to="/yiwenlu" replace />} />
               <Route path="/scenarios" element={<RequireAuth><Scenarios /></RequireAuth>} />
               <Route path="/scenarios/:slug" element={<RequireAuth><ScenarioDetail /></RequireAuth>} />
-              {/* 立异闻：与 /rosters/:rosterId 同枝。v7 静态段优先于动态段，故 new 不会被当成 rosterId */}
+              {/* 拓印异闻：与 /rosters/:rosterId 同枝。v7 静态段优先于动态段，故 new 不会被当成 rosterId */}
               <Route path="/scenarios/:slug/rosters/new" element={<RequireAuth><ScenarioComposer /></RequireAuth>} />
               <Route path="/scenarios/:scenarioSlug/rosters/:rosterId" element={<RequireAuth><ScenarioRosterDetail /></RequireAuth>} />
               <Route path="/scenarios/:scenarioSlug/rosters/:rosterId/battle" element={<RequireAuth><ScenarioBattle /></RequireAuth>} />

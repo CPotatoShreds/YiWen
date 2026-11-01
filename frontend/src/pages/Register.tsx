@@ -4,7 +4,7 @@ import { useAuth } from "../auth";
 import { returnTo } from "../nav";
 import { InkMountains, Lantern, SealStamp, SwordsmanScene } from "../components/Ornaments";
 
-/** 注册页：邮箱 + 用户名 + 口令（邮箱为找回口令凭证，注册时不做验证）。 */
+/** 注册页：邮箱 + 用户名 + 密码（邮箱为找回密码凭证，注册时不做验证）。 */
 export default function Register() {
   const { register } = useAuth();
   const nav = useNavigate();
@@ -58,10 +58,7 @@ export default function Register() {
           </span>
           <h1>异闻录</h1>
         </div>
-        <p className="auth__sub">注册，成为下一位异闻师</p>
-        <div className="auth__gloss">
-          注册即得三座奇人空槽与一座奇术篇——立起你的奇人，写下奇术，启程较量，摇签对家。
-        </div>
+        <p className="auth__sub">成为下一位异闻师</p>
 
         {err && (
           <div className="auth-alert" role="alert">
@@ -82,9 +79,6 @@ export default function Register() {
               autoComplete="email"
               spellCheck={false}
             />
-            <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-              用于找回口令；注册时不发验证邮件。
-            </p>
           </div>
 
           <div className="field">
@@ -102,7 +96,7 @@ export default function Register() {
           </div>
 
           <div className="field">
-            <label htmlFor="reg-password">口令</label>
+            <label htmlFor="reg-password">密码</label>
             <div className="input-wrap">
               <input
                 id="reg-password"
@@ -117,7 +111,7 @@ export default function Register() {
                 type="button"
                 className="input-trail"
                 onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? "隐藏口令" : "显示口令"}
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
               >
                 {showPassword ? "隐藏" : "显示"}
               </button>
@@ -145,7 +139,7 @@ export default function Register() {
         </form>
 
         <p className="auth__foot">
-          已有名号？<Link to="/login">直接登录</Link>
+          已有账号？<Link to="/login">直接登录</Link>
         </p>
       </div>
     </div>

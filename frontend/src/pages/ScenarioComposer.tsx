@@ -9,7 +9,7 @@ type Character = { id: string; name: string; bio: string; ability_ids: string[] 
 type Ability = { id: string; name: string };
 
 /**
- * 立异闻：依托某一卷小天下集，选一位自家奇人守卷并写下给挑战者的指导。
+ * 拓印异闻：依托某一卷小天下集，选一位自家奇人守卷并写下给挑战者的指导。
  * 操作区与对战页起笔台同款（scenario-console：选人册 + 落策略的格线纸），卷的
  * slug 由路径参数给出，所以不存在「无卷可依」这一屏——读取失败按错误处理。
  */
@@ -62,7 +62,7 @@ export default function ScenarioComposer() {
   };
 
   const create = async () => {
-    if (!characterId) { setError("请先选一位守方奇人"); return; }
+    if (!characterId) { setError("请先选一位奇人"); return; }
     // 后端此处只收 UUID（scenario_domain.py:310），slug 仅用于读取，不可混用
     if (!scenario?.id) { setError("卷尚未载入，请稍候"); return; }
     setBusy(true);
@@ -91,18 +91,11 @@ export default function ScenarioComposer() {
   }
 
   return (
-    <PageShell title="立异闻" subtitle={`卷：${scenario.name}`} back={{ to: backTo, label: "返回卷" }}>
+    <PageShell title="拓印异闻" subtitle={`卷：${scenario.name}`} back={{ to: backTo, label: "返回卷" }}>
       <section className="scenario-composer panel">
         <section className="scenario-console">
           <div className="scenario-picker">
-            <div className="scenario-picker__head">
-              <span className="eyebrow">守方奇人</span>
-              <span className="scenario-picker__hint">
-                {characters === null ? "载入中" : `共 ${characters.length} 位`}
-                {characters !== null && characters.length > 4 && <span className="scenario-picker__more"> · 可滚</span>}
-              </span>
-            </div>
-            <div className="scenario-picker__list" role="radiogroup" aria-label="守方奇人">
+            <div className="scenario-picker__list" role="radiogroup" aria-label="奇人">
               {characters === null
                 ? [0, 1, 2].map((row) => <span className="scenario-picker__ghost" key={row} />)
                 : characters.map((character) => (
@@ -124,18 +117,16 @@ export default function ScenarioComposer() {
                     </label>
                   ))}
             </div>
-            {characters !== null && !characters.length ? (
+            {characters !== null && !characters.length && (
               <p className="scenario-picker__empty">
                 尚无可用奇人，先去<Link to="/yiwenlu">异闻录</Link>收录一位。
               </p>
-            ) : (
-              <p className="scenario-picker__foot">选定后仍可改，公开那一刻才算数。</p>
             )}
           </div>
 
           <div className="scenario-sheet">
             <div className="scenario-sheet__head">
-              <span className="eyebrow">指导策略</span>
+              <span className="eyebrow">策略</span>
               <span className="scenario-sheet__count">{guidance.length} / 1000</span>
             </div>
             <textarea
@@ -146,9 +137,8 @@ export default function ScenarioComposer() {
               placeholder="挑战者会读到这段提示，它决定推演时守方的应对方向；留空则不设指导。"
             />
             <div className="scenario-sheet__foot">
-              <p className="muted">立异闻即公开此卷：挑战者可随时向这位奇人发起推演。</p>
               <button className="btn btn-primary" disabled={busy || !characterId} onClick={() => void create()}>
-                {busy ? "正在立卷…" : "立异闻并公开"}
+                {busy ? "正在拓印…" : "拓印"}
               </button>
             </div>
             {error && <p className="err" role="alert">{error}</p>}

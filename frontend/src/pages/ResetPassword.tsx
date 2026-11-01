@@ -15,7 +15,7 @@ export default function ResetPassword() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (password !== confirm) {
-      setErr("两次输入的口令不一致");
+      setErr("两次输入的密码不一致");
       return;
     }
     setBusy(true);
@@ -37,11 +37,11 @@ export default function ResetPassword() {
           <span className="brand__mark">
             <SealStamp char="异" size={40} />
           </span>
-          <h1>重置口令</h1>
+          <h1>重置密码</h1>
         </div>
         {done ? (
           <>
-            <p className="auth__sub">口令已重置，请用新口令重新登录。</p>
+            <p className="auth__sub">密码已重置，请用新密码重新登录。</p>
             <p className="auth__foot">
               <Link to="/login">前往登录</Link>
             </p>
@@ -49,7 +49,7 @@ export default function ResetPassword() {
         ) : (
           <form onSubmit={submit}>
             <div className="field">
-              <label htmlFor="rp-p">新口令</label>
+              <label htmlFor="rp-p">新密码</label>
               <input
                 id="rp-p"
                 className="input"
@@ -60,7 +60,7 @@ export default function ResetPassword() {
               />
             </div>
             <div className="field">
-              <label htmlFor="rp-p2">确认新口令</label>
+              <label htmlFor="rp-p2">确认新密码</label>
               <input
                 id="rp-p2"
                 className="input"
@@ -72,7 +72,7 @@ export default function ResetPassword() {
             </div>
             {err && <p className="err">{err}</p>}
             <button className="btn btn-primary btn-block" disabled={busy || !token || !password || !confirm}>
-              {busy ? "重置中…" : "重置口令"}
+              {busy ? "重置中…" : "重置密码"}
             </button>
           </form>
         )}
