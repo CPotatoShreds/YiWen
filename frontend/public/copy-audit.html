@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>文案统筹台 · 异闻录</title>
+<style>
+  :root {
+    --paper: #f7f2e8;
+    --paper-deep: #efe7d6;
+    --ink: #2c2620;
+    --ink-soft: #6b6154;
+    --line: #d8ccb4;
+    --accent: #a03a2a;
+    --accent-soft: #f3ded7;
+    --ok: #3d6b45;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Noto Serif SC", "Songti SC", SimSun, serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── 顶栏 ───────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper-deep);
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 17px; letter-spacing: 2px; font-weight: 700; }
+  header .hint { font-size: 12px; color: var(--ink-soft); flex: 1; }
+  header .btn {
+    font: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--ink); background: transparent;
+    padding: 5px 14px; border-radius: 3px; color: var(--ink);
+  }
+  header .btn:hover { background: var(--ink); color: var(--paper); }
+  header .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  header .btn.primary:hover { filter: brightness(1.1); }
+
+  /* ── 主区三栏 ───────────────────────── */
+  #main { flex: 1; display: flex; min-height: 0; }
+
+  nav {
+    width: 230px; flex-shrink: 0; overflow-y: auto;
+    border-right: 1px solid var(--line);
+    padding: 12px 10px 24px;
+    background: var(--paper-deep);
+  }
+  nav .group { font-size: 11px; color: var(--ink-soft); letter-spacing: 3px; margin: 14px 6px 6px; }
+  nav .group:first-child { margin-top: 2px; }
+  nav button.page {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--ink);
+    background: transparent; border: 1px solid transparent;
+    border-radius: 4px; padding: 7px 10px; margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  nav button.page small { display: block; color: var(--ink-soft); font-size: 11px; }
+  nav button.page:hover { background: var(--accent-soft); }
+  nav button.page.active { border-color: var(--accent); background: var(--accent-soft); }
+  nav button.page .ops { float: right; font-size: 11px; color: var(--accent); }
+
+  #stage { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #e8e0cf; }
+  #stageBar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 14px; font-size: 12px; color: var(--ink-soft);
+    border-bottom: 1px solid var(--line); background: var(--paper);
+    flex-shrink: 0;
+  }
+  #stageBar .url { font-family: Consolas, monospace; }
+  #stageBar .mode {
+    margin-left: auto; display: flex; align-items: center; gap: 6px;
+    cursor: pointer; font-size: 12px; color: var(--ink); user-select: none;
+  }
+  #frameWrap { flex: 1; position: relative; min-height: 0; }
+  #frame { width: 100%; height: 100%; border: 0; background: #fff; }
+  #frameMask {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    color: var(--ink-soft); font-size: 14px; letter-spacing: 2px;
+    background: var(--paper);
+  }
+  #frameMask.show { display: flex; }
+
+  aside {
+    width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
+    border-left: 1px solid var(--line); background: var(--paper-deep);
+    min-height: 0;
+  }
+  #editor { padding: 16px; border-bottom: 1px solid var(--line); }
+  #editor .empty { font-size: 13px; color: var(--ink-soft); line-height: 1.8; }
+  #editor .tag { font-size: 11px; color: var(--ink-soft); font-family: Consolas, monospace; margin-bottom: 6px; word-break: break-all; }
+  #editor textarea {
+    width: 100%; min-height: 110px; font: inherit; font-size: 14px;
+    line-height: 1.7; padding: 8px; resize: vertical;
+    border: 1px solid var(--ink-soft); border-radius: 3px;
+    background: #fffdf8; color: var(--ink);
+  }
+  #editor .row { display: flex; gap: 8px; margin-top: 10px; }
+  #editor .row button {
+    flex: 1; font: inherit; font-size: 13px; padding: 7px 0; cursor: pointer;
+    border-radius: 3px; border: 1px solid var(--ink);
+  }
+  #editor .apply { background: var(--ink); color: var(--paper); }
+  #editor .del { background: transparent; color: var(--accent); border-color: var(--accent) !important; }
+  #editor .restore { background: transparent; }
+  #editor .done { font-size: 12px; color: var(--ok); margin-top: 8px; }
+
+  #opsHead {
+    padding: 10px 16px 6px; font-size: 12px; letter-spacing: 2px;
+    color: var(--ink-soft); display: flex; align-items: center;
+  }
+  #opsHead button { margin-left: auto; font: inherit; font-size: 11px; cursor: pointer; background: none; border: none; color: var(--accent); }
+  #ops { flex: 1; overflow-y: auto; padding: 0 16px 24px; font-size: 12px; }
+  .op { border-left: 3px solid var(--line); padding: 6px 10px; margin-bottom: 8px; background: #fffdf8; border-radius: 0 3px 3px 0; }
+  .op .op-page { color: var(--ink-soft); font-size: 11px; word-break: break-all; }
+  .op .op-act { font-weight: 700; margin: 2px 0; }
+  .op .op-act.edit { color: var(--accent); }
+  .op .op-act.hide { color: #888; text-decoration: line-through; }
+  .op .op-text { line-height: 1.6; word-break: break-all; }
+  .op .op-new { color: var(--accent); }
+  .op:hover { border-left-color: var(--accent); cursor: pointer; }
+  .op .undo { float: right; font-size: 11px; color: var(--ink-soft); cursor: pointer; }
+  .op .undo:hover { color: var(--accent); }
+
+  /* ── 导出弹层 ───────────────────────── */
+  #exportLayer {
+    position: fixed; inset: 0; background: rgba(40,34,26,.5);
+    display: none; align-items: center; justify-content: center; z-index: 99;
+  }
+  #exportLayer.show { display: flex; }
+  #exportBox {
+    width: min(720px, 90vw); max-height: 84vh; display: flex; flex-direction: column;
+    background: var(--paper); border: 1px solid var(--ink); border-radius: 4px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35);
+  }
+  #exportBox h2 { font-size: 15px; padding: 14px 18px 8px; letter-spacing: 2px; }
+  #exportBox pre {
+    flex: 1; overflow: auto; margin: 0 18px 12px; padding: 12px;
+    background: #fffdf8; border: 1px solid var(--line); border-radius: 3px;
+    font: 12px/1.7 Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+  }
+  #exportBox .foot { display: flex; gap: 10px; padding: 0 18px 16px; }
+  #exportBox .foot button { flex: 1; font: inherit; font-size: 13px; padding: 8px 0; cursor: pointer; border: 1px solid var(--ink); border-radius: 3px; background: var(--ink); color: var(--paper); }
+  #exportBox .foot button.ghost { background: transparent; color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="fileWarn" style="display:none;position:sticky;top:0;z-index:98;padding:10px 18px;background:#a03a2a;color:#fff;font-size:13px;">
+  ⚠ 你是直接打开的本地文件，页面无法加载也无法编辑。请
+  <a id="fileWarnLink" href="http://localhost:5174/copy-audit.html" style="color:#ffe9a8;text-decoration:underline;">点此通过开发服务器打开 http://localhost:5174/copy-audit.html</a>
+</div>
+
+<header>
+  <h1>文案统筹台</h1>
+  <span class="hint">点选页面文字 → 右侧改字 / 删除 → 全部操作可导出清单交回源码修改。Esc 取消选中。编辑模式下页面内点击、链接、按钮均已被拦截，滚轮正常。</span>
+  <button class="btn" id="btnOverview">总览</button>
+  <button class="btn primary" id="btnExport">导出清单</button>
+</header>
+
+<div id="main">
+  <nav id="nav"></nav>
+  <div id="stage">
+    <div id="stageBar">
+      <span class="url" id="curUrl">—</span>
+      <label class="mode"><input type="checkbox" id="editOn" checked /> 编辑模式</label>
+    </div>
+    <div id="frameWrap">
+      <iframe id="frame" title="页面预览"></iframe>
+      <div id="frameMask">← 从左侧选一页开始</div>
+    </div>
+  </div>
+  <aside>
+    <div id="editor"><div class="empty">在页面中点击任意文字即可选中。<br/>· 「替换」只改这一个元素的字样<br/>· 「隐藏」相当于删除该文字块<br/>· 所有动作都记在下方，可导出</div></div>
+    <div id="opsHead">操作记录<span id="opCount"></span><button id="btnClear">清空</button></div>
+    <div id="ops"></div>
+  </aside>
+</div>
+
+<div id="exportLayer">
+  <div id="exportBox">
+    <h2>文案改动清单</h2>
+    <pre id="exportPre"></pre>
+    <div class="foot">
+      <button id="btnCopy">复制全文</button>
+      <button id="btnDownload">下载 .md</button>
+      <button class="ghost" id="btnClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ── 页面清单 ─────────────────────────── */
+const PAGES = [
+  { group: "门面", name: "首页", url: "/home" },
+  { group: "门面", name: "我的", url: "/me" },
+  { group: "门面", name: "异闻录（人物·奇术）", url: "/yiwenlu" },
+  { group: "门面", name: "试炼列表", url: "/scenarios" },
+  { group: "门面", name: "设置", url: "/settings" },
+  { group: "试炼流程", name: "立异闻（选人开卷）", url: "/scenarios/feng-hou-juan/rosters/new" },
+  { group: "试炼流程", name: "卷宗详情（动态 slug）", url: "/scenarios", dyn: "进列表后点入任一卷宗" },
+  { group: "试炼流程", name: "守方卷宗（动态 roster）", url: "/scenarios", dyn: "进列表后点入任一名册" },
+  { group: "试炼流程", name: "对局页（动态 roster）", url: "/scenarios", dyn: "点入名册后进对局" },
+  { group: "试炼流程", name: "记录阅读页（动态 roster）", url: "/scenarios", dyn: "点入名册后看记录" },
+  { group: "认证", name: "登录", url: "/login" },
+  { group: "认证", name: "注册", url: "/register" },
+  { group: "认证", name: "忘记密码", url: "/forgot-password" },
+  { group: "认证", name: "重置密码", url: "/reset-password" },
+  { group: "认证", name: "邮箱验证", url: "/verify-email" },
+  { group: "认证", name: "用户条款", url: "/terms" },
+  { group: "认证", name: "隐私政策", url: "/privacy" },
+  { group: "管理", name: "管理后台", url: "/admin" },
+  { group: "管理", name: "用户管理", url: "/admin/users" },
+  { group: "管理", name: "奇术管理", url: "/admin/abilities" },
+  { group: "管理", name: "流量监控", url: "/admin/traffic" },
+  { group: "管理", name: "异闻管理", url: "/admin/scenarios" },
+];
+
+/* ── 状态 ─────────────────────────────── */
+const LS_KEY = "copy-audit-ops-v1";
+const $ = (s) => document.querySelector(s);
+const frame = $("#frame");
+// file:// 直开会因跨源无法注入编辑器：统一锚定 dev 服务器源
+const SAME_ORIGIN = location.protocol !== "file:";
+const ORIGIN = SAME_ORIGIN ? location.origin : "http://localhost:5174";
+if (!SAME_ORIGIN) {
+  const warn = $("#fileWarn");
+  warn.style.display = "block";
+  warn.querySelector("a").href = ORIGIN + "/copy-audit.html";
+}
+let ops = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+let selected = null;          // 当前选中的 iframe 元素
+let currentPage = null;       // 当前页面配置
+
+function saveOps() { localStorage.setItem(LS_KEY, JSON.stringify(ops)); renderNav(); renderOps(); }
+
+/* ── 左栏导航 ─────────────────────────── */
+function renderNav() {
+  const nav = $("#nav");
+  nav.innerHTML = "";
+  let lastGroup = null;
+  for (const p of PAGES) {
+    if (p.group !== lastGroup) {
+      lastGroup = p.group;
+      const g = document.createElement("div");
+      g.className = "group"; g.textContent = p.group;
+      nav.appendChild(g);
+    }
+    const b = document.createElement("button");
+    b.className = "page" + (currentPage === p ? " active" : "");
+    const count = ops.filter(o => o.pageName === p.name).length;
+    b.innerHTML = p.name + (count ? `<span class="ops">${count}</span>` : "") +
+      `<small>${p.dyn ? "自由导航 · " + p.dyn : p.url}</small>`;
+    b.onclick = () => openPage(p);
+    nav.appendChild(b);
+  }
+}
+
+/* ── 打开页面 ─────────────────────────── */
+function openPage(p) {
+  currentPage = p;
+  deselect();
+  $("#frameMask").classList.add("show");
+  $("#curUrl").textContent = p.dyn ? `${p.url}（${p.dyn}）` : p.url;
+  frame.src = ORIGIN + p.url;
+  renderNav();
+}
+
+frame.addEventListener("load", () => {
+  $("#frameMask").classList.remove("show");
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body || !frame.contentWindow.location.href.startsWith(ORIGIN)) {
+      throw new Error("cross-origin");
+    }
+    const href = frame.contentDocument.location.pathname + frame.contentDocument.location.search;
+    if (currentPage && currentPage.dyn) $("#curUrl").textContent = href;
+    inject();
+  } catch (e) {
+    // 跨源（如 file:// 直开）：预览可见但编辑不可用
+    $("#curUrl").textContent = "（跨源预览：编辑不可用，请通过 " + ORIGIN + "/copy-audit.html 打开）";
+  }
+});
+
+/* ── iframe 注入：hover / 点选 ─────────── */
+const STYLE_ID = "__copy_audit_style__";
+const css = `
+  * { cursor: crosshair !important; }
+  [data-ca-hover] { outline: 2px dashed #a03a2a !important; outline-offset: 1px; }
+  [data-ca-sel] { outline: 2px solid #a03a2a !important; outline-offset: 1px; background: rgba(160,58,42,.12) !important; }
+`;
+
+function inject() {
+  const doc = frame.contentDocument;
+  if (!doc || !doc.body) return;
+  if (!doc.getElementById(STYLE_ID)) {
+    const st = doc.createElement("style");
+    st.id = STYLE_ID; st.textContent = css;
+    doc.head.appendChild(st);
+  }
+  // 拦截交互：点链接、按按钮、提交表单一律屏蔽；滚轮、选中复制不受影响
+  doc.addEventListener("click", onClick, true);
+  doc.addEventListener("submit", (e) => e.preventDefault(), true);
+  doc.addEventListener("mouseover", onOver, true);
+  doc.addEventListener("mouseout", onOut, true);
+  doc.addEventListener("keydown", (e) => { if (e.key !== "F5") e.preventDefault(); }, true);
+}
+
+/** 找“直接持有文本”的最近元素：文本节点的父级优先，向上最多 3 层 */
+function textHolder(node) {
+  let el = node.nodeType === 3 ? node.parentElement : node;
+  if (!el) return null;
+  if (!el.textContent.trim()) return null;
+  for (let i = 0; i < 3 && el; i++) {
+    const direct = Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim());
+    if (direct) return el;
+    if (el.children.length > 2) break; // 别一路吞到大容器
+    el = el.parentElement;
+  }
+  return node.parentElement;
+}
+
+function cssPath(el, doc) {
+  const parts = [];
+  let cur = el;
+  while (cur && cur.nodeType === 1 && parts.length < 8) {
+    let sel = cur.tagName.toLowerCase();
+    if (cur.id) { parts.unshift(sel + "#" + cur.id); break; }
+    const parent = cur.parentElement;
+    if (parent) {
+      const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+      if (same.length > 1) sel += `:nth-of-type(${same.indexOf(cur) + 1})`;
+    }
+    parts.unshift(sel);
+    cur = parent;
+  }
+  return parts.join(" > ");
+}
+
+function onOver(e) {
+  const doc = frame.contentDocument;
+  doc.querySelectorAll("[data-ca-hover]").forEach(n => n.removeAttribute("data-ca-hover"));
+  const el = textHolder(e.target);
+  if (el && el !== selected) el.setAttribute("data-ca-hover", "1");
+}
+function onOut(e) {
+  const el = textHolder(e.target);
+  if (el) el.removeAttribute("data-ca-hover");
+}
+function onClick(e) {
+  if (!$("#editOn").checked) return;
+  e.preventDefault(); e.stopPropagation();
+  const el = textHolder(e.target);
+  if (!el) return;
+  select(el);
+}
+
+/* ── 右栏编辑器 ───────────────────────── */
+function select(el) {
+  deselect();
+  selected = el;
+  el.setAttribute("data-ca-sel", "1");
+  const text = Array.from(el.childNodes)
+    .filter(n => n.nodeType === 3).map(n => n.textContent).join("").trim();
+  const path = cssPath(el, frame.contentDocument);
+  el.__ca = { path, original: text };
+  $("#editor").innerHTML = `
+    <div class="tag">${path}</div>
+    <textarea id="editText">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</textarea>
+    <div class="row">
+      <button class="apply" id="btnApply">替换字样</button>
+      <button class="del" id="btnDel">隐藏</button>
+    </div>
+    <div class="row"><button class="restore" id="btnCancel">取消选中</button></div>
+    <div class="done" id="editDone"></div>`;
+  $("#btnApply").onclick = () => applyEdit(text);
+  $("#btnDel").onclick = () => applyHide();
+  $("#btnCancel").onclick = deselect;
+  $("#editText").focus();
+}
+
+function deselect() {
+  if (selected) { selected.removeAttribute("data-ca-sel"); selected = null; }
+  $("#editor").innerHTML = `<div class="empty">在页面中点击任意文字即可选中。<br/>· 「替换」只改这一个元素的字样<br/>· 「隐藏」相当于删除该文字块<br/>· 所有动作都记在下方，可导出</div>`;
+}
+
+function pageLabel() {
+  if (!currentPage) return "未知页面";
+  const href = (() => { try { return frame.contentDocument.location.pathname; } catch { return currentPage.url; } })();
+  return `${currentPage.name}（${href}）`;
+}
+
+function applyEdit(original) {
+  const next = $("#editText").value.trim();
+  if (!next || next === original) return;
+  // 只替换第一个直接文本节点，保留其余子元素（插值、按钮等）
+  const node = Array.from(selected.childNodes).find(n => n.nodeType === 3 && n.textContent.trim());
+  if (node) node.textContent = node.textContent.replace(original, next);
+  ops.push({ pageName: currentPage.name, page: pageLabel(), act: "edit", sel: selected.__ca.path, from: original, to: next, t: Date.now() });
+  $("#editDone").textContent = "✓ 已替换（仅本次预览，源码待改）";
+  saveOps();
+}
+
+function applyHide() {
+  const text = selected.__ca.original;
+  selected.style.display = "none";
+  ops.push({ pageName: currentPage.name, page: pageLabel(), act: "hide", sel: selected.__ca.path, from: text, t: Date.now() });
+  deselect();
+  saveOps();
+}
+
+/* ── 操作记录 ─────────────────────────── */
+function renderOps() {
+  const box = $("#ops");
+  const list = [...ops].reverse();
+  $("#opCount").textContent = list.length ? `（${list.length}）` : "";
+  if (!list.length) { box.innerHTML = `<div style="color:var(--ink-soft);font-size:12px;">暂无操作</div>`; return; }
+  box.innerHTML = "";
+  for (const o of list) {
+    const div = document.createElement("div");
+    div.className = "op";
+    div.innerHTML = `
+      <span class="undo" title="撤销这条记录（页面需重载才复原）">撤销</span>
+      <div class="op-page">${o.page}</div>
+      <div class="op-act ${o.act}">${o.act === "edit" ? "改字" : "隐藏"}</div>
+      <div class="op-text">${esc(o.from)}${o.act === "edit" ? ` <span class="op-new">→ ${esc(o.to)}</span>` : ""}</div>`;
+    div.querySelector(".undo").onclick = (ev) => {
+      ev.stopPropagation();
+      ops = ops.filter(x => x !== o);
+      saveOps();
+    };
+    div.onclick = () => { try { locate(o.sel); } catch {} };
+    box.appendChild(div);
+  }
+}
+
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+/** 按 css 路径在 iframe 中找回元素并选中 */
+function locate(path) {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  let el = null;
+  try { el = doc.querySelector(path); } catch { return; }
+  if (el) select(el);
+}
+
+/* ── 导出 ─────────────────────────────── */
+function buildMarkdown() {
+  const byPage = new Map();
+  for (const o of ops) {
+    if (!byPage.has(o.page)) byPage.set(o.page, []);
+    byPage.get(o.page).push(o);
+  }
+  let md = `# 文案改动清单\n\n> 生成于 ${new Date().toLocaleString("zh-CN")}，共 ${ops.length} 条。逐条落到前端源码。\n`;
+  for (const [page, list] of byPage) {
+    md += `\n## ${page}\n\n`;
+    list.forEach((o, i) => {
+      md += `${i + 1}. **${o.act === "edit" ? "改字" : "删除"}** \`${o.sel}\`\n   - 原文：${o.from}\n`;
+      if (o.act === "edit") md += `   - 改为：${o.to}\n`;
+    });
+  }
+  return md;
+}
+
+$("#btnExport").onclick = () => {
+  $("#exportPre").textContent = ops.length ? buildMarkdown() : "（暂无操作记录）";
+  $("#exportLayer").classList.add("show");
+};
+$("#btnClose").onclick = () => $("#exportLayer").classList.remove("show");
+$("#exportLayer").onclick = (e) => { if (e.target === $("#exportLayer")) $("#exportLayer").classList.remove("show"); };
+$("#btnCopy").onclick = async () => {
+  await navigator.clipboard.writeText($("#exportPre").textContent);
+  $("#btnCopy").textContent = "已复制 ✓";
+  setTimeout(() => ($("#btnCopy").textContent = "复制全文"), 1200);
+};
+$("#btnDownload").onclick = () => {
+  const blob = new Blob([$("#exportPre").textContent], { type: "text/markdown;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "文案改动清单.md";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+$("#btnClear").onclick = () => {
+  if (!ops.length) return;
+  if (confirm("清空全部操作记录？（页面预览不会复原，刷新页面即可）")) { ops = []; saveOps(); }
+};
+$("#btnOverview").onclick = () => { currentPage = null; deselect(); frame.src = "about:blank"; $("#frameMask").classList.add("show"); $("#curUrl").textContent = "—"; renderNav(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { deselect(); $("#exportLayer").classList.remove("show"); } });
+$("#editOn").onchange = (e) => { if (!e.target.checked) deselect(); };
+
+renderNav();
+renderOps();
+</script>
+</body>
+</html>
