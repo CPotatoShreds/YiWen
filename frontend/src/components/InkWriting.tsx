@@ -194,10 +194,8 @@ export function InkWriting() {
       window.clearTimeout(resizeTimer);
       observer.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
-      if (scroller) {
-        scroller.removeEventListener("scroll", onScroll);
-        scroller.scrollTop = 0;
-      }
+      // 不复位滚动位置：成卷时占位卸载，读者正读到哪里就该留在哪里
+      if (scroller) scroller.removeEventListener("scroll", onScroll);
     };
   }, []);
 

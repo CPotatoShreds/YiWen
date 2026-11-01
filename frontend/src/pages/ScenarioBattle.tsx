@@ -3,8 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { streamEvents } from "../sse";
 import { startScenarioChallenge } from "../scenarioChallenge";
-import { SealStamp } from "../components/Ornaments";
-import { BookIcon, RefreshIcon, XIcon } from "../components/icons";
+import { BookIcon, ChevronLeftIcon, RefreshIcon } from "../components/icons";
 import { ScenarioManuscript } from "../components/ScenarioNarrative";
 import { InkWriting } from "../components/InkWriting";
 import { BackButton } from "../components/PageShell";
@@ -419,8 +418,9 @@ export default function ScenarioBattle() {
 
   // 推演没有中间节点可标：占位动画自首字到达即撤（正文接管后不必再演）
   const showVeil = !!currentId && !failed && stage !== "result" && !liveDeduction && !liveOwn;
-  // 左轨只剩终局与错误；其余时候不占那 196–236px 的空列
-  const rail = stage === "result" || !!error;
+  // 成卷/出错时的旁注卡片：绝对定位在纸页右缘留白上，纸页自身一像素不动——
+  // 不再像旧版那样切换左轨把纸页挤窄（那会让正文重排、滚动位置作废）
+  const adjourn = (stage === "result" && !!challenge) || !!error;
   // 就绪态对内只存活一个轮询周期（自动提交），对外文案已并入「推演中」，配色跟着走
   const pillStage: Stage = currentId && stage === "ready" ? "thinking" : stage;
 
@@ -447,42 +447,7 @@ export default function ScenarioBattle() {
       {view === "booting" ? (
         <div className="skeleton" style={{ height: 420, margin: 24 }} />
       ) : view === "book" ? (
-        <div className={`scenario-book${rail ? "" : " is-solo"}`}>
-          {rail && (
-            <aside className="scenario-rail">
-              {stage === "result" && challenge && (
-                <div className={`scenario-result ${challenge.won ? "is-won" : "is-lost"}`}>
-                  <span className="scenario-result__seal">
-                    <SealStamp char={challenge.won ? "胜" : "负"} size={40} />
-                  </span>
-                  <div className="scenario-result__body">
-                    <strong>
-                      {challenge.won ? "本次推演：对局目标已达成" : "本次推演：对局目标未达成"}
-                    </strong>
-                    {challenge.derived?.reason && <p>{challenge.derived.reason}</p>}
-                    {!owner && !challenge.is_preview && !challenge.god_unlocked && (
-                      <p className="muted">待你看破这条异闻的全部奇术，推演全文会在书页上开启。</p>
-                    )}
-                    <div className="scenario-result__actions">
-                      <button className="btn btn-primary" onClick={restart}>
-                        <RefreshIcon size={15} />
-                        换策略再推演
-                      </button>
-                      <Link className="btn btn-ghost" to={`${recordsHref}?run=${challenge.id}`}>
-                        <BookIcon size={15} />
-                        回看本局
-                      </Link>
-                      <Link className="btn btn-ghost" to={backHref}>
-                        <XIcon size={15} />
-                        返回详情
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {error && <p className="err">{error}</p>}
-            </aside>
-          )}
+        <div className="scenario-book">
           <ScenarioManuscript
             variant="book"
             messages={challenge?.messages ?? []}
@@ -495,6 +460,28 @@ export default function ScenarioBattle() {
             runningHead={{ left: context.scenario.name, right: preview ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
             folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
           />
+          {adjourn && (
+            <aside
+              className={`scenario-adjourn${
+                stage === "result" && challenge ? (challenge.won ? " is-won" : " is-lost") : ""
+              }`}
+            >
+              {stage === "result" && challenge && (
+                <span className="scenario-adjourn__seal">{challenge.won ? "胜" : "败"}</span>
+              )}
+              {error && <p className="err">{error}</p>}
+              <div className="scenario-adjourn__actions">
+                <button className="btn btn-primary" onClick={restart}>
+                  <RefreshIcon size={14} />
+                  再战
+                </button>
+                <Link className="btn btn-ghost" to={backHref}>
+                  <ChevronLeftIcon size={14} />
+                  返回
+                </Link>
+              </div>
+            </aside>
+          )}
         </div>
       ) : (
         <>
