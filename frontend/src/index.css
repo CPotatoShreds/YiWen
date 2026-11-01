@@ -1746,7 +1746,7 @@ button.codex__slot:hover svg { transform: translateX(2px); }
   --lh: 38px;
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--lh) max(4px, calc((100% - 62ch) / 2));
+  padding: var(--lh) max(4px, calc((100% - 80ch) / 2));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -1760,31 +1760,11 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-manuscript--book .ink-entry p + p { margin-top: 0; }
 .scenario-manuscript--book .ink-entry--god { padding: 0; border-left: 0; background: none; }
 
-/* 推演占位：三道墨线先后落笔，第三道只走到半途便停笔，随后整体转呼吸。
-   纯 CSS 驱动、零计时器——卸载即停，不会留下需要清理的 interval。
-   时间轴：0–15s 第一行 · 14–35s 第二行（1s 交叠，像连续行笔）· 35–45s 第三行停在 55%
-   · 45s 起呼吸。行高吃 --lh，与书页格线同节奏。 */
-.scenario-veil { display: grid; align-content: start; animation: veil-breathe 4.2s ease-in-out 45s infinite; }
-.scenario-veil span { position: relative; display: block; height: var(--lh, 38px); }
-.scenario-veil span::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  height: 2px;
-  border-radius: 1px;
-  background: linear-gradient(90deg, rgba(var(--ink-rgb), .34), rgba(var(--ink-rgb), .13));
-  transform: scaleX(0);
-  transform-origin: left center;
-  animation-timing-function: cubic-bezier(.25, .7, .3, 1);
-  animation-fill-mode: both;
-}
-.scenario-veil span:nth-child(1)::before { width: 68%; animation-name: veil-write; animation-duration: 15s; }
-.scenario-veil span:nth-child(2)::before { width: 84%; animation-name: veil-write; animation-duration: 21s; animation-delay: 14s; }
-.scenario-veil span:nth-child(3)::before { width: 76%; animation-name: veil-write-half; animation-duration: 10s; animation-delay: 35s; }
-@keyframes veil-write { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes veil-write-half { from { transform: scaleX(0); } to { transform: scaleX(.55); } }
-@keyframes veil-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+/* 推演占位：一段自己往下写的墨迹（算法见 inkScene.ts）。
+   容器只负责裁切与高度——高度由组件按「已写行数 × --lh」写在内联样式上，
+   所以滚动条按真实内容长度出现，而画布可以预留比可见区域更高的后备高度。 */
+.scenario-veil { position: relative; overflow: hidden; }
+.scenario-veil canvas { position: absolute; inset: 0 0 auto 0; display: block; width: 100%; }
 
 /* 终局落在左轨：印章在上，理由可滚，操作竖排 */
 .scenario-rail .scenario-result { flex-direction: column; gap: 12px; margin: 0; padding: 14px; border-color: var(--line-strong); }
@@ -1824,7 +1804,4 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 @media (prefers-reduced-motion: reduce) {
   .scenario-challenge.is-draft > .scenario-info, .scenario-challenge.is-draft > .scenario-divider, .scenario-challenge.is-draft > .scenario-console,
   .scenario-challenge.is-book .scenario-book { animation: none; }
-  /* 占位停成静态：三道线按最终长度压淡，不再生长也不再呼吸 */
-  .scenario-veil { animation: none; opacity: .5; }
-  .scenario-veil span::before { animation: none; transform: scaleX(1); }
 }

@@ -7,34 +7,27 @@ import type { Message } from "../scenarioModel";
  * `text-indent` 只吃块内第一行，且 `white-space: pre-wrap` 会把 `\n\n` 留成一个空行——
  * 于是「首段缩进、其余不缩进、段间空一行」。这里按换行（一个或连续多个）切成独立 <p>，
  * 每段各自首行缩进两格，段间间距交给 CSS 决定（书页为 0，记录页约一行）。
+ *
+ * 模型会用最朴素的 Markdown：`**加粗**` 与行首 `* ` 列表符。书页不做整排 Markdown，
+ * 只把成对 `**…**` 转成强调、剥掉行首列表符；不成对的记号原样保留——流式途中
+ * 半截记号先到属正常，补齐后半自然成形。
  */
 function Prose({ text }: { text: string }) {
   const paragraphs = text
     .split(/\n+/)
-    .map((line) => line.trim())
+    .map((line) => line.trim().replace(/^[*•-]\s+/, ""))
     .filter(Boolean);
   if (!paragraphs.length) return null;
   return (
     <>
       {paragraphs.map((line, index) => (
-        <p key={index}>{line}</p>
+        <p key={index}>
+          {line.split(/\*\*([^*]+)\*\*/g).map((part, i) =>
+            i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
+          )}
+        </p>
       ))}
     </>
-  );
-}
-
-/**
- * 推演占位：三道墨线先后写过去，第三道只走到一半便停笔，随后整体转呼吸。
- * 纯 CSS 驱动、零计时器——React 卸载即等于「停」，无需清理逻辑。契约上明说「在写，没写完」，
- * 故不宣称完成；观感上是一条正在落墨的纸页，而非通用骨架屏。
- */
-export function ScenarioVeil() {
-  return (
-    <div className="scenario-veil" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-    </div>
   );
 }
 

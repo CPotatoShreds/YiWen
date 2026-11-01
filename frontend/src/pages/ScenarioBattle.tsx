@@ -5,7 +5,8 @@ import { streamEvents } from "../sse";
 import { startScenarioChallenge } from "../scenarioChallenge";
 import { SealStamp } from "../components/Ornaments";
 import { BookIcon, RefreshIcon, XIcon } from "../components/icons";
-import { ScenarioManuscript, ScenarioVeil } from "../components/ScenarioNarrative";
+import { ScenarioManuscript } from "../components/ScenarioNarrative";
+import { InkWriting } from "../components/InkWriting";
 import { BackButton } from "../components/PageShell";
 import {
   STAGE_TEXT,
@@ -489,7 +490,7 @@ export default function ScenarioBattle() {
             ownLabel={ownLabel}
             liveText={liveOwn}
             liveDeduction={liveDeduction}
-            placeholder={showVeil ? <ScenarioVeil /> : undefined}
+            placeholder={showVeil ? <InkWriting /> : undefined}
             emptyText=""
             runningHead={{ left: context.scenario.name, right: preview ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
             folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
