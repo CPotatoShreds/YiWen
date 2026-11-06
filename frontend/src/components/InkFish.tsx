@@ -203,7 +203,7 @@ class Koi {
     this.body.pop();
     this.body.unshift({ ...p });
   }
-  drawBody(ctx: CanvasRenderingContext2D, shadow: boolean, shadowOff: number) {
+  drawBody(ctx: CanvasRenderingContext2D, shadow: boolean, shadowOff = 0) {
     const o = this.pond.o;
     for (let index = 0; index < this.bodyLength; index++) {
       const b = this.body[index];

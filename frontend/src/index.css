@@ -963,6 +963,60 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-strategy-composer .btn { justify-self: end; }
 .scenario-guess-composer .input { width: 100%; min-height: 42px; }
 
+/* 异闻录工作台：桌面端整页锚定视口——页面不滚动，两栏各自内滚。
+   左栏满列高（名册内滚），右栏卷面占满并重新分配富余空间；
+   页脚山影收紧让整屏恰好放下。（:has 限定异闻录页；≤960px 保持页面滚动） */
+@media (min-width: 961px) {
+  /* 版心必须显式撑满：父容器转成 flex 后，margin-inline:auto 会变成
+     「自动外边距」，按规范取消 align-self:stretch，元素于是收缩成内容宽度
+     （实测从 1180 掉到 826，整页成了窄长条）。 */
+  .page-shell:has(.codex__body) { width: 100%; }
+
+  .app:has(.codex__body) { height: 100dvh; overflow: hidden; }
+  main.container:has(.codex__body) { display: flex; flex-direction: column; min-height: 0; padding-bottom: 0; }
+  .app:has(.codex__body) .ink-footer { flex: none; margin-top: 0; }
+  .app:has(.codex__body) .ink-footer__hills { height: 56px; }
+  .page-shell:has(.codex__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .page-shell:has(.codex__body) > .cloud-divider { flex: none; margin-top: 18px; }
+  /* 两栏撑满可用高度，但不无限拉伸：超大屏（2K/4K）上整块工作台止于
+     900px，多出来的高度留在纸底，而不是把卷面撑成一张又高又空的大纸
+     （实测 2560×1440 下卷面会被拉到 1208px）。注意必须用 flex:1 而不是
+     height:100%——后者不扣页头，会把两栏顶出页脚。 */
+  .codex__body { flex: 1 1 auto; max-height: 900px; min-height: 0; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+  /* grid / flex 子项默认 min-height:auto，内容一多就撑破父容器——
+     整页被 overflow:hidden 裁掉且没有滚动条（实测名册 12 项时栏高冲到 849，
+     页面底被切掉）。逐层放开收缩权限，让内滚真正生效。 */
+  .codex__rail { position: static; max-height: none; min-height: 0; }
+  .codex__list { min-height: 0; }
+  .codex__main { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+  /* 卷面：抬头 / 正文自上而下连续排布。
+     原先用 align-content:space-evenly 把富余高度摊进每一行，标题与正文
+     之间被撑出上百像素空档，整张卷面散成几块。现在内容按自然间距衔接，
+     富余留白收在正文与纸脚之间，纸脚那句提示钉在最下方。 */
+  .codex__sheet { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
+  .codex__sheet > * { flex: none; }
+  .codex__view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .codex__view > * { flex: none; }
+  .codex__view > .codex__section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .codex__view > .codex__section > .codex__hint { margin-top: auto; }
+
+  /* 编辑态：表单比一屏长时会内滚，但「收录 / 保存」原本被推到内容末尾，
+     得滚到底才看得见。把操作条钉在纸脚：卷面在此态去掉底部内边距，
+     由操作条自己撑出纸脚（否则条下方会漏出半行内容）。 */
+  .codex__sheet:has(.codex__edit) { padding-bottom: 0; }
+  .codex__edit-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin: 0 -28px;
+    padding: 13px 28px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 -12px 20px -16px rgba(47, 43, 38, 0.45);
+  }
+}
+
 /* 窄屏：抬头与操作竖排，名册折成横向条，卡片单列 */
 @media (max-width: 760px) {
   .codex__body { grid-template-columns: 1fr; gap: 13px; }
@@ -1721,15 +1775,33 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-sheet .err { margin-top: 12px; }
 
 /* ---------- 其三 · 行迹书页 ---------- */
-/* 纸页恒独占整行：成卷/出错的旁注卡片绝对定位在右缘留白上，纸页自身一像素不动——
+/* 纸页恒独占整行：成卷/出错的旁注卡片绝对定位在纸页外侧的空白带上，纸页自身一像素不动——
    旧版在此处切双栏，纸页被挤窄导致正文重排、滚动位置作废，已废。 */
 .scenario-book { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); padding: 20px 24px 24px; }
-/* 成卷旁注：贴在纸页右缘的留白带里（80ch 版心两侧的空档），右缘让开纸页滚动条 */
-.scenario-adjourn { position: absolute; top: 64px; right: 44px; z-index: 3; display: grid; justify-items: center; gap: 14px; width: 104px; padding: 18px 10px 14px; border: 1px solid var(--line-strong); background: var(--ground-2); box-shadow: 0 12px 30px rgba(var(--ink-rgb), .1); }
-.scenario-adjourn__seal { color: var(--accent-strong); font-family: var(--font-seal); font-size: 52px; line-height: 1; }
+/* 成卷旁注：浮在纸页右外侧（正文按 80ch 撑满纸内，纸里已没有空档，放纸内必压字）。
+   right 的基准是 .scenario-book 的 padding box（距纸页右缘已有 24px），
+   故 -114px 让卡片右缘距纸页 138px、左缘让开 34px；1320 视口下距屏幕右仍有 28px。
+   底色透明、只留一道虚线：卡片所在处是纸底，填任何色都会浮出一块白斑。 */
+.scenario-adjourn {
+  position: absolute;
+  top: 8px;
+  right: -114px;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: 104px;
+  padding: 15px 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  /* 只提一点亮度托住按钮：整块填色会在纸底上浮出一块白斑 */
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+  box-shadow: none;
+}
+.scenario-adjourn__seal { color: var(--accent-strong); font-family: var(--font-seal); font-size: 44px; line-height: 1; }
 .scenario-adjourn.is-lost .scenario-adjourn__seal { color: var(--muted); }
-.scenario-adjourn__actions { display: grid; gap: 7px; width: 100%; }
-.scenario-adjourn__actions .btn { width: 100%; justify-content: center; padding-inline: 6px; font-size: 12.5px; }
+.scenario-adjourn__actions { display: grid; gap: 6px; width: 100%; }
+.scenario-adjourn__actions .btn { width: 100%; justify-content: center; padding-inline: 4px; font-size: 12px; }
 .scenario-adjourn .err { margin: 0; font-size: 12px; text-align: center; }
 .scenario-manuscript--book { display: flex; flex-direction: column; height: clamp(460px, 68vh, 780px); margin: 0; padding: 0 clamp(18px, 3vw, 40px); }
 .scenario-manuscript__running, .scenario-manuscript__folio { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--muted); font-family: var(--font-seal); font-size: 11.5px; letter-spacing: .12em; }
@@ -1775,11 +1847,17 @@ button.codex__slot:hover svg { transform: translateX(2px); }
   .scenario-sheet textarea { --lh: 32px; }
   .scenario-picker__list { max-height: none; }
 }
+/* 视口放不下纸页右侧那条 122px 的空白（面板 1080 封顶，两侧各需 142px）
+   ——卡片改落纸页下方居中，纸页依旧不动。 */
+@media (max-width: 1319px) {
+  .scenario-adjourn { position: static; width: min(220px, 100%); margin: 12px auto 0; padding: 18px 12px 14px; }
+  .scenario-adjourn__seal { font-size: 52px; }
+  .scenario-adjourn__actions { gap: 7px; }
+  .scenario-adjourn__actions .btn { font-size: 12.5px; }
+}
 @media (max-width: 960px) {
   .scenario-book { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 20px; }
   .scenario-manuscript--book { height: clamp(400px, 60vh, 620px); padding-inline: 14px; }
-  /* 窄屏右缘留白放不下旁注卡片：落到纸页下方居中，纸页依旧不动 */
-  .scenario-adjourn { position: static; order: 2; width: min(220px, 100%); margin: 0 auto; }
 }
 @media (max-width: 760px) {
   .scenario-manuscript--book { padding-inline: 10px; }
