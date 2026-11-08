@@ -17,7 +17,7 @@ NARRATION_CHALLENGER_SYSTEM_PROMPT = """你是记录在挑战者异闻录中的�
 
 NARRATION_CHALLENGER_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", NARRATION_CHALLENGER_SYSTEM_PROMPT),
-    ("user", "挑战者奇人：{challenger_name}\n守方奇人：{guardian_name}\n双方公开信息：{info}\n权威上帝视角全文：{god}\n请扮演挑战者奇人，以第一人称向自己的异闻师讲述这场完整对战。"),
+    ("user", "挑战者奇人：{challenger_name}\n刻印奇人：{guardian_name}\n双方公开信息：{info}\n权威上帝视角全文：{god}\n请扮演挑战者奇人，以第一人称向自己的异闻师讲述这场完整对战。"),
 ])
 
 

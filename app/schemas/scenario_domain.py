@@ -58,7 +58,7 @@ class ChallengeOut(BaseModel):
     scenario_id: UUID
     status: str
     challenge_number: int
-    is_preview: bool = False
+    is_trial: bool = False
     created_at: datetime | None = None
 
 
@@ -78,7 +78,7 @@ class ScenarioChallengeHistoryOut(BaseModel):
     id: UUID
     status: str
     challenge_number: int
-    is_preview: bool = False
+    is_trial: bool = False
     won: bool | None = None
     guess_attempts: int = 0
     created_at: datetime | None = None
@@ -88,16 +88,9 @@ class ScenarioChallengeHistoryOut(BaseModel):
     strategy: str = ""
 
 
-class ScenarioOwnerChallengeOut(ScenarioChallengeHistoryOut):
-    challenger_id: int
-    challenger_name: str
-
-
 class ScenarioRosterDetailOut(BaseModel):
     scenario: ScenarioOut
     roster: RosterOut
     viewer_role: str
     my_progress: ScenarioRosterProgressOut | None = None
     my_challenges: list[ScenarioChallengeHistoryOut] = Field(default_factory=list)
-    owner_challenges: list[ScenarioOwnerChallengeOut] = Field(default_factory=list)
-    next_cursor: str | None = None

@@ -30,9 +30,9 @@ from app.services.nodes.scenario import (
 )
 from app.services.scenario.stream import get_scenario_stream
 from app.services.scenario.views import (
-    deduction_unlocked,
     guess_cards,
     public_verdict,
+    sees_all,
     visible_turn,
 )
 
@@ -118,7 +118,7 @@ def _failed_challenge(challenge_id: UUID, message: str, *, keep: bool = False) -
 async def run_scenario_deduction(challenge_id: UUID) -> None:
     """推演站：全知推演全文流式生成，落 deduction_text 站间 checkpoint 后扇出叙述+检定。
 
-    正文只在「本就该看见全篇」的局里直播（试炼局 / 已看破全部奇术），其余局推演期一条事件
+    正文只在「本就该看见全篇」的局里直播（挑战者就是刻印作者 / 已看破全部奇术），其余局推演期一条事件
     都不发，占位由前端自演——可见性判定与 _settle_if_ready 同一判据，避免两处口径漂移。
     """
     stream = get_scenario_stream(challenge_id)
@@ -133,12 +133,15 @@ async def run_scenario_deduction(challenge_id: UUID) -> None:
             messages = list(challenge.messages)
             comparison_report = str((challenge.derived or {}).get("comparison_report", ""))
             action = str(messages[-1].get("text", "")) if messages else ""
-            # 与 _settle_if_ready 结算侧同一条判据：试炼恒开，否则全部奇术已看破
+            # 知识状态判据：挑战者本人就是刻印作者时恒可读，否则看全破进度。
+            # 与 is_trial（只决定这一局算不算统计）无关，两者都不得互相替代。
             progress = await db.get(
                 ScenarioRosterProgress,
                 {"roster_id": challenge.roster_id, "challenger_id": challenge.challenger_id},
             )
-            god_live = challenge.is_preview or deduction_unlocked(progress, list(roster.get("abilities", [])))
+            roster_row = await db.get(ScenarioRoster, challenge.roster_id)
+            owner_view = roster_row is not None and roster_row.owner_id == challenge.challenger_id
+            god_live = sees_all(progress, list(roster.get("abilities", [])), owner_view=owner_view)
 
         action_fact = f"挑战者奇人“{challenger.get('character_name', '挑战者奇人')}”执行行动意图：\n“{action}”"
         god_kwargs = {
@@ -157,7 +160,7 @@ async def run_scenario_deduction(challenge_id: UUID) -> None:
             "action": action_fact,
         }
         # 推演流式：解锁者实时读正文（与结算后 turn.omniscient 同源，切换零跳动）；
-        # 未解锁者一条事件都不收。必须带 side——侧别过滤在 _fanout 里，守方结构上收不到。
+        # 未解锁者一条事件都不收。必须带 side——侧别过滤在 _fanout 里，刻印侧结构上收不到。
         deduction_parts: list[str] = []
         async for chunk in astream_with_reliability(
             build_scenario_deduction_llm(),
@@ -202,7 +205,7 @@ async def run_scenario_narration(challenge_id: UUID) -> None:
         info = json.dumps({"scenario": scenario, "roster": roster, "challenger": challenger}, ensure_ascii=False)
         common = {
             "challenger_name": challenger.get("character_name", "挑战者奇人"),
-            "guardian_name": roster.get("character_name", "守方奇人"),
+            "guardian_name": roster.get("character_name", "刻印奇人"),
             "opening": scenario.get("background", ""),
             "god": deduction,  # key 为提示词占位符（冻结区文本），不可改名
             "info": info,
@@ -306,12 +309,12 @@ async def _settle_if_ready(challenge_id: UUID, stream) -> None:
             if key not in {"narration_done", "judgement_done", "narration_texts", "judgement_result"}
         }
         challenge.status = "won" if achieved else "lost"
-        if not challenge.is_preview and not challenge.guess_granted:
+        if not challenge.is_trial and not challenge.guess_granted:
             progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": challenge.challenger_id})
             if progress:
                 progress.guess_credits += 3
             challenge.guess_granted = True
-        if achieved and not challenge.is_preview:
+        if achieved and not challenge.is_trial:
             progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": challenge.challenger_id})
             if progress and progress.first_victory_challenges is None:
                 progress.first_victory_challenges = progress.attempts
@@ -321,18 +324,25 @@ async def _settle_if_ready(challenge_id: UUID, stream) -> None:
                     roster_row.first_victory_avg_challenges = sum(values) / len(values)
                     roster_row.completed_count = len(values)
         roster_abilities = list(challenge.roster_snapshot.get("abilities", []))
-        roster_id, challenger_id, is_preview = challenge.roster_id, challenge.challenger_id, challenge.is_preview
+        roster_id, challenger_id = challenge.roster_id, challenge.challenger_id
         await db.commit()
 
-    # turn 按侧拆分并施推演门控：挑战者侧永远只含己方正文；推演全文仅在看破全部后携带（试炼为作者自看）
+    # turn 按侧别拆分并施推演门控：挑战者侧只含己方正文；推演全文仅在该观看者已知全部奇术后携带
     async with async_session_factory() as db:
         progress = await db.get(ScenarioRosterProgress, {"roster_id": roster_id, "challenger_id": challenger_id})
-        unlocked = is_preview or deduction_unlocked(progress, roster_abilities)
-    await stream.publish({"type": "turn", "side": "challenger", "turn": visible_turn(turn, unlocked=unlocked)}, replay=False)
-    await stream.publish(
-        {"type": "turn", "side": "guardian", "turn": {"role": "guardian", "text": guardian_view, "created_at": turn["created_at"]}},
-        replay=False,
-    )
+        roster_row = await db.get(ScenarioRoster, roster_id)
+        owner_view = roster_row is not None and roster_row.owner_id == challenger_id
+        unlocked = sees_all(progress, roster_abilities, owner_view=owner_view)
+    # 挑战者恰是刻印作者（试炼局）：两侧都是己方，side=both 的整份 turn 下发，推演与双方正文一并成卷
+    side = "both" if owner_view else "challenger"
+    challenger_turn = visible_turn(turn, side=side, unlocked=unlocked)
+    await stream.publish({"type": "turn", "side": side, "turn": challenger_turn}, replay=False)
+    if side != "both":
+        # both 局已含刻印正文，再单发一条会让同一段正文重复成卷
+        await stream.publish(
+            {"type": "turn", "side": "guardian", "turn": {"role": "guardian", "text": guardian_view, "created_at": turn["created_at"]}},
+            replay=False,
+        )
     await stream.publish({"type": "done", "status": "won" if achieved else "lost"})
 
 

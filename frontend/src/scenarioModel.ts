@@ -24,7 +24,7 @@ export type ScenarioHistoryItem = {
   id: string;
   status: string;
   challenge_number: number;
-  is_preview?: boolean;
+  is_trial?: boolean;
   won: boolean | null;
   created_at?: string;
   challenger_character_name?: string;

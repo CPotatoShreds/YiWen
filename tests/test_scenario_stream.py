@@ -69,18 +69,18 @@ async def test_view_chunk_live_only():
 
 
 async def test_side_filtering_only_delivers_matching_side():
-    """带 side 的事件只投同侧订阅者：挑战者连接收不到守方转写，反之亦然。"""
+    """带 side 的事件只投同侧订阅者：挑战者连接收不到刻印转写，反之亦然。"""
     cid = uuid.uuid4()
     channel = ScenarioChallengeStream(cid)
     challenger_queue, _ = await channel.subscribe(side="challenger")
     guardian_queue, _ = await channel.subscribe(side="guardian")
 
     await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "挑战者叙述"}, replay=False)
-    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "守方叙述"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "刻印叙述"}, replay=False)
 
     assert (await asyncio.wait_for(challenger_queue.get(), 1.0))["text"] == "挑战者叙述"
-    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["text"] == "守方叙述"
-    assert challenger_queue.empty()  # 未投递守方正文
+    assert (await asyncio.wait_for(guardian_queue.get(), 1.0))["text"] == "刻印叙述"
+    assert challenger_queue.empty()  # 未投递刻印正文
     assert guardian_queue.empty()  # 未投递挑战者正文
 
 
@@ -178,20 +178,20 @@ async def test_midway_subscribe_gets_deduction_snapshot_before_narration():
     assert snapshot[0]["text"] == "推演正文"
     assert snapshot[1]["text"] == "己方叙述"
 
-    # 守方侧不持有任何推演正文（该局未解锁时压根不会发布，这里直证缓冲按侧隔离）
+    # 刻印侧不持有任何推演正文（该局未解锁时压根不会发布，这里直证缓冲按侧隔离）
     _, guardian_snapshot = await channel.subscribe(side="guardian")
     assert guardian_snapshot == []
 
 
 async def test_view_snapshot_side_isolation():
-    """快照补发按侧隔离：challenger 订阅只拿到 challenger 累计，不含守方文本。"""
+    """快照补发按侧隔离：challenger 订阅只拿到 challenger 累计，不含刻印文本。"""
     channel = ScenarioChallengeStream(uuid.uuid4())
     await channel.publish({"type": "narration_chunk", "side": "challenger", "text": "己方"}, replay=False)
-    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "守方"}, replay=False)
+    await channel.publish({"type": "narration_chunk", "side": "guardian", "text": "刻印"}, replay=False)
     _, challenger_snapshot = await channel.subscribe(side="challenger")
     _, guardian_snapshot = await channel.subscribe(side="guardian")
     assert challenger_snapshot[0]["text"] == "己方"
-    assert guardian_snapshot[0]["text"] == "守方"
+    assert guardian_snapshot[0]["text"] == "刻印"
 
 
 async def test_cross_instance_view_snapshot():

@@ -5,7 +5,7 @@ from langchain_core.runnables import Runnable
 
 from app.services.nodes.registry import NodeSpec, build_node
 
-DEDUCTION_SYSTEM_PROMPT = """你是一位严谨公正的论战师，你将得到一个挑战场景，挑战者和防守方的相关信息（主要包括了双方拥有的奇术）和策略，你的任务是基于这些信息进行推演，判断挑战者能否顺利达成其胜利条件。
+DEDUCTION_SYSTEM_PROMPT = """你是一位严谨公正的论战师，你将得到一个挑战场景，挑战者和刻印的相关信息（主要包括了双方拥有的奇术）和策略，你的任务是基于这些信息进行推演，判断挑战者能否顺利达成其胜利条件。
 
 你是全知叙述者：可以直述双方真实行动、奇术名称、机制、限制、代价和战术意图，不隐藏信息，也不偏向任何一方。你的任务不是写悬念故事，而是依据能力和策略推演挑战者是否挑战成功。
 
@@ -32,8 +32,8 @@ DEDUCTION_TEMPLATE = ChatPromptTemplate.from_messages([
 {judgement_rules}
 挑战者信息：{challengers}
 挑战者策略：{action}
-守方信息：{defenders}
-守方策略：{brief}
+刻印信息：{defenders}
+刻印策略：{brief}
 权威奇术比对结果：{comparison_report}
 请从开场开始推演整场对战，直到可以明确判断挑战者是否达成目标，并首先检查全程是否违反规则。"""),
 ])

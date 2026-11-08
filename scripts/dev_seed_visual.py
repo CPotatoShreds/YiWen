@@ -1,6 +1,6 @@
 """开发环境视觉核验种子（一次性开发工具）：创建可登录的一套数据。
 
-产出：一个玩家账号（可登录）+ 一套「卷/阵容/进行中挑战」+ 两条已终局的挑战记录（胜/负），
+产出：一个玩家账号（可登录）+ 一套「卷/刻印/进行中挑战」+ 两条已终局的挑战记录（胜/负），
 用于在对战页与记录阅读页做视觉核验。仅用于本地开发库，勿在生产执行。
 
 用法：
@@ -65,9 +65,9 @@ async def _seed_finished_runs(roster_id: UUID, challenger_id: int) -> None:
         progress = await db.get(ScenarioRosterProgress, {"roster_id": roster_id, "challenger_id": challenger_id})
         won_turn = {
             "role": "views",
-            "challenger_text": "她压低身形沿墙根绕行，在铜铃将响未响的一线之间穿过回廊，指尖先一步触到封印正中的符眼。守方察觉时，符纸已揭。",
-            "guardian_text": "守方先以铃声诱敌，再收拢绳索，却没料到对手根本不曾踏进正廊——只留下一枚移位的蒲团与半开的窗。",
-            "omniscient": "挑战者看穿了'铃阵即防线'的预设：铃声只覆盖正廊，西侧回廊因盲区而无警戒。她在三息之间完成绕行与揭符；守方的追击路线被自己布下的铃声信息拖慢半拍，胜负在这一拍之间落定。",
+            "challenger_text": "她压低身形沿墙根绕行，在铜铃将响未响的一线之间穿过回廊，指尖先一步触到封印正中的符眼。刻印察觉时，符纸已揭。",
+            "guardian_text": "刻印先以铃声诱敌，再收拢绳索，却没料到对手根本不曾踏进正廊——只留下一枚移位的蒲团与半开的窗。",
+            "omniscient": "挑战者看穿了'铃阵即防线'的预设：铃声只覆盖正廊，西侧回廊因盲区而无警戒。她在三息之间完成绕行与揭符；刻印的追击路线被自己布下的铃声信息拖慢半拍，胜负在这一拍之间落定。",
             "achieved": True,
             "reason": "挑战者达成公开目标；全程未违反卷内最高优先级规则。",
             "created_at": (now - timedelta(hours=3)).isoformat(),
@@ -75,10 +75,10 @@ async def _seed_finished_runs(roster_id: UUID, challenger_id: int) -> None:
         lost_turn = {
             "role": "views",
             "challenger_text": "他选择正面夺门。第一道门闩比预想的沉，第二道门闩上缠了细线。他扯断细线的瞬间，堂内灯火齐灭。",
-            "guardian_text": "守方不急于出手，只让灯焰在对方掌风里退到廊柱之后，然后收网。",
-            "omniscient": "挑战者的强攻路线把主动权交给了守方预设的机关：门闩与细线本为一体，扯线即触发熄灯与落锁。挑战者在最需要视野的一瞬失去视野，未能抵达目标。",
+            "guardian_text": "刻印不急于出手，只让灯焰在对方掌风里退到廊柱之后，然后收网。",
+            "omniscient": "挑战者的强攻路线把主动权交给了刻印预设的机关：门闩与细线本为一体，扯线即触发熄灯与落锁。挑战者在最需要视野的一瞬失去视野，未能抵达目标。",
             "achieved": False,
-            "reason": "挑战者未达成公开目标；其行动触发守方预设机关后未再组织有效逼近。",
+            "reason": "挑战者未达成公开目标；其行动触发刻印预设机关后未再组织有效逼近。",
             "created_at": (now - timedelta(hours=1)).isoformat(),
         }
         rows = (await db.execute(
@@ -124,7 +124,7 @@ def main() -> int:
         owner_character = _character(owner, f"守铃{suffix[:3]}")
         roster = _must(owner.post(f"{A}/creator/scenarios/{scenario['id']}/rosters", json={
             "character_id": owner_character, "guidance": "以铃声控场，收拢退路",
-        }), "创建阵容")
+        }), "创建刻印")
 
         player_row = _register(player, player_name)
         _must(player.post(f"{A}/auth/login", json={"username": player_name, "password": PASSWORD}), "玩家登录")

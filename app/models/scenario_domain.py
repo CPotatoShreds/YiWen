@@ -1,4 +1,4 @@
-"""小天下集卷、公开阵容与单次挑战域。"""
+"""小天下集卷、公开刻印与单次挑战域。"""
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -97,18 +97,18 @@ class ScenarioRosterAbility(Base):
     __tablename__ = "scenario_roster_abilities"
     roster_id: Mapped[UUID] = mapped_column(ForeignKey("scenario_rosters.id", ondelete="CASCADE"), primary_key=True)
     position: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(10))
-    effect: Mapped[str] = mapped_column(String(50))
-    detail: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    name: Mapped[str] = mapped_column(String(50))
+    effect: Mapped[str] = mapped_column(Text)
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class ScenarioRosterRevisionAbility(Base):
     __tablename__ = "scenario_roster_revision_abilities"
     revision_id: Mapped[UUID] = mapped_column(ForeignKey("scenario_roster_revisions.id", ondelete="CASCADE"), primary_key=True)
     position: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(10))
-    effect: Mapped[str] = mapped_column(String(50))
-    detail: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    name: Mapped[str] = mapped_column(String(50))
+    effect: Mapped[str] = mapped_column(Text)
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class ScenarioChallengeRun(Base):
@@ -116,7 +116,8 @@ class ScenarioChallengeRun(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     roster_id: Mapped[UUID] = mapped_column(ForeignKey("scenario_rosters.id", ondelete="RESTRICT"), index=True)
     challenger_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
-    is_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
+    # 试炼局：发起人就是刻印作者。只表示「不计入公开统计」，不参与任何可见性判断。
+    is_trial: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     scenario_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     roster_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     challenger_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)

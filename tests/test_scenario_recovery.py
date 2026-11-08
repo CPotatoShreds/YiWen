@@ -30,7 +30,7 @@ async def _make_challenge(db, *, status: str, age_minutes: int) -> ScenarioChall
     )
     db.add(scenario)
     await db.flush()
-    roster = ScenarioRoster(scenario_id=scenario.id, owner_id=user.id, name=f"阵容{tag}", character_name="守方")
+    roster = ScenarioRoster(scenario_id=scenario.id, owner_id=user.id, name=f"刻印{tag}", character_name="刻印")
     db.add(roster)
     await db.flush()
     challenge = ScenarioChallengeRun(

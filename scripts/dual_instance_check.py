@@ -69,7 +69,7 @@ def main() -> int:
             "judgement_rules": ["以脚本断言为准"]}), "创建卷")
         _must(admin.post(f"/admin/scenarios/{scenario['id']}/publish"), "发布卷")
         roster = _must(admin.post(f"/creator/scenarios/{scenario['id']}/rosters", json={
-            "character_id": character["id"], "guidance": "守住总线"}), "创建阵容")
+            "character_id": character["id"], "guidance": "守住总线"}), "创建刻印")
 
         _register_and_login(challenger, challenger_name)
         c_ability = _must(challenger.post("/creator/abilities", json={

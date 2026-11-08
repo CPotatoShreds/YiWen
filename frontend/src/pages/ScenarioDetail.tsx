@@ -41,7 +41,7 @@ export default function ScenarioDetail() {
       icon={<ScrollIcon size={22} />}
       subtitle={scenario.subtitle}
       back={{ to: "/scenarios", label: "返回小天下集" }}
-      actions={<Link className="btn btn-primary" to={`/scenarios/${scenario.slug}/rosters/new`}>拓印异闻</Link>}
+      actions={<Link className="btn btn-primary" to={`/scenarios/${scenario.slug}/rosters/new`}>刻印奇人</Link>}
     >
     <section className="scroll-head">
       <div className="scroll-head__lead">
@@ -64,11 +64,11 @@ export default function ScenarioDetail() {
     <section className="scenario-roster-section">
       <div className="scenario-roster-section__head">
         <div>
-          <h2>异闻</h2>
+          <h2>刻印</h2>
         </div>
       </div>
       <CloudDivider />
-      <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有异闻。</p>}</div>
+      <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有刻印。</p>}</div>
     </section>
     </PageShell>
   );

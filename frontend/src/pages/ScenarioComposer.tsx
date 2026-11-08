@@ -9,7 +9,7 @@ type Character = { id: string; name: string; bio: string; ability_ids: string[] 
 type Ability = { id: string; name: string };
 
 /**
- * 拓印异闻：依托某一卷小天下集，选一位自家奇人守卷并写下给挑战者的指导。
+ * 刻印奇人：依托某一卷小天下集，选一位自家奇人守卷并写下给挑战者的指导。
  * 操作区与对战页起笔台同款（scenario-console：选人册 + 落策略的格线纸），卷的
  * slug 由路径参数给出，所以不存在「无卷可依」这一屏——读取失败按错误处理。
  */
@@ -82,7 +82,7 @@ export default function ScenarioComposer() {
       <section className="scenario-composer panel">
         <div className="empty empty--scroll composer-empty">          <EmptyScroll size={150} />
           <h3>这一卷不在架上</h3>
-          <p>它可能尚未发布、已被撤下，或链接有误。异闻必须依附于一卷小天下集，请先挑一卷。</p>
+          <p>它可能尚未发布、已被撤下，或链接有误。刻印必须依附于一卷小天下集，请先挑一卷。</p>
           {error && <p className="err" role="alert">{error}</p>}
           <Link className="btn btn-primary" to="/scenarios">浏览小天下集</Link>
         </div>
@@ -91,7 +91,7 @@ export default function ScenarioComposer() {
   }
 
   return (
-    <PageShell title="拓印异闻" subtitle={`卷：${scenario.name}`} back={{ to: backTo, label: "返回卷" }}>
+    <PageShell title="刻印奇人" subtitle={`卷：${scenario.name}`} back={{ to: backTo, label: "返回卷" }}>
       <section className="scenario-composer panel">
         <section className="scenario-console">
           <div className="scenario-picker">
@@ -134,11 +134,11 @@ export default function ScenarioComposer() {
               rows={8}
               value={guidance}
               onChange={(event) => setGuidance(event.target.value)}
-              placeholder="挑战者会读到这段提示，它决定推演时守方的应对方向；留空则不设指导。"
+              placeholder="挑战者会读到这段提示，它决定推演时刻印的应对方向；留空则不设指导。"
             />
             <div className="scenario-sheet__foot">
               <button className="btn btn-primary" disabled={busy || !characterId} onClick={() => void create()}>
-                {busy ? "正在拓印…" : "拓印"}
+                {busy ? "正在刻印…" : "刻印"}
               </button>
             </div>
             {error && <p className="err" role="alert">{error}</p>}

@@ -14,7 +14,7 @@ export default function Scenarios() {
     <PageShell
       title="小天下集"
       icon={<ScrollIcon size={22} />}
-      subtitle="阅览天下异闻师记录的异闻，使用自己的奇人奇术推演过招"
+      subtitle="阅览天下异闻师记录的刻印，使用自己的奇人奇术推演过招"
       back={{ to: "/home", label: "返回首页" }}
     >
       {error && <p className="err">{error}</p>}

@@ -58,7 +58,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 
 ### 项目定位与技术栈
 
-- `ynfight` 是“异闻录”AI 奇术对战平台（现役玩法为「小天下集」）：异闻师创建奇术、装配奇人，向公开阵容发起挑战；LLM 依据双方奇术与策略一次性推演对决并检定胜利条件，挑战者可依据推演与逐轮点评猜守方实际奇术，全部看破后解锁推演全文。
+- `ynfight` 是“异闻录”AI 奇术对战平台（现役玩法为「小天下集」）：异闻师创建奇术、装配奇人，向公开刻印发起挑战；LLM 依据双方奇术与策略一次性推演对决并检定胜利条件，挑战者可依据推演与逐轮点评猜刻印实际奇术，全部看破后解锁推演全文。
 - 后端是 Python 3.12 + FastAPI + async SQLAlchemy 2.x + Pydantic v2 + Alembic，由 `uv` 管理依赖，代码主要在 `app/api/`、`app/models/`、`app/schemas/`、`app/services/`。
 - 前端是 `frontend/` 下的 React + TypeScript + Vite，使用纯 CSS（`frontend/src/index.css`），依赖由 npm 和 `frontend/package-lock.json` 管理。
 - 开发数据库默认是 Docker PostgreSQL；测试使用独立测试库。数据库结构变更必须通过 `migrations/versions/` 的 Alembic 迁移完成。
@@ -86,7 +86,7 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 
 - `app/services/nodes/`（含 `nodes/ability/understanding.py`）中的推演、判定、转写、猜词与三相奇术理论提示词是用户手调内容，默认冻结；任何提示词文字、示例、约束或措辞调整必须先征得用户同意。移动文件、修正 docstring 中的模块指引不受此限，但提示词常量必须逐字节保持（迁移后用脚本比对验证）。
 - 前端遵循古镇纸墨风：宣纸暖白、暖炭墨、朱砂主色，命中态克制使用墨绿；禁止 emoji、紫蓝渐变和 Tailwind/Framer Motion，图标使用 `frontend/src/components/icons.tsx`。
-- 后端字段名和 API 路径保持英文稳定；用户可见术语遵循说书语系，完整清单见 `docs/product-design.md` 开头的术语字典（唯一真相），现役条目为：小天下集（若干卷的集合）、卷、异闻、立异闻（创建动作）、对局、推演（LLM 行迹演算）、奇术、奇人、异闻师、道出猜测、看破。原「情景/卷册/阵容/排布阵容/挑战记录」等旧称在界面文案中一律退役。
+- 后端字段名和 API 路径保持英文稳定；用户可见术语遵循说书语系，完整清单见 `docs/product-design.md` 开头的术语字典（唯一真相），现役条目为：小天下集（若干卷的集合）、卷、立卷（创建卷，落库为草稿）、奇人刻印（短称「刻印」，创建动作也叫「刻印」）、对局、推演（LLM 行迹演算）、奇术、奇人、异闻师、道出猜测、看破、挑战者 / 刻印（侧别）。原「情景/卷册/阵容/排布阵容/挑战记录/异闻（指条目时）/守方」等旧称一律退役（界面文案、代码注释、现役文档三处口径一致）——「异闻」只留在产品名「异闻录」与身份称谓「异闻师」里。
 - 不要为了“整理”删除历史字段或旧数据兼容逻辑（如存量 JSON 的“半对”判定、`snippet` 字段回退）。删列/删表类改动必须先核对模型、迁移和数据实况，并征得用户同意。
 
 ### 协作与工作区

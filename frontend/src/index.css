@@ -164,7 +164,7 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 /* ---------- 跳转的两类边（唯一出处，见 DESIGN.md「导航与跳转」） ---------- */
 /* 向上边：退回上一层。全站唯一形态 —— 34px 圆钮骑在版心左缘外。
    定位宿主由页面给：文档页是 .page-shell__lead（与标题同高），
-   异闻详情是 .roster-page、沉浸页是 .scenario-challenge（落标题上方）。 */
+   刻印详情是 .roster-page、沉浸页是 .scenario-challenge（落标题上方）。 */
 .nav-back {
   position: absolute;
   top: 0;
@@ -391,7 +391,7 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
 .scenario-roster-section__head { display: flex; align-items: baseline; justify-content: space-between; }
 .scenario-roster-section__head h2 { font-size: 18px; }
 .scenario-roster-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-/* 阵容名帖：右上淡朱晕 + 落款印 + 四栏小表 */
+/* 刻印名帖：右上淡朱晕 + 落款印 + 四栏小表 */
 .scenario-roster-card {
   position: relative;
   display: flex;
@@ -936,7 +936,7 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .codex__blank h3 { font-family: var(--font-seal); font-size: 19px; font-weight: 700; }
 .codex__blank p { max-width: 34ch; color: var(--muted); font-size: 13.5px; line-height: 1.8; }
 
-/* 创建阵容：附在卷页之下。操作区与对战页起笔台同款（scenario-console），
+/* 创建刻印：附在卷页之下。操作区与对战页起笔台同款（scenario-console），
    面板只留纸面，console 自带的内边距不再叠加 */
 .scenario-composer { margin: 28px 0 56px; padding: 10px; }
 .scenario-composer .scenario-console { padding: 6px 14px 24px; }
@@ -1375,6 +1375,26 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .admin-search { width: 190px; padding: 8px 11px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
+/* 立卷：后台唯一的长表单。宽度收进 read 档，两列用 auto-fit 自适应，不另写断点 */
+.scenario-compose { max-width: var(--width-read); }
+.scenario-compose__sheet { padding: 20px 22px 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-soft); }
+/* 两列的最小宽取 320：720 宽的视口里版心只剩 644，两列排不下就折成一列 */
+.scenario-compose__row { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 14px; }
+.scenario-compose__foot { display: flex; justify-content: flex-end; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
+
+/* 规则编辑器：一行 = 序号 + 输入 + 删除键。不设 min-height，二十行也不至于拉成一条长轴 */
+.rule-editor { margin-bottom: 14px; }
+.rule-editor__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.rule-editor__head b { font-size: 13px; color: var(--ink); }
+.rule-editor__hint { font-size: 12px; color: var(--muted); }
+.rule-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 9px; }
+.rule-row__no { flex: none; width: 16px; padding-top: 10px; text-align: right; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.rule-row__body { flex: 1; min-width: 0; }
+.rule-row__body .textarea { min-height: 0; padding: 9px 11px; }
+.rule-row__count { display: block; margin-top: 3px; text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rule-row > .btn { flex: none; margin-top: 3px; }
+.rule-editor__add { margin-top: 2px; }
+
 .endpoint-list { display: grid; gap: 13px; }
 .endpoint-row__head { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
 .endpoint-row__head .mono { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1466,8 +1486,8 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 @media (max-width: 900px) { .scenario-guess-panel { position: static; } }
 @media (max-width: 640px) { .scenario-challenge__back, .scenario-challenge__masthead { padding-inline: 16px; } .scenario-challenge__masthead { flex-direction: column; gap: 10px; } .scenario-challenge__masthead h1 { font-size: 24px; } .scenario-manuscript__body { min-height: 340px; padding-inline: 16px; } }
 
-/* ---------- 阵容详情页（roster-* 布局；色值/字体全走主题 tokens） ---------- */
-/* 异闻详情不套 PageShell（它的页头是奇人信息卡片），但返回钮要落在与文档页同一位置，
+/* ---------- 刻印详情页（roster-* 布局；色值/字体全走主题 tokens） ---------- */
+/* 刻印详情不套 PageShell（它的页头是奇人信息卡片），但返回钮要落在与文档页同一位置，
    所以这里补一个同样的定位宿主与 34px 留白带 */
 .roster-page { position: relative; padding-top: var(--back-size); max-width: var(--width-page); margin-inline: auto; display: flex; flex-direction: column; gap: 18px; }
 
@@ -1827,6 +1847,33 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .scenario-manuscript--book .ink-entry p + p { margin-top: 0; }
 .scenario-manuscript--book .ink-entry--god { padding: 0; border-left: 0; background: none; }
 
+/* 全破局（自己打自己的刻印）书页的三页签：推演 / 挑战者 / 刻印。
+   钉在书眉与正文之间，不随正文滚动——换页是在换「这一场谁眼里的经过」，不是翻页读同一篇。 */
+.scenario-panes { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
+.scenario-pane {
+  position: relative;
+  flex: 1 1 0;
+  padding: 9px 10px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-seal);
+  font-size: 13px;
+  letter-spacing: .1em;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.scenario-pane:hover { background: var(--ground-2); color: var(--ink); }
+.scenario-pane:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.scenario-pane.is-active { border-bottom-color: var(--accent); color: var(--accent-strong); }
+/* 其余页已进正文而读者尚未翻过去：一粒会呼吸的墨点（不抢正文注意力） */
+.scenario-pane__mark { position: absolute; top: 9px; right: 9px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pane-mark 1.8s var(--ease) infinite; }
+@keyframes pane-mark { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+.scenario-pane__empty { color: var(--muted); font-family: var(--font-seal); font-size: 15px; letter-spacing: .08em; }
+
 /* 推演占位：一段自己往下写的墨迹（算法见 inkScene.ts）。
    容器只负责裁切与高度——高度由组件按「已写行数 × --lh」写在内联样式上，
    所以滚动条按真实内容长度出现，而画布可以预留比可见区域更高的后备高度。 */
@@ -1863,8 +1910,11 @@ button.codex__slot:hover svg { transform: translateX(2px); }
   .scenario-manuscript--book { padding-inline: 10px; }
   .scenario-manuscript--book .scenario-manuscript__body { --lh: 33px; }
   .scenario-manuscript--book .ink-entry p { font-size: 16px; }
+  /* 三页签在窄屏挤成一排：缩字距与内边距，不换行、不压字 */
+  .scenario-pane { padding-inline: 4px; font-size: 12px; letter-spacing: .04em; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scenario-challenge.is-draft > .scenario-info, .scenario-challenge.is-draft > .scenario-divider, .scenario-challenge.is-draft > .scenario-console,
   .scenario-challenge.is-book .scenario-book { animation: none; }
+  .scenario-pane__mark { animation: none; opacity: .9; }
 }

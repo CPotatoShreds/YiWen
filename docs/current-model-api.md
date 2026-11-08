@@ -6,7 +6,7 @@
 
 ## 领域边界
 
-现役玩法是小天下集。用户资产只有自己拥有的奇人和奇术，直接编辑生效，不经过发布、审核或版本控制。小天下集的卷、阵容修订和挑战快照属于玩法内容域，仍保留独立的发布/修订模型。情景在产品语义上统一称为“卷”，只有管理员可以创建和发布卷。
+现役玩法是小天下集。用户资产只有自己拥有的奇人和奇术，直接编辑生效，不经过发布、审核或版本控制。小天下集的卷、刻印修订和挑战快照属于玩法内容域，仍保留独立的发布/修订模型。情景在产品语义上统一称为“卷”，只有管理员可以创建和发布卷。
 
 传统对战、loadout、好友、排行榜、通知、提示词调试和试验场域已移除。
 
@@ -19,10 +19,10 @@
 | `characters` | `id`, `owner_id -> users.id`, `name`, `bio`, `created_at`, `updated_at` |
 | `character_abilities` | `(character_id, ability_id)` 联合主键，`position` 保证绑定顺序；接口限制最多 4 门 |
 | `scenarios` | 小天下集卷本体：`name` 卷名、`subtitle` 副名、`introduction` 介绍、`background` 背景、`rules` 最高优先级规则列表、`victory_condition` 胜利条件、`judgement_rules` 判定规则列表，状态为 `draft/published/deleted` |
-| `scenario_rosters` | 卷阵容，引用 `character_id`，并保存名称、介绍和奇术快照；不区分官方/玩家 |
-| `scenario_roster_revisions` | 阵容修订快照（`revision_number` 唯一递增）；仅属于小天下集内容域 |
-| `scenario_roster_abilities` / `scenario_roster_revision_abilities` | 阵容当前/修订的奇术快照，不随用户资产修改而变化 |
-| `scenario_challenge_runs` | 单次挑战的卷、守方、挑战者快照，以及消息、猜词、派生结果 JSON 和 `deduction_text`（推演站 checkpoint，终局保留审计） |
+| `scenario_rosters` | 卷下的刻印，引用 `character_id`，并保存名称、介绍和奇术快照；不区分官方/玩家 |
+| `scenario_roster_revisions` | 刻印修订快照（`revision_number` 唯一递增）；仅属于小天下集内容域 |
+| `scenario_roster_abilities` / `scenario_roster_revision_abilities` | 刻印当前/修订的奇术快照，不随用户资产修改而变化 |
+| `scenario_challenge_runs` | 单次挑战的卷、刻印、挑战者快照，以及消息、猜词、派生结果 JSON 和 `deduction_text`（推演站 checkpoint，终局保留审计） |
 | `scenario_roster_progress` | `(roster_id, challenger_id)` 维度的挑战进度和看破卡片 |
 | `llm_profiles` | 用户自配模型方案，api_key 经 Fernet 加密落库 |
 | `refresh_tokens` | 刷新令牌 sha256 哈希，支持旋转与吊销 |
@@ -31,7 +31,7 @@
 
 `Ability.understanding` 是由可靠性层异步生成的三相因果槽位 JSON；编辑奇术后会重新调度生成。当前仅用于 API 回显（创作者/管理员查看），**未进入**逐对比对与推演输入（比对渲染见 `services/ability/pair_comparison.py` 的 `render_ability`，只含 name/effect/detail）。奇人介绍 `bio` 沿用旧版奇人风格字段的语义；`style`/`tactic` 已从当前模型删除。
 
-删除奇术会先解除所有奇人绑定；删除奇人会使已发布阵容的 `character_id` 置空，但阵容和挑战快照继续保留。
+删除奇术会先解除所有奇人绑定；删除奇人会使已发布刻印的 `character_id` 置空，但刻印和挑战快照继续保留。
 
 ## 用户接口（`/api/creator`）
 
@@ -54,11 +54,13 @@
 
 公开读取：`GET /scenarios`、`GET /scenarios/{id}`、`GET /scenarios/{id}/rosters`、`GET /scenarios/{id}/rosters/{roster_id}`。
 
-用户阵容：`GET/POST /creator/scenarios/{scenario_id}/rosters`、`GET /creator/scenarios/rosters/{roster_id}`、复制和软删除阵容；请求体使用 `character_id`。
+用户刻印：`GET/POST /creator/scenarios/{scenario_id}/rosters`、`GET /creator/scenarios/rosters/{roster_id}`、复制和软删除刻印；请求体使用 `character_id`。
 
-管理员卷：`/admin/scenarios/**`，只有管理员可创建、编辑、发布或下线卷。
+管理员卷：`/admin/scenarios/**`，只有管理员可创建、编辑、发布或下线卷；新建默认 `draft`，需 `POST /admin/scenarios/{id}/publish` 才进入公开列表。
 
 挑战：`POST /scenario-rosters/{roster_id}/challenges`（请求体使用 `character_id`）、`GET /scenario-challenges/{id}`、`GET /scenario-challenges/{id}/stream`（SSE 事件：`deduction_chunk`/`deduction_snapshot`/`narration_chunk`/`narration_snapshot`/`turn`/`done`/`error`）、以及 `actions`、`guess`、`guess/verify`、`derive`。术语注：原「上帝视角」现称「推演」、原「视角转写」现称「叙述」；API 字段 `omniscient`（turn JSON 内）与 `god_unlocked`（详情响应）为兼容保留旧名。
+
+可见性口径（`services/scenario/views.py`）：知识状态 `sees_all(progress, abilities, owner_view)`——刻印作者恒为真，其余人需全破；侧别 `challenger|guardian|both`——`both` 的判据是「挑战者本人就是刻印作者」。二者读时按关系现算，与 `scenario_challenge_runs.is_trial` 无关，后者仅表示「试炼局，不计入统计」。
 
 ## 认证接口
 

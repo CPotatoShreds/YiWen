@@ -11,20 +11,19 @@ type Challenge = {
   id: string;
   status: string;
   challenge_number: number;
-  is_preview?: boolean;
+  is_trial?: boolean;
   roster: { character_name: string };
   challenger: { character_name: string };
   messages: { role: string; text?: string; challenger_text?: string; guardian_text?: string; omniscient?: string; created_at?: string }[];
   won: boolean | null;
-  viewer_role?: "challenger" | "owner";
+  viewer_role?: "challenger" | "owner" | "both";
   derived?: { achieved?: boolean; reason?: string };
 };
 type RosterContext = {
   scenario: { name: string; subtitle: string; slug: string };
   roster: { character_name: string };
-  viewer_role?: "challenger" | "owner";
+  viewer_role?: "challenger" | "owner" | "both";
   my_challenges: ScenarioHistoryItem[];
-  owner_challenges?: ScenarioHistoryItem[];
 };
 
 const verdictOf = (item: ScenarioHistoryItem): { text: string; tone: string } => {
@@ -34,8 +33,8 @@ const verdictOf = (item: ScenarioHistoryItem): { text: string; tone: string } =>
 };
 
 /**
- * 记录阅读页（账册行阅）：本异闻的逐局簿册——每局一行，选中的一局就地展开为行迹书页。
- * 单主视角、推演门控与对战页同规则（未看破全部只见己方叙述；守方始终只见自己）。
+ * 记录阅读页（账册行阅）：本刻印的逐局簿册——每局一行，选中的一局就地展开为行迹书页。
+ * 单主视角、推演门控与对战页同规则（未看破全部只见己方叙述；刻印始终只见自己）。
  */
 export default function ScenarioRecords() {
   const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
@@ -58,14 +57,9 @@ export default function ScenarioRecords() {
     };
   }, [scenarioSlug, rosterId]);
 
-  const owner = context?.viewer_role === "owner";
-  // 守方视角：他人挑战 + 自己的异闻录试炼（预览局），按时间倒序混排
-  const items = owner
-    ? [
-        ...(context?.owner_challenges ?? []),
-        ...(context?.my_challenges ?? []).filter((item) => item.is_preview),
-      ].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
-    : context?.my_challenges ?? [];
+  // 只列当前访问者自己的对局。刻印作者在此看到的自然只有自己的试炼局——
+  // 他人来打的战绩不对作者开放（作者视角只有刻印正文，见后端 challenge_detail）。
+  const items = context?.my_challenges ?? [];
   const newest = items.length ? items[0].id : null;
   const activeId = selected ?? newest;
 
@@ -90,13 +84,16 @@ export default function ScenarioRecords() {
     return error ? <p className="err">{error}</p> : <div className="skeleton" style={{ height: 320 }} />;
 
   const backHref = `/scenarios/${scenarioSlug}/rosters/${rosterId}`;
-  const own: "challenger" | "guardian" = owner ? "guardian" : "challenger";
-  const ownLabel = owner ? detail?.roster.character_name ?? "" : detail?.challenger.character_name ?? "";
+  // 视角按当前这场 challenge 的 viewer_role 定：owner 只表示「你是不是这套刻印的作者」，
+  // 自己打自己的刻印会是 both，推演与双方正文一起呈。
+  const own: "challenger" | "guardian" | "both" =
+    detail?.viewer_role === "both" ? "both" : detail?.viewer_role === "owner" ? "guardian" : "challenger";
+  const ownLabel = own === "guardian" ? detail?.roster.character_name ?? "" : detail?.challenger.character_name ?? "";
   const inProgress = detail ? isInProgress(detail.status) : false;
 
   return (
     <section className="panel world-story scenario-challenge">
-      <BackButton to={backHref} label="退出并返回异闻详情" />
+      <BackButton to={backHref} label="退出并返回刻印详情" />
       <header className="scenario-challenge__masthead">
         <div>
           <h1>{context.scenario.name} · 往期记录</h1>
@@ -124,11 +121,8 @@ export default function ScenarioRecords() {
                   onClick={() => setParams(open ? {} : { run: item.id }, { replace: true })}
                 >
                   <span className="records-row__no">
-                    {item.is_preview ? "异闻录试炼" : `第 ${item.challenge_number} 次推演`}
+                    {item.is_trial ? "异闻录试炼" : `第 ${item.challenge_number} 次推演`}
                   </span>
-                  {owner && !item.is_preview && item.challenger_character_name && (
-                    <span className="records-row__who">{item.challenger_character_name}</span>
-                  )}
                   <span className={`records-row__verdict ${verdict.tone}`}>{verdict.text}</span>
                   <span className="records-row__arrow" aria-hidden="true">
                     <ChevronRightIcon size={16} />
@@ -149,6 +143,7 @@ export default function ScenarioRecords() {
                           messages={detail.messages}
                           own={own}
                           ownLabel={ownLabel}
+                          guardianLabel={detail.roster.character_name}
                           title={`第 ${detail.challenge_number} 次推演`}
                           note={detail.won === null ? "尚未成卷" : "本场结局已记录"}
                           emptyText="奇术比对完成后，整场推演将一次成卷。"

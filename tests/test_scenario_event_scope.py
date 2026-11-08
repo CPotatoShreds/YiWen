@@ -28,7 +28,7 @@ from app.services.scenario import stream as stream_module
 
 _GOD_TEXT = "推演真实全文不可出站"
 _CHALLENGER_TEXT = "挑战者侧叙述全文"
-_GUARDIAN_TEXT = "守方侧叙述全文"
+_GUARDIAN_TEXT = "刻印侧叙述全文"
 
 
 @pytest.fixture(autouse=True)
@@ -68,13 +68,19 @@ async def _noop_compare():
 
 async def _seed_resolving_challenge(*, roster_abilities: list[dict] | None = None, cracked: list[dict] | None = None,
                                     status: str = "resolving", messages: list[dict] | None = None,
-                                    is_preview: bool = False) -> tuple[ScenarioChallengeRun, User, User]:
-    """落库最小闭环数据：挑战者/守方/卷/阵容/挑战，返回 (挑战, 挑战者, 守方)。"""
+                                    trial: bool = False) -> tuple[ScenarioChallengeRun, User, User]:
+    """落库最小闭环数据：挑战者/刻印/卷/刻印/挑战，返回 (挑战, 挑战者, 刻印)。
+
+    ``trial``（试炼局）时挑战者与刻印作者是**同一个人**——可见性按关系推导，
+    种数据必须与实际关系一致，否则测的是不可能出现的状态。
+    """
     async with async_session_factory() as db:
         tag = uuid4().hex[:8]
-        challenger = User(username=f"sct_c_{tag}", password_hash="x")
         owner = User(username=f"sct_o_{tag}", password_hash="x")
-        db.add_all([challenger, owner])
+        challenger = owner if trial else User(username=f"sct_c_{tag}", password_hash="x")
+        db.add(owner)
+        if challenger is not owner:
+            db.add(challenger)
         await db.flush()
         scenario = Scenario(
             created_by=owner.id, name=f"职责卷{tag}", slug=f"scope-{tag}", normalized_name=f"职责卷{tag}",
@@ -84,12 +90,12 @@ async def _seed_resolving_challenge(*, roster_abilities: list[dict] | None = Non
         db.add(scenario)
         await db.flush()
         roster = ScenarioRoster(
-            scenario_id=scenario.id, owner_id=owner.id, name=f"阵容{tag}", character_name="守风",
+            scenario_id=scenario.id, owner_id=owner.id, name=f"刻印{tag}", character_name="守风",
         )
         db.add(roster)
         await db.flush()
         challenge = ScenarioChallengeRun(
-            roster_id=roster.id, challenger_id=challenger.id, status=status, is_preview=is_preview,
+            roster_id=roster.id, challenger_id=challenger.id, status=status, is_trial=trial,
             scenario_snapshot={"name": "职责卷", "rules": [], "judgement_rules": [], "victory_condition": "胜", "background": "开场"},
             roster_snapshot={"character_name": "守风", "guidance": "守住结界", "abilities": roster_abilities or []},
             challenger_snapshot={"character_name": "逐影", "abilities": []},
@@ -141,12 +147,12 @@ async def test_resolve_publishes_shielded_god_and_side_scoped_events():
     c_chunks = [e for e in challenger_events if e["type"] == "narration_chunk"]
     assert c_chunks and all(e["side"] == "challenger" for e in c_chunks)
     c_turn = next(e["turn"] for e in challenger_events if e["type"] == "turn")
-    # 门控（未看破全部）：挑战者 turn 只含己方正文，无守方正文、无上帝全文
+    # 门控（未看破全部）：挑战者 turn 只含己方正文，无刻印正文、无上帝全文
     assert c_turn["challenger_text"] == _CHALLENGER_TEXT
     assert "guardian_text" not in c_turn and "omniscient" not in c_turn
     assert c_turn["achieved"] is True and c_turn["reason"]
 
-    # 守方侧：无挑战者叙述正文、无推演文本，turn 为守方形状
+    # 刻印侧：无挑战者叙述正文、无推演文本，turn 为刻印形状
     g_blob = json.dumps(guardian_events, ensure_ascii=False)
     assert _GOD_TEXT not in g_blob and _CHALLENGER_TEXT not in g_blob
     g_chunks = [e for e in guardian_events if e["type"] == "narration_chunk"]
@@ -164,7 +170,7 @@ async def test_resolve_publishes_shielded_god_and_side_scoped_events():
 
 
 async def test_god_gate_detail_locked_then_unlocked():
-    """看破门控（详情接口）：未全破无推演/守方正文；全破后附推演全文；守方始终只见自己。"""
+    """看破门控（详情接口）：未全破无推演/刻印正文；全破后附推演全文；刻印始终只见自己。"""
     abilities = [{"name": "术一", "effect": "e1"}, {"name": "术二", "effect": "e2"}]
     turn = {"role": "views", "challenger_text": _CHALLENGER_TEXT, "guardian_text": _GUARDIAN_TEXT,
             "omniscient": _GOD_TEXT, "achieved": True, "reason": "达成", "created_at": "seed"}
@@ -181,7 +187,7 @@ async def test_god_gate_detail_locked_then_unlocked():
     assert view["challenger_text"] == _CHALLENGER_TEXT
     assert "omniscient" not in view and "guardian_text" not in view
 
-    # 全破 → 永久解锁（附推演全文；守方正文仍不给）
+    # 全破 → 永久解锁（附推演全文；刻印正文仍不给）
     async with async_session_factory() as db:
         progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": challenger.id})
         progress.cracked_cards = [{"index": 1, "cracked": True}, {"index": 2, "cracked": True}]
@@ -192,7 +198,7 @@ async def test_god_gate_detail_locked_then_unlocked():
     view = detail["messages"][-1]
     assert view["omniscient"] == _GOD_TEXT and "guardian_text" not in view
 
-    # 守方：只见自己正文、无推演全文
+    # 刻印：只见自己正文、无推演全文
     async with async_session_factory() as db:
         owner_detail = await scenario_domain.challenge_detail(challenge.id, current=owner, db=db)
     assert owner_detail["viewer_role"] == "owner"
@@ -201,7 +207,7 @@ async def test_god_gate_detail_locked_then_unlocked():
 
 
 async def test_resolve_turn_carries_god_only_when_unlocked():
-    """SSE turn 门控：全破的挑战者回合携带推演全文（仍无守方正文）。"""
+    """SSE turn 门控：全破的挑战者回合携带推演全文（仍无刻印正文）。"""
     challenge, _, _ = await _seed_resolving_challenge(
         roster_abilities=[{"name": "术一", "effect": "e1"}], cracked=[{"index": 1, "cracked": True}],
     )
@@ -224,20 +230,20 @@ async def test_resolve_turn_carries_god_only_when_unlocked():
     assert chunks and all(e["side"] == "challenger" for e in chunks)
     assert "".join(e["text"] for e in chunks) == _GOD_TEXT
 
-    # 同一场的守方订阅者：推演正文一字都收不到
+    # 同一场的刻印订阅者：推演正文一字都收不到
     guardian_events = await _drain(guardian_queue, timeout=1.0)
     assert _GOD_TEXT not in json.dumps(guardian_events, ensure_ascii=False)
     assert not [e for e in guardian_events if e["type"].startswith("deduction_")]
 
 
-async def test_preview_challenge_streams_god_like_unlocked():
-    """试炼局（作者自看）与「已全破」等价：无需任何看破进度也直播推演正文。"""
+async def test_self_challenge_streams_god_like_unlocked():
+    """挑战者就是刻印作者：无需任何看破进度也直播推演正文（判据是关系，不是试炼标记）。"""
     challenge, _, _ = await _seed_resolving_challenge(
         roster_abilities=[{"name": "术一", "effect": "e1"}, {"name": "术二", "effect": "e2"}],
-        is_preview=True,
+        trial=True,
     )
     stream = stream_module.get_scenario_stream(challenge.id)
-    challenger_queue, _ = await stream.subscribe(side="challenger")
+    challenger_queue, _ = await stream.subscribe(side="both")
 
     with ExitStack() as stack:
         for p in _llm_patches():
@@ -252,7 +258,7 @@ async def test_preview_challenge_streams_god_like_unlocked():
 
 
 async def test_stream_endpoint_passes_subscriber_side():
-    """端点按订阅者角色传侧别：挑战者→challenger，守方→guardian。"""
+    """端点按订阅者角色传侧别：挑战者→challenger，刻印→guardian。"""
     challenge, challenger, owner = await _seed_resolving_challenge()
 
     recorded: list[str | None] = []
@@ -292,3 +298,30 @@ async def test_stream_endpoint_passes_subscriber_side():
         assert excinfo.value.status_code == 404
 
     assert recorded == ["challenger", "guardian"]
+
+
+async def test_stream_endpoint_uses_both_side_for_self_challenge():
+    """自己打自己的刻印：一条连接同时收两侧正文（side="both"）。"""
+    challenge, challenger, _ = await _seed_resolving_challenge(trial=True)
+
+    recorded: list[str | None] = []
+    probe_queue: asyncio.Queue = asyncio.Queue()
+    await probe_queue.put({"type": "done", "status": "won"})
+
+    class _SpyStream:
+        async def subscribe(self, side=None):
+            recorded.append(side)
+            return probe_queue, []
+
+        def unsubscribe(self, queue):
+            pass
+
+    with patch.object(scenario_domain, "get_scenario_stream", lambda _: _SpyStream()):
+        async with async_session_factory() as db:
+            challenger_row = await db.get(User, challenger.id)
+        response = await scenario_domain.challenge_stream(challenge.id, current=challenger_row)
+        generator = response.body_iterator
+        assert await generator.__anext__()
+        await generator.aclose()
+
+    assert recorded == ["both"]

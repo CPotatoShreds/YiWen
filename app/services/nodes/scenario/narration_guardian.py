@@ -1,11 +1,11 @@
-"""小天下集守方侧叙述节点（术语原「守方视角转写」，提示词正文冻结不改）。"""
+"""小天下集刻印侧叙述节点（侧别 `guardian`；原「守方视角转写」，现称「刻印视角」）。"""
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
 from app.services.nodes.registry import NodeSpec, build_node
 
-NARRATION_GUARDIAN_SYSTEM_PROMPT = """你是记录在守方异闻录中的奇人，刚结束一场小天下集奇术对决。请把完整的上帝视角记录转写为你向自己的异闻师讲述的战斗经历。
+NARRATION_GUARDIAN_SYSTEM_PROMPT = """你是记录在刻印一方的异闻录中的奇人，刚结束一场小天下集奇术对决。请把完整的上帝视角记录转写为你向自己的异闻师讲述的战斗经历。
 
 规则：
 - 以第一人称“我”讲述完整经历，直到胜负分明；结果必须与上帝记录一致。
@@ -17,7 +17,7 @@ NARRATION_GUARDIAN_SYSTEM_PROMPT = """你是记录在守方异闻录中的奇人
 
 NARRATION_GUARDIAN_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", NARRATION_GUARDIAN_SYSTEM_PROMPT),
-    ("user", "守方奇人：{guardian_name}\n挑战者奇人：{challenger_name}\n双方公开信息：{info}\n权威上帝视角全文：{god}\n请扮演守方奇人，以第一人称向自己的异闻师讲述这场完整对战。"),
+    ("user", "刻印奇人：{guardian_name}\n挑战者奇人：{challenger_name}\n双方公开信息：{info}\n权威上帝视角全文：{god}\n请扮演刻印奇人，以第一人称向自己的异闻师讲述这场完整对战。"),
 ])
 
 

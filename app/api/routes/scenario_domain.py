@@ -1,8 +1,6 @@
-"""小天下集卷、公开阵容与单次挑战 API。"""
+"""小天下集卷、公开刻印与单次挑战 API。"""
 import asyncio
-import base64
 import json
-from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -40,7 +38,6 @@ from app.schemas.scenario_domain import (
     ScenarioChallengeHistoryOut,
     ScenarioIn,
     ScenarioOut,
-    ScenarioOwnerChallengeOut,
     ScenarioRosterDetailOut,
     ScenarioRosterProgressOut,
 )
@@ -48,10 +45,10 @@ from app.services.scenario.flows import now as _now
 from app.services.scenario.normalization import normalize_title, slugify_title
 from app.services.scenario.stream import get_scenario_stream
 from app.services.scenario.views import (
-    deduction_unlocked as _deduction_unlocked,
     guess_cards as _guess_cards,
     public_cards as _public_cards,
     public_guess_rounds as _public_guess_rounds,
+    sees_all as _sees_all,
     visible_turn as _visible_turn,
 )
 
@@ -122,7 +119,7 @@ async def _roster_out(db: AsyncSession, roster: ScenarioRoster) -> RosterOut:
     character_name = revision.character_name if revision else roster.character_name
     character_bio = revision.character_bio if revision else roster.character_bio
     guidance = revision.guidance if revision else roster.guidance
-    public_runs = ScenarioChallengeRun.roster_id == roster.id, ScenarioChallengeRun.is_preview.is_(False)
+    public_runs = ScenarioChallengeRun.roster_id == roster.id, ScenarioChallengeRun.is_trial.is_(False)
     wins = await db.scalar(select(func.count()).select_from(ScenarioChallengeRun).where(*public_runs, ScenarioChallengeRun.won.is_(True))) or 0
     done = await db.scalar(select(func.count()).select_from(ScenarioChallengeRun).where(*public_runs, ScenarioChallengeRun.won.is_not(None))) or 0
     return RosterOut(
@@ -166,22 +163,6 @@ async def _roster_abilities(db: AsyncSession, roster: ScenarioRoster) -> list:
     return list((await db.execute(select(ScenarioRosterAbility).where(ScenarioRosterAbility.roster_id == roster.id).order_by(ScenarioRosterAbility.position))).scalars())
 
 
-def _encode_cursor(created_at: datetime, item_id: UUID) -> str:
-    raw = f"{created_at.isoformat()}|{item_id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def _decode_cursor(value: str | None) -> tuple[datetime, UUID] | None:
-    if not value:
-        return None
-    try:
-        padded = value + "=" * (-len(value) % 4)
-        created, item_id = base64.urlsafe_b64decode(padded.encode()).decode().split("|", 1)
-        return datetime.fromisoformat(created), UUID(item_id)
-    except (ValueError, UnicodeDecodeError):
-        raise HTTPException(400, "无效的分页游标")
-
-
 async def _challenge_history_out(db: AsyncSession, challenge: ScenarioChallengeRun) -> ScenarioChallengeHistoryOut:
     snapshot = challenge.challenger_snapshot or {}
     strategy = next((item.get("text", "") for item in challenge.messages or [] if isinstance(item, dict) and item.get("role") == "challenger"), "")
@@ -189,7 +170,7 @@ async def _challenge_history_out(db: AsyncSession, challenge: ScenarioChallengeR
         id=challenge.id,
         status=challenge.status,
         challenge_number=challenge.challenge_number,
-        is_preview=challenge.is_preview,
+        is_trial=challenge.is_trial,
         won=challenge.won,
         guess_attempts=challenge.guess_attempts,
         created_at=challenge.created_at,
@@ -337,7 +318,7 @@ async def creator_create_roster(scenario_id: UUID, body: RosterIn, current: Anno
 async def creator_get_roster(roster_id: UUID, current: Annotated[User, Depends(get_current_user)], db: Annotated[AsyncSession, Depends(get_db)]):
     roster = await db.get(ScenarioRoster, roster_id)
     if roster is None or roster.owner_id != current.id:
-        raise HTTPException(404, "阵容不存在")
+        raise HTTPException(404, "刻印不存在")
     return await _roster_out(db, roster)
 
 
@@ -350,7 +331,7 @@ async def creator_get_roster_alias(roster_id: UUID, current: Annotated[User, Dep
 async def creator_copy_roster(roster_id: UUID, current: Annotated[User, Depends(get_current_user)], db: Annotated[AsyncSession, Depends(get_db)]):
     source = await db.get(ScenarioRoster, roster_id)
     if source is None or source.owner_id != current.id:
-        raise HTTPException(404, "阵容不存在")
+        raise HTTPException(404, "刻印不存在")
     roster = ScenarioRoster(
         scenario_id=source.scenario_id,
         owner_id=current.id,
@@ -378,7 +359,7 @@ async def creator_copy_roster(roster_id: UUID, current: Annotated[User, Depends(
 async def creator_delete_roster(roster_id: UUID, current: Annotated[User, Depends(get_current_user)], db: Annotated[AsyncSession, Depends(get_db)]):
     roster = await db.get(ScenarioRoster, roster_id)
     if roster is None or roster.owner_id != current.id:
-        raise HTTPException(404, "阵容不存在")
+        raise HTTPException(404, "刻印不存在")
     roster.state, roster.deleted_at = RosterState.DELETED, _now()
     await db.commit()
 
@@ -404,41 +385,37 @@ async def public_roster_detail(
     roster_id: UUID,
     current: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    cursor: str | None = Query(None),
-    limit: int = Query(20, ge=1, le=50),
 ):
     scenario = await _scenario_by_ref(db, scenario_ref)
     roster = await db.get(ScenarioRoster, roster_id)
     if scenario is None or scenario.status != ScenarioState.PUBLISHED or scenario.deleted_at is not None:
         raise HTTPException(404, "小天下集卷不存在")
     if roster is None or roster.scenario_id != scenario.id or roster.state != RosterState.PUBLISHED or roster.deleted_at is not None:
-        raise HTTPException(404, "阵容不存在")
+        raise HTTPException(404, "刻印不存在")
 
     progress = await db.get(ScenarioRosterProgress, {"roster_id": roster.id, "challenger_id": current.id})
     my_query = select(ScenarioChallengeRun).where(ScenarioChallengeRun.roster_id == roster.id, ScenarioChallengeRun.challenger_id == current.id).order_by(desc(ScenarioChallengeRun.created_at), desc(ScenarioChallengeRun.id)).limit(100)
     my_rows = list((await db.execute(my_query)).scalars())
     my_history = [await _challenge_history_out(db, row) for row in my_rows]
 
-    owner_history: list[ScenarioOwnerChallengeOut] = []
-    next_cursor = None
-    if roster.owner_id == current.id:
-        owner_query = select(ScenarioChallengeRun).where(ScenarioChallengeRun.roster_id == roster.id, ScenarioChallengeRun.is_preview.is_(False)).order_by(desc(ScenarioChallengeRun.created_at), desc(ScenarioChallengeRun.id))
-        decoded = _decode_cursor(cursor)
-        if decoded:
-            created_at, item_id = decoded
-            owner_query = owner_query.where((ScenarioChallengeRun.created_at < created_at) | ((ScenarioChallengeRun.created_at == created_at) & (ScenarioChallengeRun.id < item_id)))
-        owner_rows = list((await db.execute(owner_query.limit(limit + 1))).scalars())
-        has_more = len(owner_rows) > limit
-        owner_rows = owner_rows[:limit]
-        for row in owner_rows:
-            challenger = await db.get(User, row.challenger_id)
-            item = await _challenge_history_out(db, row)
-            owner_history.append(ScenarioOwnerChallengeOut(**item.model_dump(), challenger_id=row.challenger_id, challenger_name=challenger.username if challenger else "已离席"))
-        if has_more and owner_rows:
-            next_cursor = _encode_cursor(owner_rows[-1].created_at, owner_rows[-1].id)
-
+    owner_view = roster.owner_id == current.id
     progress_out = None
-    if progress is not None:
+    if owner_view:
+        # 作者看自己的刻印：这套奇术是他自己写的，卡面恒为已知。这里不写 progress，
+        # 免得"自看"把别人的看破进度或统计口径搅在一起。
+        ability_dicts = [{"name": a.name, "effect": a.effect, "detail": a.detail} for a in await _roster_abilities(db, roster)]
+        progress_out = ScenarioRosterProgressOut(
+            roster_id=roster.id,
+            challenger_id=current.id,
+            attempts=progress.attempts if progress else 0,
+            first_victory_challenges=progress.first_victory_challenges if progress else None,
+            cracked_cards=_public_cards(_guess_cards(progress, ability_dicts, owner_view=True)),
+            guess_count=len(progress.guess_history or []) if progress else 0,
+            guess_credits=progress.guess_credits if progress else 0,
+            guess_rounds=_public_guess_rounds(progress.guess_rounds if progress else []),
+            updated_at=progress.updated_at if progress else None,
+        )
+    elif progress is not None:
         progress_out = ScenarioRosterProgressOut(
             roster_id=progress.roster_id,
             challenger_id=progress.challenger_id,
@@ -453,11 +430,9 @@ async def public_roster_detail(
     return ScenarioRosterDetailOut(
         scenario=ScenarioOut.model_validate(scenario),
         roster=await _roster_out(db, roster),
-        viewer_role="owner" if roster.owner_id == current.id else "challenger",
+        viewer_role="owner" if owner_view else "challenger",
         my_progress=progress_out,
         my_challenges=my_history,
-        owner_challenges=owner_history,
-        next_cursor=next_cursor,
     )
 
 
@@ -482,7 +457,7 @@ async def public_rosters(scenario_ref: str, db: Annotated[AsyncSession, Depends(
 async def public_roster(roster_id: UUID, db: Annotated[AsyncSession, Depends(get_db)]):
     roster = await db.get(ScenarioRoster, roster_id)
     if roster is None or roster.state != RosterState.PUBLISHED or roster.deleted_at is not None:
-        raise HTTPException(404, "阵容不存在")
+        raise HTTPException(404, "刻印不存在")
     return await _roster_out(db, roster)
 
 
@@ -497,23 +472,25 @@ async def create_challenge(roster_id: UUID, request: Request, body: ChallengeIn,
     roster = await db.get(ScenarioRoster, roster_id)
     scenario = await db.get(Scenario, roster.scenario_id) if roster else None
     if roster is None or scenario is None or roster.state != RosterState.PUBLISHED:
-        raise HTTPException(404, "阵容不存在")
-    is_preview = roster.owner_id == current.id
+        raise HTTPException(404, "刻印不存在")
+    # 试炼局：发起人就是刻印作者。该标记**只管统计口径**（不计次数、胜负与猜词次数），
+    # 不参与任何可见性判断——视角一律由下面读取时的关系推导（见 services/scenario/views.py）。
+    is_trial = roster.owner_id == current.id
     challenger_name, challenger_bio, challenger_abilities = await _character_snapshot(db, body.character_id, current.id)
     progress = await db.get(ScenarioRosterProgress, {"roster_id": roster.id, "challenger_id": current.id})
     if progress is None:
         progress = ScenarioRosterProgress(roster_id=roster.id, challenger_id=current.id)
         db.add(progress)
         await db.flush()
-    if not is_preview:
+    if not is_trial:
         progress.attempts += 1
     roster_abilities = await _roster_abilities(db, roster)
     challenge = ScenarioChallengeRun(
         roster_id=roster.id,
         challenger_id=current.id,
-        is_preview=is_preview,
+        is_trial=is_trial,
         status="preparing",
-        challenge_number=progress.attempts if not is_preview else 1,
+        challenge_number=progress.attempts if not is_trial else 1,
         scenario_snapshot=_scenario_snapshot(scenario),
         roster_snapshot={
             "character_name": roster.character_name,
@@ -529,12 +506,12 @@ async def create_challenge(roster_id: UUID, request: Request, body: ChallengeIn,
         },
     )
     db.add(challenge)
-    if not is_preview:
+    if not is_trial:
         roster.challenge_count += 1
     await db.commit()
     await db.refresh(challenge)
     await dispatch("scenario_prepare", challenge.id)
-    return ChallengeOut(id=challenge.id, roster_id=roster.id, scenario_id=scenario.id, status=challenge.status, challenge_number=challenge.challenge_number, is_preview=challenge.is_preview, created_at=challenge.created_at)
+    return ChallengeOut(id=challenge.id, roster_id=roster.id, scenario_id=scenario.id, status=challenge.status, challenge_number=challenge.challenge_number, is_trial=challenge.is_trial, created_at=challenge.created_at)
 
 
 @challenge_router.get("/scenario-challenges/{challenge_id}")
@@ -546,18 +523,22 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
     if challenge.challenger_id == current.id:
         progress = await db.get(ScenarioRosterProgress, {"roster_id": challenge.roster_id, "challenger_id": current.id})
         abilities = list(challenge.roster_snapshot.get("abilities", []))
-        cards = _guess_cards(progress, abilities)
-        # 推演门控：未全破只给己方视角；全破后附推演全文；守方正文始终不下发（试炼为作者自看，保持全量）
-        unlocked = challenge.is_preview or _deduction_unlocked(progress, abilities)
-        messages = challenge.messages if challenge.is_preview else [_visible_turn(message, unlocked=unlocked) for message in (challenge.messages or [])]
+        # 两条互相独立的判据：知识状态（作者恒已知 / 否则看全破进度）与侧别（这一局你是谁）。
+        # 二者都由关系现算，不看 is_trial——那个标记只管这一局算不算统计。
+        owner_view = roster is not None and roster.owner_id == current.id
+        side = "both" if owner_view else "challenger"
+        cards = _guess_cards(progress, abilities, owner_view=owner_view)
+        unlocked = _sees_all(progress, abilities, owner_view=owner_view)
+        messages = [_visible_turn(message, side=side, unlocked=unlocked) for message in (challenge.messages or [])]
         return {
             "id": challenge.id,
             "roster_id": challenge.roster_id,
             "scenario_id": challenge.scenario_snapshot.get("id"),
             "status": challenge.status,
             "challenge_number": challenge.challenge_number,
-            "is_preview": challenge.is_preview,
-            "viewer_role": "challenger",
+            "is_trial": challenge.is_trial,
+            # 挑战者恰好就是刻印作者（试炼局）：两边都是己方，推演与双方正文全部下发。
+            "viewer_role": side,
             "scenario": challenge.scenario_snapshot,
             "roster": challenge.roster_snapshot,
             "challenger": challenge.challenger_snapshot,
@@ -575,20 +556,20 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
         }
     if roster is None or roster.owner_id != current.id:
         raise HTTPException(404, "挑战不存在")
-    # 阵容作者只能查看守方视角；挑战者正文、猜词原文和私有资产快照均不出站。
+    # 刻印作者看**别人的**对局：只有刻印正文。挑战者正文、猜词原文和私有资产快照均不出站。
+    # 作者的自家试炼不会走到这里——那时 challenger_id 就是他本人，上面那条分支已返回。
     guardian_messages = []
     for message in challenge.messages or []:
         if message.get("role") == "views" and message.get("guardian_text"):
             guardian_messages.append({"role": "guardian", "text": message["guardian_text"], "created_at": message.get("created_at")})
     challenger = await db.get(User, challenge.challenger_id)
-    owner_messages = challenge.messages if challenge.is_preview and challenge.challenger_id == current.id else guardian_messages
     return {
         "id": challenge.id,
         "roster_id": challenge.roster_id,
         "scenario_id": challenge.scenario_snapshot.get("id"),
         "status": challenge.status,
         "challenge_number": challenge.challenge_number,
-        "is_preview": challenge.is_preview,
+        "is_trial": challenge.is_trial,
         "viewer_role": "owner",
         "scenario": challenge.scenario_snapshot,
         "roster": challenge.roster_snapshot,
@@ -597,7 +578,7 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
             "username": challenger.username if challenger else "已离席",
         },
         "guess_attempts": 0,
-        "messages": owner_messages,
+        "messages": guardian_messages,
         "guesses": [],
         "won": challenge.won,
         "derived": {
@@ -616,7 +597,11 @@ async def challenge_stream(challenge_id: UUID, current: Annotated[User, Depends(
         if challenge is None or (challenge.challenger_id != current.id and (roster is None or roster.owner_id != current.id)):
             raise HTTPException(404, "挑战不存在")
         status = challenge.status
-        side = "challenger" if challenge.challenger_id == current.id else "guardian"
+        if challenge.challenger_id == current.id:
+            # 侧别由关系推导：挑战者本人就是刻印作者 → both，一条连接同时收两侧叙述
+            side = "both" if roster is not None and roster.owner_id == current.id else "challenger"
+        else:
+            side = "guardian"
 
     def encode(event: dict) -> str:
         return f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"

@@ -202,7 +202,7 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       ? `删除「${current.name}」？\n\n它已被 ${carriers.length} 位奇人装配（${carriers.slice(0, 3).map((item) => item.name).join("、")}${carriers.length > 3 ? " 等" : ""}），删除后会从他们名帖上一并摘除。`
       : kind === "ability"
         ? `确认删除「${current.name}」？还没有奇人装配它。`
-        : `确认删除「${current.name}」？\n\n删除后不能再拿他去立新异闻、发起新对局；已发布的异闻不受影响。`;
+        : `确认删除「${current.name}」？\n\n删除后不能再拿他去刻印奇人、发起新对局；已刻下的刻印不受影响。`;
     if (!window.confirm(prompt)) return;
     setBusy(true);
     setError("");

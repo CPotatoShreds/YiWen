@@ -36,7 +36,7 @@ type RosterContext = {
     ability_count: number;
     challenger_win_rate: number | null;
   };
-  viewer_role?: "challenger" | "owner";
+  viewer_role?: "challenger" | "owner" | "both";
   my_progress?: { attempts: number; cracked_cards: { index: number; cracked: boolean }[] } | null;
   my_challenges: ScenarioHistoryItem[];
 };
@@ -44,14 +44,14 @@ type Challenge = {
   id: string;
   status: string;
   challenge_number: number;
-  is_preview?: boolean;
+  is_trial?: boolean;
   scenario: Scenario;
   roster: { character_name: string };
   challenger: { character_id?: string; character_name: string };
   messages: Message[];
   won: boolean | null;
   roster_id: string;
-  viewer_role?: "challenger" | "owner";
+  viewer_role?: "challenger" | "owner" | "both";
   god_unlocked?: boolean;
   derived?: { comparison_report?: string; achieved?: boolean; reason?: string };
 };
@@ -77,7 +77,7 @@ const stageFromStatus = (status: string): Stage =>
         : "ready";
 
 /**
- * 对战页：归属异闻（擂台）的常驻地址，起笔前后的唯一对战页面。
+ * 对战页：归属刻印（擂台）的常驻地址，起笔前后的唯一对战页面。
  * 两段式：起笔前是「对决信息 + 操作台」，点「发起推演」后整页换成「行迹书页」。
  * 单主视角（推演遮挡块 → 己方叙述正文）；往期记录在独立的记录阅读页。
  */
@@ -95,17 +95,17 @@ export default function ScenarioBattle() {
   const [view, setView] = useState<"booting" | "draft" | "book">("booting");
   const [liveDeduction, setLiveDeduction] = useState(""); // 推演正文原文（已解锁者逐字；未解锁者恒空）
   const [liveOwn, setLiveOwn] = useState("");
+  const [liveGuardian, setLiveGuardian] = useState(""); // 自己打自己的刻印时，刻印正文同步落墨
   const [streamRetry, setStreamRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const ownSideRef = useRef<"challenger" | "guardian">("challenger");
   const bootedFor = useRef<string | null>(null);
   const startedHere = useRef(false);
   const lastNumber = useRef(0);
   const pendingDerive = useRef(false);
   const deriveRef = useRef<() => void>(() => {});
 
-  // 异闻上下文（擂台）与自家奇人
+  // 刻印上下文（擂台）与自家奇人
   useEffect(() => {
     if (!scenarioSlug || !rosterId) return;
     let alive = true;
@@ -160,7 +160,6 @@ export default function ScenarioBattle() {
         if (!alive) return;
         setChallenge(data);
         lastNumber.current = data.challenge_number;
-        ownSideRef.current = data.viewer_role === "owner" ? "guardian" : "challenger";
         const next: Stage = stageFromStatus(data.status);
         setStage((current) => (ORDER[next] >= ORDER[current] || current === "loading" ? next : current));
         const prior = data.messages.find((message) => message.role === "challenger");
@@ -196,20 +195,24 @@ export default function ScenarioBattle() {
       {
         onEvent: (event) => {
           if (event.type === "deduction_chunk") {
-            // 推演正文逐字（只有本就该看全文的局才下）：本连接只收己方侧
-            if (event.side === ownSideRef.current) setLiveDeduction((current) => current + String(event.text ?? ""));
+            // 推演只有一条、side 恒为 challenger；服务端已按订阅侧过滤，收到即该看
+            setLiveDeduction((current) => current + String(event.text ?? ""));
             setStage((current) => (ORDER["thinking"] >= ORDER[current] ? "thinking" : current));
           } else if (event.type === "deduction_snapshot") {
             // 断线重连补发：服务端累计正文整体替换（推演先于叙述，故先于 narration_snapshot 到达）
-            if (event.side === ownSideRef.current) setLiveDeduction(String(event.text ?? ""));
+            setLiveDeduction(String(event.text ?? ""));
             setStage((current) => (ORDER["thinking"] >= ORDER[current] ? "thinking" : current));
           } else if (event.type === "narration_snapshot") {
             // 断线重连补发：服务端累计全文整体替换（修复重连后中间缺段/叙述重流叠字）
-            if (event.side === ownSideRef.current) setLiveOwn(String(event.text ?? ""));
+            const text = String(event.text ?? "");
+            if (event.side === "guardian") setLiveGuardian(text);
+            else setLiveOwn(text);
             setStage((current) => (ORDER["views"] >= ORDER[current] ? "views" : current));
           } else if (event.type === "narration_chunk") {
-            // 服务端已按侧别过滤：本连接只会收到己方叙述
-            if (event.side === ownSideRef.current) setLiveOwn((current) => current + String(event.text ?? ""));
+            // 缓冲按 side 存；渲染时再按本局视角取（both 两条都要）
+            const text = String(event.text ?? "");
+            if (event.side === "guardian") setLiveGuardian((current) => current + text);
+            else setLiveOwn((current) => current + text);
             setStage((current) => (ORDER["views"] >= ORDER[current] ? "views" : current));
           } else if (event.type === "turn") {
             const turn = event.turn as Message;
@@ -222,6 +225,7 @@ export default function ScenarioBattle() {
             );
             setLiveDeduction("");
             setLiveOwn("");
+            setLiveGuardian("");
           } else if (event.type === "error") {
             // 流已判死：先停重连，再退回操作台让玩家带着原策略重试
             terminal = true;
@@ -298,12 +302,15 @@ export default function ScenarioBattle() {
     return error ? <p className="err">{error}</p> : <div className="skeleton" style={{ height: 320 }} />;
 
   const failed = challenge?.status === "failed";
-  const owner = challenge?.viewer_role === "owner" || context.viewer_role === "owner";
-  const own: "challenger" | "guardian" = owner ? "guardian" : "challenger";
-  const ownLabel = owner
-    ? context.roster.character_name
-    : (challenge?.challenger.character_name ?? available.find((c) => c.id === characterId)?.name ?? "");
-  const preview = context.viewer_role === "owner" || !!challenge?.is_preview;
+  // 本局视角只认该场 challenge 的 viewer_role；context.viewer_role 仅表示「你是不是这套刻印的作者」，
+  // 自己打自己的刻印时两者冲突，拿它判定会把己方正文误当成刻印视角。challenge 未到时才用上下文兜底。
+  const viewerRole = challenge?.viewer_role ?? (context.viewer_role === "owner" ? "owner" : "challenger");
+  const own: "challenger" | "guardian" | "both" =
+    viewerRole === "both" ? "both" : viewerRole === "owner" ? "guardian" : "challenger";
+  const challengerLabel =
+    challenge?.challenger.character_name ?? available.find((c) => c.id === characterId)?.name ?? "";
+  const ownLabel = own === "guardian" ? context.roster.character_name : challengerLabel;
+  const trial = !!challenge?.is_trial;
   const backHref = `/scenarios/${scenarioSlug}/rosters/${rosterId}`;
   const recordsHref = `${backHref}/records`;
 
@@ -341,6 +348,7 @@ export default function ScenarioBattle() {
     setStage("loading");
     setLiveDeduction("");
     setLiveOwn("");
+    setLiveGuardian("");
     setError("");
     setBusy(true);
     try {
@@ -398,6 +406,7 @@ export default function ScenarioBattle() {
     pendingDerive.current = false;
     setLiveDeduction("");
     setLiveOwn("");
+    setLiveGuardian("");
     setError("");
     setCurrentId(null);
     setStage("loading");
@@ -417,7 +426,9 @@ export default function ScenarioBattle() {
   const submitDisabled = locked ? !canSubmitStrategy || busy : !characterId || busy || characters === null;
 
   // 推演没有中间节点可标：占位动画自首字到达即撤（正文接管后不必再演）
-  const showVeil = !!currentId && !failed && stage !== "result" && !liveDeduction && !liveOwn;
+  const showVeil = !!currentId && !failed && stage !== "result" && !liveDeduction && !liveOwn && !liveGuardian;
+  // 全破局分三页签：本局尚未落定时，还没进正文的那一页自己演笔墨（与 showVeil 同一条「还在写」）
+  const pending = !!currentId && !failed && stage !== "result";
   // 成卷/出错时的旁注卡片：绝对定位在纸页右缘留白上，纸页自身一像素不动——
   // 不再像旧版那样切换左轨把纸页挤窄（那会让正文重排、滚动位置作废）
   const adjourn = (stage === "result" && !!challenge) || !!error;
@@ -426,12 +437,12 @@ export default function ScenarioBattle() {
 
   return (
     <section className={`panel world-story scenario-challenge is-${view === "book" ? "book" : "draft"}`}>
-      <BackButton to={backHref} label="退出并返回异闻详情" />
+      <BackButton to={backHref} label="退出并返回刻印详情" />
       <header className="scenario-challenge__masthead">
         <div>
           <h1>{context.scenario.name}</h1>
           <p className="muted">{context.scenario.subtitle}</p>
-          {challenge?.is_preview && <p className="muted">异闻录试炼 · 不计入统计</p>}
+          {challenge?.is_trial && <p className="muted">异闻录试炼 · 不计入统计</p>}
         </div>
         <div className="scenario-challenge__actions">
           <Link className="btn btn-ghost" to={recordsHref}>
@@ -453,12 +464,16 @@ export default function ScenarioBattle() {
             messages={challenge?.messages ?? []}
             own={own}
             ownLabel={ownLabel}
-            liveText={liveOwn}
+            guardianLabel={context.roster.character_name}
+            liveText={own === "guardian" ? liveGuardian : liveOwn}
+            liveGuardian={own === "both" ? liveGuardian : ""}
             liveDeduction={liveDeduction}
             placeholder={showVeil ? <InkWriting /> : undefined}
+            pending={pending}
+            unlocked={!!challenge?.god_unlocked}
             emptyText=""
-            runningHead={{ left: context.scenario.name, right: preview ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
-            folio={{ left: "小天下集", right: preview ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
+            runningHead={{ left: context.scenario.name, right: trial ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
+            folio={{ left: "小天下集", right: trial ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
           />
           {adjourn && (
             <aside
@@ -507,7 +522,7 @@ export default function ScenarioBattle() {
                   <span>{winRate}</span>
                 </p>
               </div>
-              {!preview && (
+              {!trial && (
                 <p className="scenario-info__meta">
                   <span>本场已推演 {attempts} 次</span>
                   <span>{locked ? STAGE_TEXT[stage] : `第 ${nextRun} 次`}</span>

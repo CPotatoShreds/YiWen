@@ -5,3 +5,5 @@ export function parseUnderstanding(json: string | undefined | null): Understandi
 export interface LlmProfile { id: number; label: string; provider: string; base_url: string; model: string; has_api_key: boolean; is_active: boolean; created_at: string }
 export interface Character { id: string; owner_id: number; name: string; bio: string; ability_ids: string[] }
 export interface Scenario { id: string; slug: string; name: string; subtitle: string; introduction: string; background: string; rules: string[]; victory_condition: string; judgement_rules: string[]; status: "draft" | "published" | "deleted"; created_by: number; published_at?: string | null; created_at?: string | null }
+/** 立卷提交体：与后端 ScenarioIn 同形（app/schemas/scenario_domain.py），slug/status 由服务端派生 */
+export interface ScenarioDraft { name: string; subtitle: string; introduction: string; background: string; rules: string[]; victory_condition: string; judgement_rules: string[] }

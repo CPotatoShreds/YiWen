@@ -13,8 +13,9 @@ narration_snapshot（推演必先于叙述），均为替换语义；终态随�
 拓扑：
 - 实时：publish() 先投本地订阅者队列，再向 Redis 全局频道广播信封（origin=实例号）。
   各实例的 relay 协程收到他人实例的事件后转投本地订阅者；自身 origin 跳过，防回环双投。
-- 侧别过滤：订阅者登记侧别（challenger/guardian），带 side 的事件只投递给同侧
-  订阅者（防守方收到挑战者叙述正文；无 side 事件如 done/error 全体广播）。
+- 侧别过滤：订阅者登记侧别（challenger/guardian/both），带 side 的事件只投递给同侧
+  订阅者（刻印收不到挑战者叙述正文）；登记 both 表示自己打自己的刻印，两侧正文都收。
+  无 side 事件如 done/error 全体广播。
 - 降级：Redis 不可用时退化为单进程模式（本地投递照旧，跨实例能力暂失），
   仅在状态翻转时打一条 warning 防刷屏。
 """
@@ -70,8 +71,13 @@ class ScenarioChallengeStream:
             buffers = self._god_buffers if kind == "deduction_chunk" else self._view_buffers
             buffers[side] = buffers.get(side, "") + str(event.get("text", ""))
         for queue, subscriber_side in list(self._subscribers.items()):
-            if side is not None and subscriber_side is not None and side != subscriber_side:
-                continue  # 侧别不符：守方连接不投挑战者事件（含逐字正文）
+            if (
+                side is not None
+                and subscriber_side is not None
+                and subscriber_side != "both"  # both = 自己打自己的刻印，两侧正文都要
+                and side != subscriber_side
+            ):
+                continue  # 侧别不符：刻印连接不投挑战者事件（含逐字正文）
             queue.put_nowait(event)
 
     async def subscribe(self, side: str | None = None) -> tuple[asyncio.Queue, list[dict]]:
@@ -85,10 +91,14 @@ class ScenarioChallengeStream:
         self._subscribers[queue] = side
         SSE_STREAMS_ACTIVE.inc()
         snapshot: list[dict] = []
-        if side is not None and self._god_buffers.get(side):
-            snapshot.append({"type": "deduction_snapshot", "side": side, "text": self._god_buffers[side]})
-        if side is not None and self._view_buffers.get(side):
-            snapshot.append({"type": "narration_snapshot", "side": side, "text": self._view_buffers[side]})
+        # side="both"（自己打自己的刻印）要在一条连接上补两侧快照
+        sides = ("challenger", "guardian") if side == "both" else ((side,) if side is not None else ())
+        for current in sides:
+            if self._god_buffers.get(current):
+                snapshot.append({"type": "deduction_snapshot", "side": current, "text": self._god_buffers[current]})
+        for current in sides:
+            if self._view_buffers.get(current):
+                snapshot.append({"type": "narration_snapshot", "side": current, "text": self._view_buffers[current]})
         snapshot.extend(self._emitted)
         return queue, snapshot
 

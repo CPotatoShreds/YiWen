@@ -278,7 +278,7 @@ async def export_me(
                         "ability_ids": [str(link.ability_id) for link in char_links if link.character_id == c.id],
                         "created_at": _iso(c.created_at)} for c in characters],
         "challenges": [{"id": str(ch.id), "roster_id": str(ch.roster_id), "status": ch.status,
-                        "challenge_number": ch.challenge_number, "is_preview": ch.is_preview,
+                        "challenge_number": ch.challenge_number, "is_trial": ch.is_trial,
                         "won": ch.won, "created_at": _iso(ch.created_at),
                         "messages": ch.messages, "guesses": ch.guesses} for ch in challenges],
         "roster_progress": [{"roster_id": str(p.roster_id), "attempts": p.attempts,

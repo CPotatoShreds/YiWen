@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api";
+import { PlusIcon } from "../../components/icons";
 
 type Scenario = {
   id: string; name: string; subtitle: string; introduction: string; background: string; rules: string[]; victory_condition: string; judgement_rules: string[];
@@ -19,7 +21,7 @@ export default function AdminScenarios() {
     finally { setBusy(""); }
   };
   return <div className="admin-page">
-    <div className="admin-toolbar"><div><h2>小天下集各卷</h2><p className="muted">管理各卷草稿、发布状态与下线。</p></div><button className="btn btn-ghost" onClick={() => void load()}>刷新</button></div>
+    <div className="admin-toolbar"><div><h2>小天下集各卷</h2><p className="muted">管理各卷草稿、发布状态与下线。</p></div><div className="admin-toolbar__actions"><button className="btn btn-ghost" onClick={() => void load()}>刷新</button><Link className="btn btn-primary" to="/admin/scenarios/new"><PlusIcon size={15} />立卷</Link></div></div>
     {error && <p className="err">{error}</p>}
     {items.length === 0 ? <div className="empty"><p>暂无卷。</p></div> : <div className="review-list">{items.map((item) => <article className="review-item" key={item.id}>
       <div className="review-item__head"><h3>{item.name}</h3><span className="muted">{item.subtitle} · {item.status === "published" ? "已发布" : item.status === "deleted" ? "已下线" : "草稿"}</span></div>
