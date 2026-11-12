@@ -9,7 +9,6 @@ import { InkWriting } from "../components/InkWriting";
 import { BackButton } from "../components/PageShell";
 import {
   STAGE_TEXT,
-  chineseNumber,
   isInProgress,
   type Message,
   type ScenarioHistoryItem,
@@ -43,7 +42,7 @@ type RosterContext = {
 type Challenge = {
   id: string;
   status: string;
-  challenge_number: number;
+  created_at?: string;
   is_trial?: boolean;
   scenario: Scenario;
   roster: { character_name: string };
@@ -101,7 +100,6 @@ export default function ScenarioBattle() {
   const [error, setError] = useState("");
   const bootedFor = useRef<string | null>(null);
   const startedHere = useRef(false);
-  const lastNumber = useRef(0);
   const pendingDerive = useRef(false);
   const deriveRef = useRef<() => void>(() => {});
 
@@ -159,7 +157,6 @@ export default function ScenarioBattle() {
       .then((data) => {
         if (!alive) return;
         setChallenge(data);
-        lastNumber.current = data.challenge_number;
         const next: Stage = stageFromStatus(data.status);
         setStage((current) => (ORDER[next] >= ORDER[current] || current === "loading" ? next : current));
         const prior = data.messages.find((message) => message.role === "challenger");
@@ -322,9 +319,6 @@ export default function ScenarioBattle() {
       ? "暂无胜负"
       : `挑战者胜率 ${Math.round(context.roster.challenger_win_rate * 100)}%`;
   const attempts = context.my_progress?.attempts ?? 0;
-  // 新局的场次：/scenarios 有 10s 缓存，用「已推演次数」与本会话见过的最大场次兜底，页码不回退
-  const nextRun = Math.max(attempts + 1, lastNumber.current + 1);
-  const runNumber = challenge?.challenge_number ?? nextRun;
   // 已起笔但策略未落库：人物榜锁住，只改策略
   const locked = !!currentId && !challenge?.messages.some((message) => message.role === "challenger") && !failed;
 
@@ -472,8 +466,8 @@ export default function ScenarioBattle() {
             pending={pending}
             unlocked={!!challenge?.god_unlocked}
             emptyText=""
-            runningHead={{ left: context.scenario.name, right: trial ? "异闻录试炼" : `第 ${runNumber} 次推演` }}
-            folio={{ left: "小天下集", right: trial ? "— 试 —" : `— ${chineseNumber(runNumber)} —` }}
+            runningHead={{ left: context.scenario.name, right: trial ? "异闻录试炼" : "" }}
+            folio={{ left: "小天下集", right: trial ? "— 试 —" : "" }}
           />
           {adjourn && (
             <aside
@@ -525,7 +519,7 @@ export default function ScenarioBattle() {
               {!trial && (
                 <p className="scenario-info__meta">
                   <span>本场已推演 {attempts} 次</span>
-                  <span>{locked ? STAGE_TEXT[stage] : `第 ${nextRun} 次`}</span>
+                  {locked && <span>{STAGE_TEXT[stage]}</span>}
                 </p>
               )}
             </div>

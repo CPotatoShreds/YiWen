@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { ScenarioHistoryItem } from "../scenarioModel";
+import { formatShortDateTime } from "../datetime";
 
 /**
  * 对局记录列表：刻印页与对战界面共用。
@@ -22,7 +23,7 @@ export function ScenarioHistory({
         const verdict = item.won === true ? "胜" : item.won === false ? "负" : "待定";
         const row = (
           <>
-            <span className="roster-history__num">{item.challenge_number}</span>
+            <span className="roster-history__time">{formatShortDateTime(item.created_at)}</span>
             <span className="roster-history__info">
               <strong>{item.challenger_character_name || "未知挑战者"}</strong>
               <small>{item.strategy || "跳过策略，由奇人自行应对"}</small>

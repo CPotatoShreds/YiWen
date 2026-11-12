@@ -6,11 +6,12 @@ import { BookIcon, ChevronRightIcon } from "../components/icons";
 import { ScenarioManuscript } from "../components/ScenarioNarrative";
 import { BackButton } from "../components/PageShell";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
+import { formatShortDateTime } from "../datetime";
 
 type Challenge = {
   id: string;
   status: string;
-  challenge_number: number;
+  created_at?: string;
   is_trial?: boolean;
   roster: { character_name: string };
   challenger: { character_name: string };
@@ -120,9 +121,15 @@ export default function ScenarioRecords() {
                   aria-expanded={open}
                   onClick={() => setParams(open ? {} : { run: item.id }, { replace: true })}
                 >
-                  <span className="records-row__no">
-                    {item.is_trial ? "异闻录试炼" : `第 ${item.challenge_number} 次推演`}
+                  <span className="records-row__main">
+                    <strong className="records-row__who">
+                      {item.challenger_character_name || "未知挑战者"}
+                    </strong>
+                    <small className="records-row__strategy">
+                      {item.strategy || "跳过策略，由奇人自行应对"}
+                    </small>
                   </span>
+                  <span className="records-row__time">{formatShortDateTime(item.created_at)}</span>
                   <span className={`records-row__verdict ${verdict.tone}`}>{verdict.text}</span>
                   <span className="records-row__arrow" aria-hidden="true">
                     <ChevronRightIcon size={16} />
@@ -144,7 +151,7 @@ export default function ScenarioRecords() {
                           own={own}
                           ownLabel={ownLabel}
                           guardianLabel={detail.roster.character_name}
-                          title={`第 ${detail.challenge_number} 次推演`}
+                          title="本场推演"
                           note={detail.won === null ? "尚未成卷" : "本场结局已记录"}
                           emptyText="奇术比对完成后，整场推演将一次成卷。"
                         />

@@ -1619,7 +1619,7 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .roster-history__row:hover { background: var(--ground); text-decoration: none; }
 .roster-history__row.is-current { background: var(--ground-2); cursor: default; }
 .roster-history__row.is-current:hover strong { color: var(--ink); }
-.roster-history__num { flex: none; min-width: 18px; color: var(--line-strong); font-family: var(--font-mono); font-size: 12px; font-weight: 700; text-align: right; }
+.roster-history__time { flex: none; color: var(--line-strong); font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
 .roster-history__info { flex: 1; display: grid; gap: 2px; min-width: 0; }
 .roster-history__info strong { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .roster-history__row:hover strong { color: var(--accent-strong); }
@@ -1709,8 +1709,10 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .records-row__hit { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 14px; width: 100%; padding: 13px 18px; border: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
 .records-row__hit:hover { background: var(--ground-2); }
 .records-row__hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.records-row__no { font-weight: 700; font-size: 14px; }
-.records-row__who { color: var(--muted); font-size: 13px; }
+.records-row__main { display: grid; gap: 2px; min-width: 0; }
+.records-row__who { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.records-row__strategy { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.records-row__time { color: var(--line-strong); font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
 .records-row__verdict { font-size: 13px; font-weight: 700; }
 .records-row__verdict.is-won { color: var(--success); }
 .records-row__verdict.is-lost { color: var(--accent-strong); }
@@ -1728,7 +1730,8 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 .records-verdict p { margin: 4px 0 0; color: var(--muted); }
 @media (max-width: 720px) {
   .records-row__hit { grid-template-columns: minmax(0, 1fr) auto; }
-  .records-row__who { display: none; }
+  .records-row__who { font-size: 13px; }
+  .records-row__strategy { display: none; }
 }
 
 /* ============================================================
