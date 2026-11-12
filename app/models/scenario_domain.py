@@ -122,6 +122,8 @@ class ScenarioChallengeRun(Base):
     roster_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     challenger_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    # 内部序号：正式局等于 attempts 递增结果，试炼局恒 1。只用于并发去重，
+    # 不对外下发、不进 UI（见 migration 里的 partial unique index）。
     challenge_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     guess_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     won: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -137,6 +139,17 @@ class ScenarioChallengeRun(Base):
     __table_args__ = (
         Index("ix_scenario_challenge_runs_roster_challenger_created", "roster_id", "challenger_id", text("created_at DESC")),
         Index("ix_scenario_challenge_runs_roster_created", "roster_id", text("created_at DESC")),
+        # 正式局内 (roster, challenger, 内部序号) 唯一：并发创建时同一 attempts 只能落一条。
+        # 试炼局序号恒 1，必须排除在外，否则作者连打多局会撞约束。
+        Index(
+            "uq_scenario_challenge_runs_number",
+            "roster_id",
+            "challenger_id",
+            "challenge_number",
+            unique=True,
+            postgresql_where=text("is_trial = false"),
+            sqlite_where=text("is_trial = false"),
+        ),
     )
 
 

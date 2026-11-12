@@ -73,7 +73,9 @@ def test_roster_is_public_and_author_trial_is_excluded_from_stats():
         assert client.get(f"/api/scenarios/{scenario.json()['slug']}/rosters").json()[0]["id"] == roster.json()["id"]
         challenge = client.post(f"/api/scenario-rosters/{roster.json()['id']}/challenges", headers=author, json={"character_id": character_id})
         assert challenge.status_code == 201, challenge.text
-        assert challenge.json()["challenge_number"] == 1
+        # 编号降级为内部序号：不下发，标识改由 created_at 承担
+        assert "challenge_number" not in challenge.json()
+        assert challenge.json()["created_at"]
         challenge_detail = client.get(f"/api/scenario-challenges/{challenge.json()['id']}", headers=author)
         assert challenge_detail.status_code == 200, challenge_detail.text
         assert challenge_detail.json()["scenario"]["rules"] == ["不得离开结界"]

@@ -45,7 +45,6 @@ def public_guess_rounds(rounds: list[dict] | None) -> list[dict]:
         output.append({
             "id": item.get("id", ""),
             "challenge_id": item.get("challenge_id", ""),
-            "challenge_number": item.get("challenge_number"),
             "text": item.get("text", ""),
             "attempt": item.get("attempt", 0),
             "status": item.get("status", "complete"),

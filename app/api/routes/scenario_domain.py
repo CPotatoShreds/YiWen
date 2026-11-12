@@ -79,6 +79,29 @@ async def _unique_scenario_slug(db: AsyncSession, name: str, scenario_id: UUID) 
     return f"{base[:71].rstrip('-')}-{scenario_id.hex[:8]}"
 
 
+async def _lock_or_create_progress(db: AsyncSession, roster_id: UUID, challenger_id: int) -> ScenarioRosterProgress:
+    """取进度行并加 FOR UPDATE 行锁：并发创建挑战时保证 attempts 只被顺序递增一次。
+
+    首战的行还不存在，`FOR UPDATE` 锁不到任何东西，所以先经 SAVEPOINT 插入：两个并发请求
+    都看不到行时都会尝试 INSERT，后到者撞 (roster_id, challenger_id) 主键，SAVEPOINT 让这次
+    失败不牵连外层事务里已加载的 roster；随后阻塞在重锁上，读到先到者提交的行。
+    """
+    key = (ScenarioRosterProgress.roster_id == roster_id, ScenarioRosterProgress.challenger_id == challenger_id)
+    progress = await db.scalar(select(ScenarioRosterProgress).where(*key).with_for_update())
+    if progress is not None:
+        return progress
+    try:
+        async with db.begin_nested():
+            progress = ScenarioRosterProgress(roster_id=roster_id, challenger_id=challenger_id)
+            db.add(progress)
+            await db.flush()
+    except IntegrityError:
+        progress = await db.scalar(select(ScenarioRosterProgress).where(*key).with_for_update())
+        if progress is None:
+            raise HTTPException(409, "挑战创建冲突，请重试") from None
+    return progress
+
+
 async def _character_snapshot(db: AsyncSession, character_id: UUID, owner_id: int) -> tuple[str, str, list[dict]]:
     character = await db.get(Character, character_id)
     if character is None or character.owner_id != owner_id:
@@ -169,7 +192,6 @@ async def _challenge_history_out(db: AsyncSession, challenge: ScenarioChallengeR
     return ScenarioChallengeHistoryOut(
         id=challenge.id,
         status=challenge.status,
-        challenge_number=challenge.challenge_number,
         is_trial=challenge.is_trial,
         won=challenge.won,
         guess_attempts=challenge.guess_attempts,
@@ -477,11 +499,9 @@ async def create_challenge(roster_id: UUID, request: Request, body: ChallengeIn,
     # 不参与任何可见性判断——视角一律由下面读取时的关系推导（见 services/scenario/views.py）。
     is_trial = roster.owner_id == current.id
     challenger_name, challenger_bio, challenger_abilities = await _character_snapshot(db, body.character_id, current.id)
-    progress = await db.get(ScenarioRosterProgress, {"roster_id": roster.id, "challenger_id": current.id})
-    if progress is None:
-        progress = ScenarioRosterProgress(roster_id=roster.id, challenger_id=current.id)
-        db.add(progress)
-        await db.flush()
+    # 进度行加锁：并发下两个请求顺序读到递增后的 attempts，不会拿同一个序号，
+    # 配合 uq_scenario_challenge_runs_number 兜住漏网的撞号。
+    progress = await _lock_or_create_progress(db, roster.id, current.id)
     if not is_trial:
         progress.attempts += 1
     roster_abilities = await _roster_abilities(db, roster)
@@ -490,6 +510,7 @@ async def create_challenge(roster_id: UUID, request: Request, body: ChallengeIn,
         challenger_id=current.id,
         is_trial=is_trial,
         status="preparing",
+        # 内部序号（不下发）：正式局 = 递增后的 attempts，试炼局恒 1（partial index 已排除）
         challenge_number=progress.attempts if not is_trial else 1,
         scenario_snapshot=_scenario_snapshot(scenario),
         roster_snapshot={
@@ -511,7 +532,7 @@ async def create_challenge(roster_id: UUID, request: Request, body: ChallengeIn,
     await db.commit()
     await db.refresh(challenge)
     await dispatch("scenario_prepare", challenge.id)
-    return ChallengeOut(id=challenge.id, roster_id=roster.id, scenario_id=scenario.id, status=challenge.status, challenge_number=challenge.challenge_number, is_trial=challenge.is_trial, created_at=challenge.created_at)
+    return ChallengeOut(id=challenge.id, roster_id=roster.id, scenario_id=scenario.id, status=challenge.status, is_trial=challenge.is_trial, created_at=challenge.created_at)
 
 
 @challenge_router.get("/scenario-challenges/{challenge_id}")
@@ -535,8 +556,8 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
             "roster_id": challenge.roster_id,
             "scenario_id": challenge.scenario_snapshot.get("id"),
             "status": challenge.status,
-            "challenge_number": challenge.challenge_number,
             "is_trial": challenge.is_trial,
+            "created_at": challenge.created_at,
             # 挑战者恰好就是刻印作者（试炼局）：两边都是己方，推演与双方正文全部下发。
             "viewer_role": side,
             "scenario": challenge.scenario_snapshot,
@@ -568,8 +589,8 @@ async def challenge_detail(challenge_id: UUID, current: Annotated[User, Depends(
         "roster_id": challenge.roster_id,
         "scenario_id": challenge.scenario_snapshot.get("id"),
         "status": challenge.status,
-        "challenge_number": challenge.challenge_number,
         "is_trial": challenge.is_trial,
+        "created_at": challenge.created_at,
         "viewer_role": "owner",
         "scenario": challenge.scenario_snapshot,
         "roster": challenge.roster_snapshot,
@@ -671,7 +692,6 @@ async def challenge_guess(challenge_id: UUID, payload: dict, current: Annotated[
     record = {
         "id": round_id,
         "challenge_id": str(challenge.id),
-        "challenge_number": challenge.challenge_number,
         "text": text,
         "attempt": challenge.guess_attempts,
         "status": "splitting",

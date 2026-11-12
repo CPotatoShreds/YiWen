@@ -57,7 +57,6 @@ class ChallengeOut(BaseModel):
     roster_id: UUID
     scenario_id: UUID
     status: str
-    challenge_number: int
     is_trial: bool = False
     created_at: datetime | None = None
 
@@ -77,7 +76,6 @@ class ScenarioRosterProgressOut(BaseModel):
 class ScenarioChallengeHistoryOut(BaseModel):
     id: UUID
     status: str
-    challenge_number: int
     is_trial: bool = False
     won: bool | None = None
     guess_attempts: int = 0
