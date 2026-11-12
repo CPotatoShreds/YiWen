@@ -116,7 +116,13 @@ body {
   flex-direction: column;
   min-height: 100dvh;
 }
-.app > .container { flex: 1; width: 100%; }
+/* 版心提到全站水墨底景之上：墨迹只作背景，永不吃掉内容与点击 */
+.app > .container {
+  flex: 1;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
 
 a { color: var(--accent-strong); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -594,8 +600,28 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   padding: 72px 0 40px;
   text-align: center;
 }
-/* 全屏墨色游鱼：整页水域。z-index:0 让鱼浮在 body 纸底之上、
-   普通流内容之下需配合前景提层——鱼经过卡片会被卡片盖住。 */
+/* 全站水墨底景：整站一张宣纸，浮在 body 纸底之上、所有内容之下。
+   z-index:0 是刻意的——墨迹经过卡片、表格会被内容盖住；
+   内容侧由 .app > .container 提层（见「版心」一节）。 */
+.site-ink {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+}
+/* 宣纸纤维：feTurbulence 由浏览器合成，比在 canvas 里逐帧铺四万个点便宜得多。
+   这一层压在墨上（DOM 在后、同 z-index），山水因此与纸面同在一张纸上。 */
+.site-ink-paper {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.10'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+}
+/* 游鱼（InkFish）暂未挂载，样式留作素材：换回鱼群时直接挂组件即可 */
 .home-fish {
   position: fixed;
   inset: 0;
@@ -605,8 +631,6 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   pointer-events: none;
   opacity: 0.9;
 }
-/* 首页内容与页脚山影、顶部檐口提到鱼层之上 */
-.home-gate > :not(.home-fish) { position: relative; z-index: 1; }
 .home-gate__actions {
   display: flex;
   flex-wrap: wrap;
@@ -974,8 +998,6 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 
   .app:has(.codex__body) { height: 100dvh; overflow: hidden; }
   main.container:has(.codex__body) { display: flex; flex-direction: column; min-height: 0; padding-bottom: 0; }
-  .app:has(.codex__body) .ink-footer { flex: none; margin-top: 0; }
-  .app:has(.codex__body) .ink-footer__hills { height: 56px; }
   .page-shell:has(.codex__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .page-shell:has(.codex__body) > .cloud-divider { flex: none; margin-top: 18px; }
   /* 两栏撑满可用高度，但不无限拉伸：超大屏（2K/4K）上整块工作台止于
@@ -1285,25 +1307,6 @@ button.codex__slot:hover svg { transform: translateX(2px); }
 @keyframes bannerSway {
   0%, 100% { transform: rotate(-2deg); }
   50% { transform: rotate(2.5deg); }
-}
-
-/* ---------- 卷末落款：页脚远山 + 收卷印 ---------- */
-.ink-footer {
-  position: relative;
-  z-index: 1;
-  margin-top: 52px;
-  pointer-events: none;
-  user-select: none;
-}
-.ink-footer__hills { display: block; width: 100%; height: 150px; }
-.ink-footer__seal {
-  position: absolute;
-  left: 50%;
-  bottom: 30px;
-  transform: translateX(-50%);
-  display: grid;
-  place-items: center;
-  opacity: 0.42;
 }
 
 /* ---------- 新素材通用类 ---------- */
@@ -1699,7 +1702,6 @@ button.codex__slot:hover svg { transform: translateX(2px); }
    （:has 限定记录页，不影响对战页同壳；移动端保持页面滚动） */
 @media (min-width: 761px) {
   main.container:has(.records-ledger) { padding-bottom: 0; }
-  .app:has(.records-ledger) .ink-footer { margin-top: 16px; }
   .scenario-challenge:has(.records-ledger) { height: calc(100dvh - 234px); min-height: 0; }
   .scenario-challenge:has(.records-ledger) .records-ledger { flex: 1; min-height: 0; overflow-y: auto; }
 }

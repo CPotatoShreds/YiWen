@@ -26,7 +26,7 @@ import AdminAbilities from "./pages/admin/AdminAbilities";
 import AdminTraffic from "./pages/admin/AdminTraffic";
 import AdminScenarios from "./pages/admin/AdminScenarios";
 import AdminScenarioNew from "./pages/admin/AdminScenarioNew";
-import { InkMountains, SealStamp } from "./components/Ornaments";
+import InkLandscape from "./components/InkLandscape";
 
 /** 会话恢复中的占位。不可 return null —— 那会让刷新后出现一瞬白屏。 */
 function AppLoading() {
@@ -52,25 +52,13 @@ function RequireAdmin({ children }: { children: React.ReactElement }) {
   return user?.is_admin ? children : <Navigate to="/home" replace />;
 }
 
-/** 卷末：远山墨影 + 收卷印。认证页（正门）不落款。 */
-function SiteFooter() {
-  const { pathname } = useLocation();
-  if (pathname === "/login" || pathname === "/register") return null;
-  return (
-    <footer className="ink-footer" aria-hidden="true">
-      <InkMountains className="ink-footer__hills" preserveAspectRatio="none" />
-      <span className="ink-footer__seal">
-        <SealStamp char="卷" size={26} />
-      </span>
-    </footer>
-  );
-}
-
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <div className="app">
+          {/* 全站底景：整站一张宣纸，路由切换不重挂（画稿是模块级单例） */}
+          <InkLandscape />
           <UserMenu />
           <div className="eaves" aria-hidden="true" />
           <main className="container">
@@ -112,7 +100,6 @@ export default function App() {
               </Route>
             </Routes>
           </main>
-          <SiteFooter />
         </div>
       </BrowserRouter>
     </AuthProvider>

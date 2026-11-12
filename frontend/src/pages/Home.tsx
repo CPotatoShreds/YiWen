@@ -2,15 +2,13 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { BookIcon, ScrollIcon } from "../components/icons";
 import { SealStamp } from "../components/Ornaments";
-import InkFish from "../components/InkFish";
 
-/** 登录后首页：居中问候，两按钮分流小天下集与异闻录；右下角一池墨鱼。 */
+/** 登录后首页：居中问候，两按钮分流小天下集与异闻录；底景水墨山水由 App 统一铺。 */
 export default function Home() {
   const { user } = useAuth();
   if (!user) return null;
   return (
     <section className="home-gate">
-      <InkFish />
       <span className="home-gate__seal" aria-hidden="true">
         <SealStamp char="异" size={44} />
       </span>
