@@ -20,7 +20,7 @@ for (const width of [1440, 768, 390]) {
   });
 }
 
-test("空册可创建奇人，保存后首页计数同步", async ({ page }) => {
+test("空册可创建奇人，经首页返回后仍能读取", async ({ page }) => {
   await mockGame(page, { empty: true });
   await page.goto("/yiwenlu");
   await page.getByRole("button", { name: "写一位奇人" }).click();
@@ -28,7 +28,8 @@ test("空册可创建奇人，保存后首页计数同步", async ({ page }) => 
   await page.getByRole("button", { name: "收录", exact: true }).click();
   await expect(page.getByRole("heading", { name: "听雨客" })).toBeVisible();
   await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "书院", exact: true }).click();
-  await expect(page.locator(".collection-stats dd").first()).toHaveText("1");
+  await page.locator("main").getByRole("link", { name: /异闻录/ }).click();
+  await expect(page.getByRole("heading", { name: "听雨客" })).toBeVisible();
 });
 
 test("放弃修改与删除都可取消，确认框管理焦点", async ({ page }) => {
@@ -126,7 +127,7 @@ test("减少动态效果时仍能导航，账号菜单支持 Escape", async ({ p
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(account).toBeFocused();
-  await page.getByRole("link", { name: "去小天下集", exact: true }).click();
+  await page.locator("main").getByRole("link", { name: /小天下集/ }).click();
   await expect(page).toHaveURL(/\/scenarios$/);
   await expect(page.getByRole("heading", { name: /小天下集/, level: 1 })).toBeVisible();
   expect(await page.locator("main").evaluate(el => el.getAnimations().length)).toBe(0);

@@ -7,29 +7,29 @@
 :root {
   --control-height: 44px;
   /* 色板：唯一主色是 --accent（朱砂印章红）。墨绿仅用于命中/成功态，克制使用。 */
-  --ground: #f3efe5;           /* 宣纸暖白 */
-  --ground-2: #eae3d4;         /* 稍深纸色（凹槽/条带） */
-  --surface: #fcf8ef;          /* 纸面（卡片） */
-  --ink: #302d28;              /* 墨（暖炭黑，非纯黑） */
-  --muted: #6d655a;            /* 淡墨灰 */
-  --line: #dcd3c1;             /* 淡墨线 */
-  --line-strong: #b9aa8e;      /* 深墨线 */
-  --accent: #a13a2d;           /* 朱砂印章红 */
-  --accent-strong: #812c24;    /* 深朱砂 */
-  --accent-soft: #f1ded4;      /* 朱砂淡晕 */
-  --success: #41654c;          /* 墨绿 */
-  --success-soft: #e7ecdf;
+  --ground: #f4efe3;           /* 宣纸暖白 */
+  --ground-2: #ebe3d0;         /* 稍深纸色（凹槽/条带） */
+  --surface: #faf6ec;          /* 纸面（卡片） */
+  --ink: #2f2b26;              /* 墨（暖炭黑，非纯黑） */
+  --muted: #6f675c;            /* 淡墨灰 */
+  --line: #dcd2bb;             /* 淡墨线 */
+  --line-strong: #c3b699;      /* 深墨线 */
+  --accent: #b03a2e;           /* 朱砂印章红 */
+  --accent-strong: #8f2a1f;    /* 深朱砂 */
+  --accent-soft: #f4e0d4;      /* 朱砂淡晕 */
+  --success: #467a53;          /* 墨绿 */
+  --success-soft: #e4eee2;
 
   /* 主色的 RGB 分量：写 rgba() 时用 var() 拼，避免十六进制色值散落各处 */
-  --ink-rgb: 48, 45, 40;          /* 同 --ink */
-  --accent-rgb: 161, 58, 45;      /* 同 --accent */
+  --ink-rgb: 47, 43, 38;          /* 同 --ink */
+  --accent-rgb: 176, 58, 46;      /* 同 --accent */
   --on-accent: #fff;              /* 主色之上的文字 */
   --knob: #fff;                   /* 控件上的亮面颗粒（开关滑块等） */
 
   /* 字排 */
-  --font-display: "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
-  --font-body: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-seal: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif CJK SC", serif;
+  --font-display: "Outfit", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-seal: "Kaiti SC", "STKaiti", "KaiTi", "楷体", "PingFang SC", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
 
   /* 动效：交互反馈只有三档，务必按「变了什么」而不是「改在哪里」来选。
@@ -65,11 +65,11 @@
   --width-empty: 560px;
 
   /* 阴影：染墨色调，非冷灰 */
-  --shadow-soft: 0 2px 6px rgba(48,45,40,.035);
-  --shadow-hover: 0 6px 14px rgba(48,45,40,.07);
+  --shadow-soft: 0 1px 2px rgba(var(--ink-rgb), 0.05), 0 10px 24px -18px rgba(var(--ink-rgb), 0.22);
+  --shadow-hover: 0 2px 6px rgba(var(--ink-rgb), 0.07), 0 18px 36px -22px rgba(var(--ink-rgb), 0.3);
 
-  --radius: 6px;
-  --radius-sm: 4px;
+  --radius: 16px;
+  --radius-sm: 10px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -126,7 +126,8 @@ body {
 }
 
 a { color: var(--accent-strong); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* 链接可承载整张卡片；悬停时不把下划线传播到卡片内的每行文字。 */
+a:hover { text-decoration: none; }
 
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -597,10 +598,13 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 10px;
-  padding: 72px 0 40px;
+  gap: 0;
+  padding: clamp(4px, 2vh, 20px) 0 0;
   text-align: center;
 }
+.home-gate__greeting { display: flex; align-items: center; justify-content: center; gap: 12px; max-width: 100%; }
+.home-gate__greeting svg { flex: none; }
+.home-gate__greeting h1 { font-size: 24px; line-height: 1.5; overflow-wrap: anywhere; }
 /* 全站水墨底景：整站一张宣纸，浮在 body 纸底之上、所有内容之下。
    z-index:0 是刻意的——墨迹经过卡片、表格会被内容盖住；
    内容侧由 .app > .container 提层（见「版心」一节）。 */
@@ -633,36 +637,42 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   opacity: 0.9;
 }
 .home-gate__actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   justify-content: center;
   width: 100%;
   max-width: var(--width-card);
-  margin-top: 22px;
+  margin-top: 24px;
 }
 .home-gate__choice {
+  --card-edge: var(--accent);
+  position: relative;
   display: grid;
   justify-items: start;
-  gap: 4px;
-  width: min(300px, 100%);
-  padding: 20px 22px;
+  gap: 10px;
+  min-width: 0;
+  padding: 24px 28px;
+  text-align: left;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: var(--surface);
+  border-left: 6px solid var(--card-edge);
+  background: linear-gradient(135deg, var(--surface), var(--ground-2));
   box-shadow: var(--shadow-soft);
   color: var(--ink);
   text-decoration: none;
   transition: transform var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
 }
+.home-gate__choice--codex { --card-edge: var(--ink); }
+.home-gate__choice::after { content: ""; position: absolute; inset: 6px; border: 1px solid color-mix(in srgb, var(--card-edge) 14%, transparent); border-radius: calc(var(--radius) - 6px); pointer-events: none; }
 .home-gate__choice:hover {
   transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-color: var(--card-edge);
   box-shadow: var(--shadow-hover);
   text-decoration: none;
 }
-.home-gate__choice svg { color: var(--accent-strong); }
-.home-gate__choice strong { font-family: var(--font-display); font-size: 17px; }
+.home-gate__choice svg { color: var(--card-edge); }
+.home-gate__choice strong { font-family: var(--font-display); font-size: 20px; }
 .home-gate__choice span { color: var(--muted); font-size: 13px; }
 /* 账号页已有 PageShell 页头，卡片不再整屏居中，否则会被推到页头下方很远 */
 .me-page {

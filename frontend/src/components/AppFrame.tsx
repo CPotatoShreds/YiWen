@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useAuth } from "../auth";
 import UserMenu from "./UserMenu";
 import InkLandscape from "./InkLandscape";
+import { SealStamp } from "./Ornaments";
 
 const destinations = [
   { to: "/home", label: "书院" },
@@ -30,7 +31,7 @@ export default function AppFrame({ children }: { children: ReactNode }) {
     <InkLandscape />
     <a className="skip-link" href="#main-content">跳到主要内容</a>
     <header className="site-header">
-      <Link className="site-brand" to="/home"><span className="site-seal" aria-hidden="true">异</span><strong>异闻录</strong><span className="site-brand-note">以奇术，见天地</span></Link>
+      <Link className="site-brand" to="/home"><SealStamp char="异" size={34} /><strong>异闻录</strong><span className="site-brand-note">以奇术，见天地</span></Link>
       {user && <nav className="site-nav" aria-label="主导航">{destinations.map(item => <NavLink key={item.to} to={item.to}>{item.label}</NavLink>)}</nav>}
       <div className="site-header-actions"><UserMenu />
         {user && <Dialog.Root key={pathname}><Dialog.Trigger className="mobile-menu-button" aria-label="打开导航">目录</Dialog.Trigger><Dialog.Portal>
