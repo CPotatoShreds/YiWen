@@ -13,6 +13,7 @@ for (const width of [1440, 768, 390]) {
       await page.goto(url);
       await expect(page.locator("main")).toContainText(/书院|小天下集|夜渡听潮|异闻录|撑伞客|刻印奇人|设置/);
       await expect(page.locator(".skeleton")).toHaveCount(0);
+      await expect(page.locator(".site-header, .site-footer, .mobile-menu-button")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`${name}-${width}.png`), fullPage: true });
     }
@@ -27,7 +28,7 @@ test("空册可创建奇人，经首页返回后仍能读取", async ({ page }) 
   await page.getByRole("textbox", { name: "名字" }).fill("听雨客");
   await page.getByRole("button", { name: "收录", exact: true }).click();
   await expect(page.getByRole("heading", { name: "听雨客" })).toBeVisible();
-  await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "书院", exact: true }).click();
+  await page.getByRole("link", { name: "返回首页", exact: true }).click();
   await page.locator("main").getByRole("link", { name: /异闻录/ }).click();
   await expect(page.getByRole("heading", { name: "听雨客" })).toBeVisible();
 });
@@ -49,19 +50,20 @@ test("放弃修改与删除都可取消，确认框管理焦点", async ({ page 
   await expect(page.getByRole("textbox", { name: "名字" })).toBeVisible();
 });
 
-test("设置页签支持方向键，手机目录可关可导航", async ({ page }) => {
+test("设置页签支持方向键，手机保留用户菜单与层级返回", async ({ page }) => {
   await mockGame(page);
   await page.goto("/settings");
   await page.getByRole("tab", { name: "模型方案" }).focus();
   await page.keyboard.press("End");
   await expect(page.getByRole("tab", { name: "数据与账号" })).toHaveAttribute("aria-selected", "true");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "打开导航" }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
+  const account = page.getByRole("button", { name: "打开账号菜单" });
+  await account.click();
+  await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "打开导航" })).toBeFocused();
-  await page.getByRole("button", { name: "打开导航" }).click();
-  await page.getByRole("navigation", { name: "移动端导航" }).getByRole("link", { name: "小天下集" }).click();
+  await expect(account).toBeFocused();
+  await page.getByRole("link", { name: "返回首页", exact: true }).click();
+  await page.locator("main").getByRole("link", { name: /小天下集/ }).click();
   await expect(page).toHaveURL(/\/scenarios$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -76,7 +78,7 @@ test("编修时切换篇章，取消保留草稿，确认后清除旧表单", as
   await dialog.getByRole("button", { name: "取消" }).click();
   await expect(page.getByRole("textbox", { name: "名字" })).toHaveValue("未落定的名字");
   await page.getByRole("tab", { name: /奇术篇/ }).click();
-  await dialog.getByRole("button", { name: "确认继续" }).click();
+  await dialog.getByRole("button", { name: "确认", exact: true }).click();
   await expect(page.getByRole("heading", { name: "借风", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "名字" })).toHaveCount(0);
 });
@@ -105,7 +107,7 @@ test("卷架失败给出重试", async ({ page }) => {
 test("寻卷无结果可清除，往期记录可以收起", async ({ page }) => {
   await mockGame(page);
   await page.goto("/scenarios");
-  await page.getByRole("searchbox", { name: "寻卷" }).fill("不存在的卷");
+  await page.getByRole("searchbox", { name: "搜索" }).fill("不存在的卷");
   await expect(page.getByRole("heading", { name: "未找到相应的卷" })).toBeVisible();
   await page.getByRole("button", { name: "清除搜索" }).click();
   await expect(page.getByRole("heading", { name: scenario.name })).toBeVisible();

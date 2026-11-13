@@ -1,39 +1,21 @@
-/* 异闻录 · 书院规范。既有页面的结构类保留；公共角色统一在此。
+/* 异闻录 · 纸墨规范。既有页面的结构类保留；公共角色统一在此。
    桌面版心 1180，阅读正文 760；窄屏按阅读顺序叠放。Token 统一在 index.css。 */
 body { background-image: none; font-size: 15px; }
 .app-redesign { min-height: 100dvh; display: flex; flex-direction: column; }
-.app-redesign .container { flex: 1; padding: 40px 32px 64px; position: relative; z-index: 1; }
+.app-redesign .container { flex: 1; padding: 56px 32px 64px; position: relative; z-index: 1; }
 .app-redesign .container:focus { outline: none; }
-.site-header { position: relative; z-index: 20; display: flex; align-items: center; gap: 28px; min-height: 84px; padding: 12px 40px; border-bottom: 2px solid var(--line-strong); background: var(--surface); }
-.site-brand { display: flex; align-items: center; gap: 12px; color: var(--ink); white-space: nowrap; text-decoration: none; }
-.site-brand strong { font: 600 24px var(--font-display); letter-spacing: .12em; }
-.site-brand-note { font: 13px var(--font-seal); color: var(--muted); }
-.site-nav { display: flex; align-items: center; gap: 10px; margin: 0 auto; }
-.site-nav a { padding: 8px 12px; border-radius: var(--radius-sm); color: var(--muted); font-weight: 600; text-decoration: none; transition: color var(--dur-fast), background-color var(--dur-fast); }
-.site-nav a:hover { background: var(--ground-2); color: var(--ink); }
-.site-nav a.active { background: var(--accent-soft); color: var(--accent-strong); }
-.site-header-actions { display: flex; align-items: center; gap: 10px; }
-.account-trigger { display: flex; align-items: center; gap: 8px; min-height: 44px; background: transparent; border: 0; color: var(--ink); cursor: pointer; font: inherit; }
+.account-trigger { position: fixed; top: 14px; right: 18px; z-index: 30; display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); cursor: pointer; font: inherit; }
 .account-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line-strong); font-family: var(--font-seal); }
 .ds-menu { z-index: 100; min-width: 220px; padding: 8px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 16px 40px #302d281c; animation: paper-open var(--dur-slow) var(--ease); }
 .ds-menu [role="menuitem"] { display: flex; align-items: center; gap: 12px; padding: 12px; min-height: 44px; cursor: pointer; color: var(--ink); border-radius: var(--radius-sm); text-decoration: none; outline: none; }
 .ds-menu [data-highlighted] { background: var(--ground-2); }
-.ds-menu-label { padding: 12px; font-size: 13px; color: var(--muted); }
+.ds-menu-label { display: grid; gap: 4px; padding: 12px; font-size: 13px; color: var(--muted); }
+.ds-menu-label strong { color: var(--ink); }
 .ds-menu-separator { height: 1px; background: var(--line); margin: 4px 12px; }
-.site-footer { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 24px; padding: 22px 40px; color: var(--muted); font: 13px var(--font-seal); }
-.site-footer div { display: flex; gap: 20px; }
-.site-footer a { color: inherit; }
 .skip-link { position: fixed; z-index: 200; top: 8px; left: 16px; transform: translateY(-180%); background: var(--surface); padding: 12px; }
 .skip-link:focus { transform: none; }
-.mobile-menu-button { display: none; min-height: 44px; border: 1px solid var(--line-strong); background: var(--surface); padding: 0 14px; color: var(--ink); font: inherit; }
 .ds-overlay { position: fixed; inset: 0; z-index: 100; background: #302d285c; animation: ink-appear var(--dur-base) ease-out; }
-.mobile-menu, .ds-dialog { position: fixed; z-index: 101; background: var(--surface); padding: 28px; box-shadow: 0 18px 60px #0002; animation: paper-open var(--dur-slow) var(--ease); }
-.mobile-menu { top: 0; bottom: 0; right: 0; width: min(360px, 90vw); }
-.mobile-menu h2 { font: 24px var(--font-display); margin-bottom: 16px; }
-.mobile-menu p { color: var(--muted); line-height: 1.8; }
-.mobile-menu nav { display: grid; margin: 28px 0; }
-.mobile-menu nav a { padding: 16px 0; border-bottom: 1px solid var(--line); color: var(--ink); font: 20px var(--font-display); }
-.ds-dialog { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); border: 1px solid var(--line-strong); }
+.ds-dialog { position: fixed; z-index: 101; padding: 28px; box-shadow: 0 18px 60px #0002; animation: paper-open var(--dur-slow) var(--ease); top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); border: 1px solid var(--line-strong); }
 .ds-dialog h2 { margin-bottom: 16px; font-family: var(--font-display); }
 .ds-dialog p { margin-bottom: 20px; }
 .confirm-message { white-space: pre-line; line-height: 1.9; }
@@ -76,9 +58,6 @@ body { background-image: none; font-size: 15px; }
 .ds-tabs button { padding: 14px 4px; min-height: 48px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: 16px var(--font-display); white-space: nowrap; cursor: pointer; }
 .ds-tabs button[data-state="active"] { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
 .ds-tabs button { padding-inline: 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; font-weight: 700; }
-.settings-intro { margin: 24px 0; }
-.settings-intro h2 { font: 24px var(--font-display); margin-bottom: 12px; }
-.settings-intro p { color: var(--muted); }
 .settings-workspace [role="tabpanel"] { animation: ink-appear var(--dur-base) ease-out; }
 .settings-workspace .panel { margin-bottom: 24px; }
 .auth { min-height: auto; padding: 48px 16px; }
@@ -105,18 +84,8 @@ body { background-image: none; font-size: 15px; }
 @keyframes ink-appear { from { opacity: 0; } to { opacity: 1; } }
 @keyframes paper-open { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 @keyframes quiet-breath { 50% { opacity: .6; } }
-@media (max-width: 1100px) {
-  .site-header { padding: 12px 24px; gap: 20px; }
-  .site-brand-note { display: none; }
-  .site-nav { gap: 4px; }
-}
 @media (max-width: 760px) {
-  .site-header { min-height: 68px; padding: 10px 18px; justify-content: space-between; }
-  .site-brand strong { font-size: 21px; }
-  .site-nav { display: none; }
-  .mobile-menu-button { display: block; }
-  .account-trigger > span:not(.account-avatar) { display: none; }
-  .app-redesign .container { padding: 24px 18px 48px; }
+  .app-redesign .container { padding: 48px 18px; }
   .volume-catalog { grid-template-columns: 1fr; }
   .volume-card > div { padding: 24px 20px; }
   .volume-spine { padding: 26px 12px; }
@@ -124,7 +93,6 @@ body { background-image: none; font-size: 15px; }
   .search-field { flex: 1 1 100%; }
   .search-field .input { flex: 1; width: auto; }
   .collection-toolbar > span { margin-left: 0; margin-right: auto; }
-  .site-footer { flex-direction: column; padding: 24px 18px; gap: 12px; }
   .auth { padding: 24px 0; }
   .auth__card { padding: 28px 22px; }
   .ds-tabs { gap: 8px; }

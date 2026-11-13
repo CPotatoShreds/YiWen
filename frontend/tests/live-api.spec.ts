@@ -19,7 +19,7 @@ test("真实 API：创建奇人、刷新读取、删除与缓存同步", async (
     await expect(page.getByRole("heading", { name: "临江听雨" })).toBeVisible();
     await page.getByRole("button", { name: "编辑 临江听雨" }).click();
     await page.getByRole("button", { name: "删除", exact: true }).click();
-    await page.getByRole("alertdialog").getByRole("button", { name: "确认继续" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "确认", exact: true }).click();
     await expect(page.getByRole("heading", { name: "异闻录尚是空白" })).toBeVisible();
     const characters = await page.request.get("/api/creator/characters");
     expect(await characters.json()).toEqual([]);

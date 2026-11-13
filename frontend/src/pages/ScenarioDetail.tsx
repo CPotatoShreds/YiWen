@@ -13,7 +13,7 @@ export default function ScenarioDetail() {
   const rosterQuery = useApiQuery<Roster[]>(`/scenarios/${slug}/rosters`, !!slug);
   const scenario = volume.data;
   const rosters = rosterQuery.data ?? [];
-  if (!scenario) return volume.isError ? <div className="ds-state" role="alert"><p>{volume.error.message}</p><button className="btn" onClick={() => void volume.refetch()}>重新展卷</button><Link className="btn" to="/scenarios">返回卷架</Link></div> : <div className="skeleton" aria-label="正在展卷" style={{ height: 320 }} />;
+  if (!scenario) return volume.isError ? <div className="ds-state" role="alert"><p>{volume.error.message}</p><button className="btn" onClick={() => void volume.refetch()}>重试</button><Link className="btn" to="/scenarios">返回小天下集</Link></div> : <div className="skeleton" aria-label="载入中" style={{ height: 320 }} />;
   const card = (roster: Roster) => (
     <Link className="panel scenario-roster-card scenario-roster-card--link" key={roster.id} to={`/scenarios/${scenario.slug}/rosters/${roster.id}`}>
       <header className="scenario-roster-card__head">
@@ -66,7 +66,7 @@ export default function ScenarioDetail() {
         </div>
       </div>
       <CloudDivider />
-      {rosterQuery.isError ? <div role="alert" className="ds-state"><p>{rosterQuery.error.message}</p><button className="btn" onClick={() => void rosterQuery.refetch()}>重新载入刻印</button></div> : rosterQuery.isPending ? <p role="status" className="muted">正在寻访卷中奇人…</p> : <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有刻印。</p>}</div>}
+      {rosterQuery.isError ? <div role="alert" className="ds-state"><p>{rosterQuery.error.message}</p><button className="btn" onClick={() => void rosterQuery.refetch()}>重试</button></div> : rosterQuery.isPending ? <p role="status" className="muted">载入中</p> : <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有刻印。</p>}</div>}
     </section>
     </PageShell>
   );

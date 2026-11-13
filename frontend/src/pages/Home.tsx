@@ -17,7 +17,7 @@ export default function Home() {
         <Link className="home-gate__choice home-gate__choice--world" to="/scenarios">
           <ScrollIcon size={24} />
           <strong>小天下集</strong>
-          <span>展卷过招，循迹看破</span>
+          <span>天下异闻，尽汇于此</span>
         </Link>
         <Link className="home-gate__choice home-gate__choice--codex" to="/yiwenlu">
           <BookIcon size={24} />

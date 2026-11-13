@@ -29,11 +29,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         <Dialog.Content className="ds-dialog" role="alertdialog"
           onOpenAutoFocus={(event) => { event.preventDefault(); cancelRef.current?.focus(); }}
           onCloseAutoFocus={(event) => { event.preventDefault(); originRef.current?.focus(); }}>
-          <Dialog.Title>落笔前，再确认一回</Dialog.Title>
+          <Dialog.Title>确认操作</Dialog.Title>
           <Dialog.Description className="confirm-message">{message}</Dialog.Description>
           <div className="ds-dialog-actions">
             <button ref={cancelRef} className="btn" onClick={() => close(false)}>取消</button>
-            <button className="btn btn-primary" onClick={() => close(true)}>确认继续</button>
+            <button className="btn btn-primary" onClick={() => close(true)}>确认</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

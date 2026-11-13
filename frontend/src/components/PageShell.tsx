@@ -11,7 +11,7 @@ import { CloudDivider } from "./Ornaments";
  *                       落在标题上方的留白带里，不参与任何内容的排版。
  * 向下边 → 由内容自身的卡片 / 行承载，不在此处封装。
  *
- * 主分支之间的导航由 AppFrame 承担；这里仅管理页面内容的层级返回。
+ * 主分支从首页入口进入，这里管理层级返回；全站不设顶部导航。
  */
 
 export type BackButtonProps = { label?: string } & (

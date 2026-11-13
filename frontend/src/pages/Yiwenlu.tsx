@@ -208,8 +208,8 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   };
 
   /* ---------- 整册皆空 ---------- */
-  if (!ready) return <div className="skeleton" style={{ height: 360 }} role="status" aria-label="正在打开异闻录" />;
-  if (abilityQuery.isError || characterQuery.isError) return <div className="ds-state" role="alert"><h2>异闻录暂未载入</h2><p>请重试，已保存的藏录仍在。</p><button className="btn" onClick={() => { void abilityQuery.refetch(); void characterQuery.refetch(); }}>重新打开</button></div>;
+  if (!ready) return <div className="skeleton" style={{ height: 360 }} role="status" aria-label="载入中" />;
+  if (abilityQuery.isError || characterQuery.isError) return <div className="ds-state" role="alert"><p>{abilityQuery.error?.message || characterQuery.error?.message}</p><button className="btn" onClick={() => { void abilityQuery.refetch(); void characterQuery.refetch(); }}>重试</button></div>;
   if (ready && !editing && !error && !characters.length && !abilities.length) {
     return (
       <section className="codex codex--virgin">
