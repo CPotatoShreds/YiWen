@@ -1,3 +1,4 @@
+import { useConfirm } from "../../useConfirm";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { PencilIcon, PlusIcon, TrashIcon, XIcon } from "../../components/icons";
@@ -52,11 +53,12 @@ function AbilityModal({ editing, onClose, onSave, busy }: { editing: Ability | n
 }
 
 export default function AdminAbilities() {
+  const confirm = useConfirm();
   const [items, setItems] = useState<Ability[]>([]); const [editing, setEditing] = useState<Ability | null | undefined>(undefined); const [err, setErr] = useState(""); const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false); const [backfilling, setBackfilling] = useState(false);
   const load = () => api<Ability[]>("/admin/abilities").then(setItems).catch((e: Error) => setErr(e.message));
   useEffect(() => { load(); }, []);
   async function save(form: Form) { setBusy(true); try { await api(editing ? `/admin/abilities/${editing.id}` : "/admin/abilities", { method: editing ? "PUT" : "POST", body: JSON.stringify(form) }); setEditing(undefined); await load(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } }
-  async function remove(item: Ability) { if (!window.confirm(`确认删除「${item.name}」？它会从所有异闻师与奇人中移除。`)) return; try { await api(`/admin/abilities/${item.id}`, { method: "DELETE" }); await load(); } catch (e: any) { setErr(e.message); } }
+  async function remove(item: Ability) { if (!(await confirm(`确认删除「${item.name}」？它会从所有异闻师与奇人中移除。`))) return; try { await api(`/admin/abilities/${item.id}`, { method: "DELETE" }); await load(); } catch (e: any) { setErr(e.message); } }
   async function backfill() { setBackfilling(true); setMsg(""); setErr(""); try { const r = await api<{ scheduled: number }>("/admin/abilities/backfill", { method: "POST" }); await load(); setMsg(r.scheduled > 0 ? `已为 ${r.scheduled} 个奇术调度三相解析生成` : "所有奇术均已具备三相解析"); } catch (e: any) { setErr(e.message); } finally { setBackfilling(false); } }
   return <div className="admin-page"><div className="admin-toolbar"><div><span className="eyebrow">ABILITY ARCHIVE</span><h2>奇术档案</h2></div><div style={{ display: "flex", gap: 8 }}><button className="btn btn-ghost" disabled={backfilling} onClick={backfill}>{backfilling ? "生成中…" : "补全三相解析"}</button><button className="btn btn-primary" onClick={() => setEditing(null)}><PlusIcon size={15} />新增奇术</button></div></div>{err && <p className="err">{err}</p>}{msg && <p className="muted">{msg}</p>}<div className="ability-list">{items.map((item) => <div className="ability-item" key={item.id}><div className="ability-item__body"><div className="ability-item__name">{item.name}</div><p className="ability-item__effect">{item.effect}</p>{item.detail && <p className="muted">{item.detail}</p>}<AbilitySlotView json={item.understanding} /></div><div className="ability-item__actions"><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setEditing(item)} title="编辑"><PencilIcon size={14} /></button><button className="btn btn-danger btn-icon btn-sm" onClick={() => remove(item)} title="删除"><TrashIcon size={14} /></button></div></div>)}</div>{items.length === 0 && <div className="empty"><p>暂无奇术档案。</p></div>}{editing !== undefined && <AbilityModal editing={editing} busy={busy} onClose={() => setEditing(undefined)} onSave={save} />}</div>;
 }

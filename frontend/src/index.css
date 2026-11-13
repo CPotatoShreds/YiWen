@@ -5,30 +5,31 @@
    ============================================================ */
 
 :root {
+  --control-height: 44px;
   /* 色板：唯一主色是 --accent（朱砂印章红）。墨绿仅用于命中/成功态，克制使用。 */
-  --ground: #f4efe3;           /* 宣纸暖白 */
-  --ground-2: #ebe3d0;         /* 稍深纸色（凹槽/条带） */
-  --surface: #faf6ec;          /* 纸面（卡片） */
-  --ink: #2f2b26;              /* 墨（暖炭黑，非纯黑） */
-  --muted: #6f675c;            /* 淡墨灰 */
-  --line: #dcd2bb;             /* 淡墨线 */
-  --line-strong: #c3b699;      /* 深墨线 */
-  --accent: #b03a2e;           /* 朱砂印章红 */
-  --accent-strong: #8f2a1f;    /* 深朱砂 */
-  --accent-soft: #f4e0d4;      /* 朱砂淡晕 */
-  --success: #467a53;          /* 墨绿 */
-  --success-soft: #e4eee2;
+  --ground: #f3efe5;           /* 宣纸暖白 */
+  --ground-2: #eae3d4;         /* 稍深纸色（凹槽/条带） */
+  --surface: #fcf8ef;          /* 纸面（卡片） */
+  --ink: #302d28;              /* 墨（暖炭黑，非纯黑） */
+  --muted: #6d655a;            /* 淡墨灰 */
+  --line: #dcd3c1;             /* 淡墨线 */
+  --line-strong: #b9aa8e;      /* 深墨线 */
+  --accent: #a13a2d;           /* 朱砂印章红 */
+  --accent-strong: #812c24;    /* 深朱砂 */
+  --accent-soft: #f1ded4;      /* 朱砂淡晕 */
+  --success: #41654c;          /* 墨绿 */
+  --success-soft: #e7ecdf;
 
   /* 主色的 RGB 分量：写 rgba() 时用 var() 拼，避免十六进制色值散落各处 */
-  --ink-rgb: 47, 43, 38;          /* 同 --ink */
-  --accent-rgb: 176, 58, 46;      /* 同 --accent */
+  --ink-rgb: 48, 45, 40;          /* 同 --ink */
+  --accent-rgb: 161, 58, 45;      /* 同 --accent */
   --on-accent: #fff;              /* 主色之上的文字 */
   --knob: #fff;                   /* 控件上的亮面颗粒（开关滑块等） */
 
   /* 字排 */
-  --font-display: "Outfit", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
-  --font-body: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-seal: "Kaiti SC", "STKaiti", "KaiTi", "楷体", "PingFang SC", serif;
+  --font-display: "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
+  --font-body: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-seal: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif CJK SC", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
 
   /* 动效：交互反馈只有三档，务必按「变了什么」而不是「改在哪里」来选。
@@ -45,8 +46,8 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
-  --space-8: 34px;
-  --space-12: 56px;
+  --space-8: 32px;
+  --space-12: 48px;
 
   /* 返回钮：视觉 34、命中 44（对齐 HIG 44pt / Material 48dp 的下界）、骑出版心 16。
      三者同源，改尺寸只动这里。 */
@@ -64,11 +65,11 @@
   --width-empty: 560px;
 
   /* 阴影：染墨色调，非冷灰 */
-  --shadow-soft: 0 1px 2px rgba(var(--ink-rgb), 0.05), 0 10px 24px -18px rgba(var(--ink-rgb), 0.22);
-  --shadow-hover: 0 2px 6px rgba(var(--ink-rgb), 0.07), 0 18px 36px -22px rgba(var(--ink-rgb), 0.3);
+  --shadow-soft: 0 2px 6px rgba(48,45,40,.035);
+  --shadow-hover: 0 6px 14px rgba(48,45,40,.07);
 
-  --radius: 16px;
-  --radius-sm: 10px;
+  --radius: 6px;
+  --radius-sm: 4px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

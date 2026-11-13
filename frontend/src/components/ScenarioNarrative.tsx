@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
 import { EmptyScroll } from "./Ornaments";
 import { InkWriting } from "./InkWriting";
 import type { Message } from "../scenarioModel";
@@ -183,9 +184,10 @@ export function ScenarioManuscript({
   const filled = (key: Pane) => groups[key].length > 0 || liveOf[key] !== "";
 
   return (
+    <Tabs.Root value={active} onValueChange={(value) => choose(value as Pane)} asChild>
     <section
       className={bare ? "scenario-manuscript scenario-manuscript--book" : "scenario-manuscript"}
-      aria-live="polite"
+      aria-busy={pending}
     >
       {bare ? (
         runningHead && (
@@ -204,33 +206,30 @@ export function ScenarioManuscript({
         </header>
       )}
       {tabbed && (
-        <div className="scenario-panes" role="tablist" aria-label="本局视角">
+        <Tabs.List className="scenario-panes" aria-label="本局视角">
           {PANES.filter((item) => panes.includes(item.key)).map((item) => {
             const name =
               item.key === "challenger" ? ownLabel : item.key === "guardian" ? guardianLabel : "";
             return (
-              <button
+              <Tabs.Trigger
                 key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={active === item.key}
+                value={item.key}
                 title={name ? `${item.label} · ${name}` : item.label}
                 className={`scenario-pane${active === item.key ? " is-active" : ""}`}
-                onClick={() => choose(item.key)}
               >
                 {item.label}
                 {/* 其余页已经进了正文而读者还没翻过去：点一粒墨点提示，别让人以为只写了推演 */}
                 {active !== item.key && filled(item.key) && !seen.has(item.key) && (
                   <span className="scenario-pane__mark" aria-hidden="true" />
                 )}
-              </button>
+              </Tabs.Trigger>
             );
           })}
-        </div>
+        </Tabs.List>
       )}
       <div className="scenario-manuscript__body" ref={bodyRef}>
         {tabbed ? (
-          <>
+          <Tabs.Content value={active} key={active} className="narrative-pane">
             {groups[active]}
             {liveOf[active] !== "" && (
               <article
@@ -243,7 +242,7 @@ export function ScenarioManuscript({
             {/* 这一页的正文还没到：照旧演笔墨，别让读者对着空纸等 */}
             {!filled(active) &&
               (pending ? <InkWriting /> : <p className="scenario-pane__empty">此页未留正文。</p>)}
-          </>
+          </Tabs.Content>
         ) : (
           <>
             {entries}
@@ -284,5 +283,6 @@ export function ScenarioManuscript({
         </div>
       )}
     </section>
+    </Tabs.Root>
   );
 }

@@ -1,4 +1,5 @@
-// API 客户端：Cookie 会话 + 统一错误处理 + 连接超时 + GET 网络失败重试 + GET 内存 SWR 缓存
+import { queryClient } from "./queryClient";
+// 传输负责 Cookie、续签与超时；服务端数据缓存由 TanStack Query 统一管理。
 export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 const CONNECT_TIMEOUT_MS = 15000;
@@ -14,14 +15,6 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
-
-// ── GET 客户端缓存（staleness-while-revalidate）──
-// 读多写少的稳定数据做内存缓存：TTL 内命中直接返回；过期返回旧值并后台刷新；
-// 无缓存时 in-flight 去重。进行中的推演由 SSE 实时驱动、管理端要实时，均豁免。
-type CacheEntry = { data: unknown; at: number };
-const cacheStore = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<unknown>>();
-const refreshing = new Set<string>();
 
 // 状态敏感的读路径用短 TTL：跨场进度随推演结果变化，短暂过期可接受且后台自愈
 const CACHE_TTL_BY_PREFIX: [string, number][] = [["/scenarios", 10_000]];
@@ -40,22 +33,8 @@ function cachePolicyFor(path: string): "cache" | "skip" {
   return "cache";
 }
 
-// 变更请求成功后按前缀失效缓存：同一资源的 POST/DELETE 后，缓存数据已过期
-const MUTATE_PREFIXES = [
-  "/auth",
-  "/creator",
-  "/llm-profiles",
-  "/scenarios",
-];
-
-function invalidateCache(): void {
-  for (const key of cacheStore.keys()) {
-    if (MUTATE_PREFIXES.some((p) => key.startsWith(p))) cacheStore.delete(key);
-  }
-}
-
 export function clearApiCache(): void {
-  cacheStore.clear();
+  queryClient.clear();
 }
 
 function detailMessage(detail: unknown, status: number): string {
@@ -103,9 +82,13 @@ async function fetchWithAuth<T>(path: string, fetchOpts: RequestInit, connectTim
   }
 }
 
-async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout: number, method: string): Promise<T> {  const maxAttempts = method === "GET" ? GET_RETRIES + 1 : 1;
+async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout: number, method: string): Promise<T> {
+  const maxAttempts = method === "GET" ? GET_RETRIES + 1 : 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const ctrl = new AbortController();
+    const cancel = () => ctrl.abort(fetchOpts.signal?.reason);
+    if (fetchOpts.signal?.aborted) cancel();
+    else fetchOpts.signal?.addEventListener("abort", cancel, { once: true });
     const timer = window.setTimeout(() => ctrl.abort(), connectTimeout);
     try {
       const headers = new Headers(fetchOpts.headers);
@@ -121,8 +104,9 @@ async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout:
         throw new ApiError(res.status, detailMessage(detail, res.status));
       }
       if (res.status === 204 || res.status === 205) return null as T;
-      return res.json() as Promise<T>;
+      return await res.json() as T;
     } catch (error) {
+      if (fetchOpts.signal?.aborted) throw error;
       const retryable = method === "GET" && attempt < maxAttempts - 1 && !(error instanceof ApiError);
       if (retryable) {
         await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
@@ -135,22 +119,15 @@ async function rawFetch<T>(path: string, fetchOpts: RequestInit, connectTimeout:
       throw error instanceof Error ? error : new Error(String(error));
     } finally {
       window.clearTimeout(timer);
+      fetchOpts.signal?.removeEventListener("abort", cancel);
     }
   }
   throw new Error("请求失败");
 }
 
-function scheduleRefetch(path: string): void {
-  if (refreshing.has(path)) return;
-  refreshing.add(path);
-  rawFetch<unknown>(path, {}, CONNECT_TIMEOUT_MS, "GET")
-    .then((data) => {
-      if (data != null) cacheStore.set(path, { data, at: Date.now() });
-    })
-    .catch(() => {
-      // 静默：旧值继续可用，下轮再刷
-    })
-    .finally(() => refreshing.delete(path));
+export async function request<T>(path: string, opts: RequestInit & { timeout?: number } = {}): Promise<T> {
+  const { timeout, ...fetchOpts } = opts;
+  return fetchWithAuth<T>(path, fetchOpts, timeout ?? CONNECT_TIMEOUT_MS, (opts.method || "GET").toUpperCase());
 }
 
 export async function api<T>(path: string, opts: RequestInit & { timeout?: number } = {}): Promise<T> {
@@ -159,27 +136,21 @@ export async function api<T>(path: string, opts: RequestInit & { timeout?: numbe
   const method = (fetchOpts.method || "GET").toUpperCase();
 
   if (method === "GET" && cachePolicyFor(path) === "cache") {
-    const hit = cacheStore.get(path);
-    if (hit) {
-      if (Date.now() - hit.at < ttlFor(path)) return hit.data as T; // TTL 内：直接命中
-      scheduleRefetch(path); // 过期：旧值先用，后台刷新
-      return hit.data as T;
-    }
-    const inFlight = inflight.get(path);
-    if (inFlight) return inFlight as Promise<T>;
-    const p = fetchWithAuth<T>(path, fetchOpts, connectTimeout, method).then((data) => {
-      if (data != null) cacheStore.set(path, { data, at: Date.now() });
-      return data;
+    return queryClient.fetchQuery<T>({
+      queryKey: ["api", path],
+      queryFn: ({ signal }) => fetchWithAuth<T>(path, { ...fetchOpts, signal }, connectTimeout, method),
+      staleTime: ttlFor(path),
     });
-    inflight.set(path, p);
-    try {
-      return await p;
-    } finally {
-      inflight.delete(path);
-    }
   }
 
   const data = await fetchWithAuth<T>(path, fetchOpts, connectTimeout, method);
-  if (method !== "GET") invalidateCache();
+  if (method !== "GET") {
+    // 会话切换立即隔离旧用户数据，不在已退出的会话上触发受保护查询重取。
+    if (path === "/auth/logout" || path === "/auth/login" || (path === "/auth/me" && method === "DELETE")) {
+      clearApiCache();
+    } else {
+      await queryClient.invalidateQueries({ queryKey: ["api"] });
+    }
+  }
   return data;
 }

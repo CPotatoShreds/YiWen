@@ -1,32 +1,33 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
-import UserMenu from "./components/UserMenu";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import VerifyEmail from "./pages/VerifyEmail";
-import Terms from "./pages/Terms";
-import Privacy from "./pages/Privacy";
-import Home from "./pages/Home";
-import Me from "./pages/Me";
-import Yiwenlu from "./pages/Yiwenlu";
-import Settings from "./pages/Settings";
-import Scenarios from "./pages/Scenarios";
-import ScenarioDetail from "./pages/ScenarioDetail";
-import ScenarioRosterDetail from "./pages/ScenarioRosterDetail";
-import ScenarioBattle from "./pages/ScenarioBattle";
-import ScenarioRecords from "./pages/ScenarioRecords";
-import ChallengeRedirect from "./pages/ChallengeRedirect";
-import ScenarioComposer from "./pages/ScenarioComposer";
+import AppFrame from "./components/AppFrame";
+import { ConfirmProvider } from "./components/ConfirmProvider";
+const Login = lazy(() => import("./pages/Login"));
+const Register = lazy(() => import("./pages/Register"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const Terms = lazy(() => import("./pages/Terms"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Home = lazy(() => import("./pages/Home"));
+const Me = lazy(() => import("./pages/Me"));
+const Yiwenlu = lazy(() => import("./pages/Yiwenlu"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Scenarios = lazy(() => import("./pages/Scenarios"));
+const ScenarioDetail = lazy(() => import("./pages/ScenarioDetail"));
+const ScenarioRosterDetail = lazy(() => import("./pages/ScenarioRosterDetail"));
+const ScenarioBattle = lazy(() => import("./pages/ScenarioBattle"));
+const ScenarioRecords = lazy(() => import("./pages/ScenarioRecords"));
+const ChallengeRedirect = lazy(() => import("./pages/ChallengeRedirect"));
+const ScenarioComposer = lazy(() => import("./pages/ScenarioComposer"));
 import AdminLayout from "./components/AdminLayout";
-import AdminDashboard from "./pages/admin/Dashboard";
-import AdminUsers from "./pages/admin/AdminUsers";
-import AdminAbilities from "./pages/admin/AdminAbilities";
-import AdminTraffic from "./pages/admin/AdminTraffic";
-import AdminScenarios from "./pages/admin/AdminScenarios";
-import AdminScenarioNew from "./pages/admin/AdminScenarioNew";
-import InkLandscape from "./components/InkLandscape";
+const AdminDashboard = lazy(() => import("./pages/admin/Dashboard"));
+const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
+const AdminAbilities = lazy(() => import("./pages/admin/AdminAbilities"));
+const AdminTraffic = lazy(() => import("./pages/admin/AdminTraffic"));
+const AdminScenarios = lazy(() => import("./pages/admin/AdminScenarios"));
+const AdminScenarioNew = lazy(() => import("./pages/admin/AdminScenarioNew"));
 
 /** 会话恢复中的占位。不可 return null —— 那会让刷新后出现一瞬白屏。 */
 function AppLoading() {
@@ -56,12 +57,9 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <div className="app">
-          {/* 全站底景：整站一张宣纸，路由切换不重挂（画稿是模块级单例） */}
-          <InkLandscape />
-          <UserMenu />
-          <div className="eaves" aria-hidden="true" />
-          <main className="container">
+        <ConfirmProvider>
+        <AppFrame>
+          <Suspense fallback={<AppLoading />}>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
@@ -99,8 +97,9 @@ export default function App() {
                 <Route path="scenarios/new" element={<AdminScenarioNew />} />
               </Route>
             </Routes>
-          </main>
-        </div>
+          </Suspense>
+        </AppFrame>
+        </ConfirmProvider>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -1,20 +1,19 @@
-import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { useApiQuery } from "../useApiQuery";
 import PageShell from "../components/PageShell";
 import { ScrollIcon } from "../components/icons";
 import { SealStamp, CloudDivider } from "../components/Ornaments";
+import type { Scenario } from "../types";
 
-type Scenario = { id: string; slug: string; name: string; subtitle: string; introduction: string; background: string; rules: string[]; victory_condition: string; judgement_rules: string[] };
 type Roster = { id: string; name: string; owner_name: string; character_bio: string; ability_count: number; challenge_count: number; challenger_win_rate: number | null; first_victory_avg_challenges: number | null };
 
 export default function ScenarioDetail() {
   const { slug } = useParams<{ slug: string }>();
-  const [scenario, setScenario] = useState<Scenario | null>(null);
-  const [rosters, setRosters] = useState<Roster[]>([]);
-  const [error, setError] = useState("");
-  useEffect(() => { if (!slug) return; Promise.all([api<Scenario>(`/scenarios/${slug}`), api<Roster[]>(`/scenarios/${slug}/rosters`)]).then(([item, list]) => { setScenario(item); setRosters(list); }).catch((cause: Error) => setError(cause.message)); }, [slug]);
-  if (!scenario) return error ? <p className="err">{error}</p> : <div className="skeleton" style={{ height: 320 }} />;
+  const volume = useApiQuery<Scenario>(`/scenarios/${slug}`, !!slug);
+  const rosterQuery = useApiQuery<Roster[]>(`/scenarios/${slug}/rosters`, !!slug);
+  const scenario = volume.data;
+  const rosters = rosterQuery.data ?? [];
+  if (!scenario) return volume.isError ? <div className="ds-state" role="alert"><p>{volume.error.message}</p><button className="btn" onClick={() => void volume.refetch()}>重新展卷</button><Link className="btn" to="/scenarios">返回卷架</Link></div> : <div className="skeleton" aria-label="正在展卷" style={{ height: 320 }} />;
   const card = (roster: Roster) => (
     <Link className="panel scenario-roster-card scenario-roster-card--link" key={roster.id} to={`/scenarios/${scenario.slug}/rosters/${roster.id}`}>
       <header className="scenario-roster-card__head">
@@ -60,7 +59,6 @@ export default function ScenarioDetail() {
         </div>
       </div>
     </section>
-    {error && <p className="err">{error}</p>}
     <section className="scenario-roster-section">
       <div className="scenario-roster-section__head">
         <div>
@@ -68,7 +66,7 @@ export default function ScenarioDetail() {
         </div>
       </div>
       <CloudDivider />
-      <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有刻印。</p>}</div>
+      {rosterQuery.isError ? <div role="alert" className="ds-state"><p>{rosterQuery.error.message}</p><button className="btn" onClick={() => void rosterQuery.refetch()}>重新载入刻印</button></div> : rosterQuery.isPending ? <p role="status" className="muted">正在寻访卷中奇人…</p> : <div className="scenario-roster-grid">{rosters.length ? rosters.map(card) : <p className="muted">这一卷还没有刻印。</p>}</div>}
     </section>
     </PageShell>
   );

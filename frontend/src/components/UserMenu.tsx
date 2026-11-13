@@ -1,80 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { GearIcon, LogoutIcon, ShieldIcon, UserRoundIcon } from "./icons";
 
-/** 右上角悬浮用户入口：头像字+名号按钮，展开纸面下拉（信息 / 设置 / 后台 / 退出）。 */
 export default function UserMenu() {
   const { user, logout } = useAuth();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   if (!user) return null;
-  return (
-    <div className="user-menu" ref={rootRef}>
-      <button
-        type="button"
-        className={"user-menu__trigger" + (open ? " is-open" : "")}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <span className="user-menu__avatar" aria-hidden="true">
-          {user.username.slice(0, 1)}
-        </span>
-        <span className="user-menu__name">{user.username}</span>
-      </button>
-      {open && (
-        <div className="user-menu__panel" role="menu">
-          <div className="user-menu__identity">
-            <span className="user-menu__avatar user-menu__avatar--lg" aria-hidden="true">
-              {user.username.slice(0, 1)}
-            </span>
-            <div className="user-menu__who">
-              <strong>{user.username}</strong>
-              <span>{user.email || "未绑定邮箱"}</span>
-            </div>
-          </div>
-          <Link role="menuitem" className="user-menu__item" to="/me" onClick={() => setOpen(false)}>
-            <UserRoundIcon size={15} /> 用户信息
-          </Link>
-          <Link role="menuitem" className="user-menu__item" to="/settings" onClick={() => setOpen(false)}>
-            <GearIcon size={15} /> 设置
-          </Link>
-          {user.is_admin && (
-            <Link role="menuitem" className="user-menu__item" to="/admin" onClick={() => setOpen(false)}>
-              <ShieldIcon size={15} /> 管理
-            </Link>
-          )}
-          <button
-            role="menuitem"
-            type="button"
-            className="user-menu__item user-menu__item--quit"
-            onClick={() => {
-              setOpen(false);
-              void logout();
-            }}
-          >
-            <LogoutIcon size={15} /> 退出登录
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger className="account-trigger" aria-label="打开账号菜单">
+      <span className="account-avatar">{user.username.slice(0, 1)}</span>
+      <span>{user.username}</span><span aria-hidden="true">⌄</span>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal><DropdownMenu.Content className="ds-menu" align="end" sideOffset={10}>
+      <DropdownMenu.Label className="ds-menu-label">{user.username} · 异闻师</DropdownMenu.Label>
+      <DropdownMenu.Item asChild><Link to="/me"><UserRoundIcon size={16} />我的账号</Link></DropdownMenu.Item>
+      <DropdownMenu.Item asChild><Link to="/settings"><GearIcon size={16} />偏好与模型</Link></DropdownMenu.Item>
+      {user.is_admin && <DropdownMenu.Item asChild><Link to="/admin"><ShieldIcon size={16} />管理后台</Link></DropdownMenu.Item>}
+      <DropdownMenu.Separator className="ds-menu-separator" />
+      <DropdownMenu.Item onSelect={() => void logout()}><LogoutIcon size={16} />退出登录</DropdownMenu.Item>
+    </DropdownMenu.Content></DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }

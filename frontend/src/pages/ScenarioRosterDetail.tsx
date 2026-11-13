@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { useApiQuery } from "../useApiQuery";
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, ScrollIcon } from "../components/icons";
 import { CardBack, SealStamp } from "../components/Ornaments";
 import { BackButton } from "../components/PageShell";
@@ -118,16 +118,10 @@ function verdictClass(v?: string) {
 
 export default function ScenarioRosterDetail() {
   const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const detailQuery = useApiQuery<Detail>(`/scenarios/${scenarioSlug}/rosters/${rosterId}`, !!scenarioSlug && !!rosterId);
+  const detail = detailQuery.data;
   const [activeCard, setActiveCard] = useState(0);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!scenarioSlug || !rosterId) return;
-    api<Detail>(`/scenarios/${scenarioSlug}/rosters/${rosterId}`)
-      .then(setDetail)
-      .catch((cause: Error) => setError(cause.message));
-  }, [scenarioSlug, rosterId]);
+  const error = detailQuery.error?.message;
 
   const cards = useMemo(() => {
     const source = detail?.my_progress?.cracked_cards ?? [];

@@ -51,6 +51,34 @@ jobs:
         run: uv run mypy
       - name: 测试
         run: uv run pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 前端依赖
+        working-directory: frontend
+        run: npm ci
+      - name: 前后端契约与前端检查
+        working-directory: frontend
+        run: |
+          npm run api:check
+          npm run build
+          npm run lint
+          npm run nav:check
+      - name: 安装浏览器
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: 浏览器交互与响应式检查
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: 保存浏览器验收产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-ui-review
+          path: frontend/test-results/
+          retention-days: 7
       - name: 依赖漏洞扫描（pip-audit）
         continue-on-error: true  # 已知无法立即升级的传递依赖会误报，先观察后收紧
         run: |

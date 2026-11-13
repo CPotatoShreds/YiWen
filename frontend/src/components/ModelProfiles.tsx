@@ -1,3 +1,4 @@
+import { useConfirm } from "../useConfirm";
 // 模型配置：用户自配 LLM 方案（OpenAI 兼容）的列表 + 新建/编辑/激活/删除/测试。
 // api_key 用服务端下发的 RSA 公钥加密后再发送（jsencrypt），落库与传输皆密文。
 import { useCallback, useEffect, useState } from "react";
@@ -40,6 +41,7 @@ function rsaEncrypt(publicKeyPem: string, text: string): string {
 }
 
 export default function ModelProfiles() {
+  const confirm = useConfirm();
   const [profiles, setProfiles] = useState<LlmProfile[]>([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -129,7 +131,7 @@ export default function ModelProfiles() {
   }
 
   async function remove(p: LlmProfile) {
-    if (!window.confirm(`确认删除方案「${p.label}」？`)) return;
+    if (!(await confirm(`确认删除方案「${p.label}」？`))) return;
     setErr("");
     setMsg("");
     try {

@@ -77,6 +77,7 @@ export default function ScenarioComposer() {
     }
   };
 
+  if (!scenario && !broken) return <div className="skeleton" style={{ height: 320 }} role="status" aria-label="正在准备刻印纸页" />;
   if (broken || !scenario) {
     return (
       <section className="scenario-composer panel">

@@ -119,7 +119,7 @@ export default function ScenarioRecords() {
                   type="button"
                   className="records-row__hit"
                   aria-expanded={open}
-                  onClick={() => setParams(open ? {} : { run: item.id }, { replace: true })}
+                  onClick={() => setParams({ run: open ? "" : item.id }, { replace: true })}
                 >
                   <span className="records-row__main">
                     <strong className="records-row__who">

@@ -1,3 +1,4 @@
+import { useConfirm } from "../useConfirm";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
@@ -5,6 +6,7 @@ import { api, clearApiCache } from "../api";
 
 /** 危险区（P3）：个人数据导出 + 账号注销（软删匿名化，不可恢复）。 */
 export default function DangerZone() {
+  const confirm = useConfirm();
   const { user, refresh } = useAuth();
   const nav = useNavigate();
   const confirmRef = useRef<HTMLInputElement>(null);
@@ -37,7 +39,7 @@ export default function DangerZone() {
     e.preventDefault();
     const password = confirmRef.current?.value ?? "";
     if (!password) return;
-    if (!window.confirm("注销后账号将匿名化且不可恢复，确定继续？")) return;
+    if (!(await confirm("注销后账号将匿名化且不可恢复，确定继续？"))) return;
     setBusy(true);
     setErr("");
     try {

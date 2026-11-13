@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConfirm } from "../useConfirm";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api";
+import { useApiQuery } from "../useApiQuery";
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
 import { EmptyScroll, SealStamp } from "../components/Ornaments";
 import PageShell from "../components/PageShell";
@@ -9,6 +12,8 @@ type Kind = "character" | "ability";
 type Ability = { id: string; name: string; effect: string; detail: string };
 type Character = { id: string; name: string; bio: string; ability_ids: string[] };
 type CharacterDetail = Character & { abilities: Ability[] };
+const EMPTY_ABILITIES: Ability[] = [];
+const EMPTY_CHARACTERS: Character[] = [];
 
 /** 一位奇人可装配的奇术上限，与后端约束一致。装配是无序集合，顺序只作展示。 */
 const SLOTS = 4;
@@ -27,15 +32,16 @@ const pathOf = (kind: Kind, id?: string | null) => (id ? `/yiwenlu/${SEGMENT[kin
  * 奇人 ↔ 奇术互相可点：奇人卷上的奇术槽跳到奇术卷，奇术卷标出载于哪几位奇人名帖。
  */
 export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
+  const confirm = useConfirm();
   const { id: urlId } = useParams();
   const navigate = useNavigate();
   const [params] = useSearchParams();
 
-  const [abilities, setAbilities] = useState<Ability[]>([]);
-  const [characters, setCharacters] = useState<Character[]>([]);
-  const [detail, setDetail] = useState<CharacterDetail | null>(null);
-  const [revision, setRevision] = useState(0);
-  const [ready, setReady] = useState(false);
+  const abilityQuery = useApiQuery<Ability[]>("/creator/abilities");
+  const characterQuery = useApiQuery<Character[]>("/creator/characters");
+  const abilities = abilityQuery.data ?? EMPTY_ABILITIES;
+  const characters = characterQuery.data ?? EMPTY_CHARACTERS;
+  const ready = !abilityQuery.isPending && !characterQuery.isPending;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -50,19 +56,6 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   const paramKind = params.get("p") === "ability" ? "ability" : params.get("p") === "character" ? "character" : null;
   const kind: Kind = routeKind ?? paramKind ?? "character";
 
-  const load = useCallback(async () => {
-    const [a, c] = await Promise.all([api<Ability[]>("/creator/abilities"), api<Character[]>("/creator/characters")]);
-    setAbilities(a);
-    setCharacters(c);
-  }, []);
-
-  useEffect(() => {
-    void load()
-      .then(() => setError(""))
-      .catch((cause: Error) => setError(cause.message))
-      .finally(() => setReady(true));
-  }, [load, revision]);
-
   /* ---------- 选中项：URL 是唯一事实来源 ---------- */
   const list = kind === "character" ? characters : abilities;
   const fromUrl = routeKind === kind && urlId && list.some((item) => item.id === urlId) ? urlId : null;
@@ -73,17 +66,8 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   const ordinal = selectedId ? list.findIndex((item) => item.id === selectedId) + 1 : 0;
 
   // 奇人的装配列表用详情接口（顺序与后端 position 一致）；详情未到时退回名册里的 id 映射
-  useEffect(() => {
-    if (kind !== "character" || !selectedId) {
-      setDetail(null);
-      return;
-    }
-    let alive = true;
-    api<CharacterDetail>(`/creator/characters/${selectedId}`)
-      .then((loaded) => { if (alive) setDetail(loaded); })
-      .catch(() => { if (alive) setDetail(null); });
-    return () => { alive = false; };
-  }, [kind, selectedId, revision]);
+  const detailQuery = useApiQuery<CharacterDetail>(`/creator/characters/${selectedId}`, kind === "character" && !!selectedId);
+  const detail = detailQuery.data;
 
   const equipped = useMemo<Ability[]>(() => {
     if (!currentCharacter) return [];
@@ -108,8 +92,11 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
 
   const patch = (next: Partial<Form>) => setForm((prev) => ({ ...prev, ...next }));
 
-  const guarded = (action: () => void) => {
-    if (editing && dirty && !window.confirm("放弃未保存的修改？")) return;
+  const guarded = async (action: () => void) => {
+    if (editing && dirty && !(await confirm("放弃未保存的修改？"))) return;
+    setEditing(false);
+    setIsNew(false);
+    setError("");
     action();
   };
 
@@ -128,8 +115,8 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
     setEditing(true);
   };
 
-  const enterCreate = (target: Kind = kind) => {
-    if (editing && dirty && !window.confirm("放弃未保存的修改？")) return;
+  const enterCreate = async (target: Kind = kind) => {
+    if (editing && dirty && !(await confirm("放弃未保存的修改？"))) return;
     setError("");
     setNotice("");
     setForm({ ...BLANK });
@@ -138,8 +125,8 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
     if (target !== kind) navigate(`/yiwenlu?p=${target}`);
   };
 
-  const cancelEdit = () => {
-    if (dirty && !window.confirm("放弃未保存的修改？")) return;
+  const cancelEdit = async () => {
+    if (dirty && !(await confirm("放弃未保存的修改？"))) return;
     setEditing(false);
     setIsNew(false);
     setError("");
@@ -186,7 +173,6 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       );
       setEditing(false);
       setIsNew(false);
-      setRevision((value) => value + 1);
       setNotice(isNew ? `已收录${LABEL[kind]}` : "已保存");
       if (isNew || saved.id !== selectedId) navigate(pathOf(kind, saved.id));
     } catch (cause) {
@@ -203,7 +189,7 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       : kind === "ability"
         ? `确认删除「${current.name}」？还没有奇人装配它。`
         : `确认删除「${current.name}」？\n\n删除后不能再拿他去刻印奇人、发起新对局；已刻下的刻印不受影响。`;
-    if (!window.confirm(prompt)) return;
+    if (!(await confirm(prompt))) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -214,7 +200,6 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       setTrail([]);
       setNotice(`已删除${LABEL[kind]}`);
       navigate(`/yiwenlu?p=${kind}`);
-      setRevision((value) => value + 1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "删除失败");
     } finally {
@@ -223,7 +208,9 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   };
 
   /* ---------- 整册皆空 ---------- */
-  if (ready && !characters.length && !abilities.length) {
+  if (!ready) return <div className="skeleton" style={{ height: 360 }} role="status" aria-label="正在打开异闻录" />;
+  if (abilityQuery.isError || characterQuery.isError) return <div className="ds-state" role="alert"><h2>异闻录暂未载入</h2><p>请重试，已保存的藏录仍在。</p><button className="btn" onClick={() => { void abilityQuery.refetch(); void characterQuery.refetch(); }}>重新打开</button></div>;
+  if (ready && !editing && !error && !characters.length && !abilities.length) {
     return (
       <section className="codex codex--virgin">
         <div className="codex__virgin">
@@ -247,6 +234,7 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   const lastTrail = trail[trail.length - 1];
 
   return (
+    <Tabs.Root value={kind} onValueChange={(value) => void switchKind(value as Kind)} activationMode="manual">
     <PageShell
       width="wide"
       title="异闻录"
@@ -257,21 +245,18 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       <div className="codex__body">
         {/* ---------- 左：名册 ---------- */}
         <aside className="codex__rail">
-          <div className="codex__tabs" role="tablist" aria-label="异闻录篇章">
+          <Tabs.List className="codex__tabs" aria-label="异闻录篇章">
             {(["character", "ability"] as Kind[]).map((tab) => (
-              <button
+              <Tabs.Trigger
                 key={tab}
-                type="button"
-                role="tab"
-                aria-selected={kind === tab}
+                value={tab}
                 className={`codex__tab${kind === tab ? " is-active" : ""}`}
-                onClick={() => switchKind(tab)}
               >
                 {tab === "character" ? "奇人篇" : "奇术篇"}
                 <span>{tab === "character" ? characters.length : abilities.length}</span>
-              </button>
+              </Tabs.Trigger>
             ))}
-          </div>
+          </Tabs.List>
           <nav className="codex__list" aria-label={`${LABEL[kind]}名册`}>
             {list.length === 0 ? (
               <p className="codex__list-empty">这一篇还没有{LABEL[kind]}。</p>
@@ -319,7 +304,7 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
         </aside>
 
         {/* ---------- 右：查看 / 编辑一体 ---------- */}
-        <div className="codex__main">
+        <Tabs.Content value={kind} className="codex__main">
           {lastTrail && !isNew && (
             /* 这不是「返回上一层」，而是同一页内退回刚看过的那一条，所以用文字形态 */
             <button type="button" className="nav-inline" onClick={() => backTo(lastTrail)} aria-label={`回到 ${lastTrail.name}`}>
@@ -570,8 +555,9 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
               </>
             )}
           </article>
-        </div>
+        </Tabs.Content>
       </div>
     </PageShell>
+    </Tabs.Root>
   );
 }
