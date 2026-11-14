@@ -663,7 +663,6 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing:
   text-decoration: none;
   transition: transform var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
 }
-.home-gate__choice--codex { --card-edge: var(--ink); }
 .home-gate__choice::after { content: ""; position: absolute; inset: 6px; border: 1px solid color-mix(in srgb, var(--card-edge) 14%, transparent); border-radius: calc(var(--radius) - 6px); pointer-events: none; }
 .home-gate__choice:hover {
   transform: translateY(-2px);
