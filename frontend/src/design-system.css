@@ -74,6 +74,14 @@ body { background-image: none; font-size: 15px; }
 .records-row__time { font-variant-numeric: tabular-nums; }
 .codex { border-radius: var(--radius); border-color: var(--line-strong); }
 .codex input, .codex textarea { font-family: var(--font-body); }
+/* 仅异闻录收紧页头；页签外壳也必须参与可用高度分配。 */
+.app-redesign .container:has(.codex-workspace) { padding-top: 24px; }
+.codex-workspace .page-shell__head { margin-bottom: 8px; }
+.codex-workspace .page-shell > .cloud-divider { flex: none; margin: 6px auto 16px; }
+@media (min-width: 961px) {
+  .app-redesign .container:has(.codex-workspace) { padding-bottom: 16px; }
+  .codex-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+}
 .admin-page { min-width: 0; }
 .admin-page table { font-variant-numeric: tabular-nums; }
 .admin-page .panel { overflow-x: auto; }

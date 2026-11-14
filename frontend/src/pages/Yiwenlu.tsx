@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api";
 import { useApiQuery } from "../useApiQuery";
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
+import { BookIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
 import { EmptyScroll, SealStamp } from "../components/Ornaments";
 import PageShell from "../components/PageShell";
 
@@ -49,8 +49,6 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   const [editing, setEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
   const [form, setForm] = useState<Form>(BLANK);
-  /** 来处栈：互跳时压入上一个落点，右栏顶部的「← 回到 X」出栈返回。 */
-  const [trail, setTrail] = useState<{ kind: Kind; id: string; name: string }[]>([]);
   const activeRef = useRef<HTMLButtonElement>(null);
 
   const paramKind = params.get("p") === "ability" ? "ability" : params.get("p") === "character" ? "character" : null;
@@ -134,18 +132,11 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
 
   const go = (target: Kind, id: string) => guarded(() => {
     if (target === kind && id === selectedId) return;
-    if (current) setTrail((prev) => [...prev.slice(-4), { kind, id: current.id, name: current.name }]);
     navigate(pathOf(target, id));
-  });
-
-  const backTo = (entry: { kind: Kind; id: string }) => guarded(() => {
-    setTrail((prev) => prev.slice(0, -1));
-    navigate(pathOf(entry.kind, entry.id));
   });
 
   const switchKind = (target: Kind) => guarded(() => {
     if (target === kind) return;
-    setTrail([]);
     navigate(`/yiwenlu?p=${target}`);
   });
 
@@ -197,7 +188,6 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
       await api(`/creator/${SEGMENT[kind]}/${current.id}`, { method: "DELETE" });
       setEditing(false);
       setIsNew(false);
-      setTrail([]);
       setNotice(`已删除${LABEL[kind]}`);
       navigate(`/yiwenlu?p=${kind}`);
     } catch (cause) {
@@ -231,10 +221,9 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
   const nameMax = LIMIT.name[kind];
   const slotsShown = editing && kind === "character" ? form.ability_ids.length : equipped.length;
   const emptySlots = Math.max(0, SLOTS - slotsShown);
-  const lastTrail = trail[trail.length - 1];
 
   return (
-    <Tabs.Root value={kind} onValueChange={(value) => void switchKind(value as Kind)} activationMode="manual">
+    <Tabs.Root value={kind} onValueChange={(value) => void switchKind(value as Kind)} activationMode="manual" className="codex-workspace">
     <PageShell
       width="wide"
       title="异闻录"
@@ -257,6 +246,11 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
               </Tabs.Trigger>
             ))}
           </Tabs.List>
+          <div className="codex__create">
+            <button className="btn btn-primary" disabled={busy} onClick={() => enterCreate()}>
+              <PlusIcon size={14} /> 新建{LABEL[kind]}
+            </button>
+          </div>
           <nav className="codex__list" aria-label={`${LABEL[kind]}名册`}>
             {list.length === 0 ? (
               <p className="codex__list-empty">这一篇还没有{LABEL[kind]}。</p>
@@ -296,23 +290,10 @@ export default function Yiwenlu({ kind: routeKind }: { kind?: Kind }) {
               ))
             )}
           </nav>
-          <div className="codex__rail-foot">
-            <button className="btn btn-primary" disabled={busy} onClick={() => enterCreate()}>
-              <PlusIcon size={14} /> 新建{LABEL[kind]}
-            </button>
-          </div>
         </aside>
 
         {/* ---------- 右：查看 / 编辑一体 ---------- */}
         <Tabs.Content value={kind} className="codex__main">
-          {lastTrail && !isNew && (
-            /* 这不是「返回上一层」，而是同一页内退回刚看过的那一条，所以用文字形态 */
-            <button type="button" className="nav-inline" onClick={() => backTo(lastTrail)} aria-label={`回到 ${lastTrail.name}`}>
-              <ChevronLeftIcon size={14} />
-              <span>回到 {lastTrail.name}</span>
-            </button>
-          )}
-
           <article className="codex__sheet">
             {(error || notice) && (
               <p className={error ? "err" : "codex__notice"} role={error ? "alert" : "status"}>{error || notice}</p>
