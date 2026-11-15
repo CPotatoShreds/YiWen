@@ -125,10 +125,15 @@ export default function ScenarioRosterDetail() {
 
   const clues = useMemo<Clue[]>(() => {
     if (!current || !progress) return [];
-    const collected: Clue[] = [];
-    for (const item of current.feedback ?? []) {
-      if (item.text) collected.push({ text: item.text, verdict: item.verdict, round: item.round });
+    // feedback 已是这张卡聚合好的线索；与 guess_rounds 的 matches/comments 是后端同一份数据的
+    // 冗余视图，若两者都收集会重复显示，故只在 feedback 缺失时回退到 guess_rounds（兼容旧数据）。
+    if (current.feedback?.length) {
+      return [...current.feedback]
+        .filter((item) => item.text)
+        .map((item) => ({ text: item.text, verdict: item.verdict, round: item.round }))
+        .reverse();
     }
+    const collected: Clue[] = [];
     for (const [ri, round] of (progress.guess_rounds ?? []).entries()) {
       for (const m of round.matches ?? [])
         if (m.card_index === current.index && m.text)

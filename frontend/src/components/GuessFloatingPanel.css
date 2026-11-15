@@ -39,6 +39,8 @@
 .guess-window__header .btn { flex: none; min-width: 44px; padding: 10px; }
 .guess-window__results { flex: 1; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
 .guess-window__status { margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+.guess-window__round { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.guess-window__round:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .guess-window__question { margin-bottom: 16px; padding-left: 10px; border-left: 3px solid var(--accent); white-space: pre-wrap; font-size: 14px; }
 .guess-window .roster-clue { gap: 16px; }
 .guess-window .roster-clue > div { flex: 1; min-width: 0; }

@@ -90,14 +90,20 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
   const knownCards = state.data?.guess_cards ?? cards;
   const allCracked = knownCards.length > 0 && knownCards.every(card => card.cracked);
   const knownRounds = state.data?.guess_rounds ?? rounds;
-  const round = selectedRound
-    ? knownRounds.find(item => item.id === selectedRound) ?? { text: submittedText, status: "matching" }
-    : knownRounds.at(-1);
-  const matches = roundMatches(round);
+  // 刚提交、后端尚未回传的轮次：用提交原文兜底，避免结果区一闪而空
+  const justSubmitted = selectedRound && !knownRounds.some(item => item.id === selectedRound)
+    ? { id: selectedRound, text: submittedText, status: "matching" }
+    : null;
+  // 全部历史轮次，最新在上；justSubmitted 若存在则置于最顶
+  const shownRounds = [
+    ...(justSubmitted ? [justSubmitted] : []),
+    ...[...knownRounds].reverse(),
+  ];
   const busy = guess.isPending || verify.isPending || Boolean(state.data?.guess_in_flight || state.data?.verify_in_flight);
   const unavailable = !challengeId ? "尚无可用对局" : state.data?.status === "failed" ? "对局已失败" : allCracked ? "已看破全部奇术" : available <= 0 ? "当前没有可用的提问次数" : "";
   const blocked = !state.data || state.isError || state.data.status === "failed";
-  const status = state.data?.verify_in_flight || verify.isPending ? "检定中" : busy ? "判定中" : round?.status === "failed" ? "本次猜测失败" : round ? "本次结果" : "";
+  const latestStatus = shownRounds[0]?.status;
+  const status = state.data?.verify_in_flight || verify.isPending ? "检定中" : busy ? "判定中" : latestStatus === "failed" ? "本次猜测失败" : "";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -130,13 +136,16 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
           {challengeId && state.isPending && <p role="status">载入中</p>}
           {state.isError && <div role="alert"><p className="err">{state.error.message}</p><button className="btn" onClick={() => void state.refetch()}>重试</button></div>}
           {status && <p role="status" className="guess-window__status">{status}</p>}
-          {round && <section aria-label="本次猜词结果">
-            <p className="guess-window__question">{round.text}</p>
-            <div className="roster-clues">{matches.map((match, index) => <article className="roster-clue" key={`${match.card_index}-${match.atom_index}-${index}`}>
-              <div><span className="muted">第 {match.card_index ?? "?"} 门奇术</span><p className="roster-clue__text">{match.text}</p></div>
-              <span className={`roster-clue__verdict ${verdictClass(match.verdict)}`}>{match.status === "failed" ? "判定失败" : match.verdict === "不能确定" ? "不确定" : match.verdict === "半对" ? "部分是" : match.verdict}</span>
-            </article>)}</div>
-          </section>}
+          {shownRounds.length > 0 && shownRounds.map((round, index) => {
+            const matches = roundMatches(round);
+            return <section key={round.id ?? round.text} className="guess-window__round" aria-label={index === 0 ? "本次猜词结果" : "往次猜词结果"}>
+              {round.text && <p className="guess-window__question">{round.text}</p>}
+              {matches.length > 0 && <div className="roster-clues">{matches.map((match, index) => <article className="roster-clue" key={`${match.card_index}-${match.atom_index}-${index}`}>
+                <div><span className="muted">第 {match.card_index ?? "?"} 门奇术</span><p className="roster-clue__text">{match.text}</p></div>
+                <span className={`roster-clue__verdict ${verdictClass(match.verdict)}`}>{match.status === "failed" ? "判定失败" : match.verdict === "不能确定" ? "不确定" : match.verdict === "半对" ? "部分是" : match.verdict}</span>
+              </article>)}</div>}
+            </section>;
+          })}
           {verifyRequested && !busy && !state.isError && <p role="status">已看破 {knownCards.filter(card => card.cracked).length} / {knownCards.length} 门</p>}
           {unavailable && <p className="muted">{unavailable}</p>}
           {(guess.error || verify.error) && <p className="err" role="alert">{(guess.error || verify.error)?.message}</p>}
