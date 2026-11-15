@@ -6,14 +6,9 @@ import { CardBack, SealStamp } from "../components/Ornaments";
 import { BackButton } from "../components/PageShell";
 import { ScenarioHistory } from "../components/ScenarioHistory";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
+import GuessFloatingPanel from "../components/GuessFloatingPanel";
+import { verdictClass, type GuessCard as Card, type GuessRound } from "../guessModel";
 
-type Feedback = { text?: string; verdict?: string; round?: number | string };
-type GuessRound = {
-  attempt?: number;
-  matches?: { card_index?: number; text?: string; verdict?: string }[];
-  comments?: { index?: number; items?: { text?: string; verdict?: string }[] }[];
-};
-type Card = { index: number; cracked: boolean; name?: string; effect?: string; feedback?: Feedback[] };
 type Progress = {
   attempts: number;
   guess_count: number;
@@ -107,15 +102,6 @@ function cardStyle(position: number, count: number): CSSProperties {
   };
 }
 
-// 猜词检定的裁定词 → 配色语义（是=墨绿 否=朱砂 部分/不确定=中性）
-function verdictClass(v?: string) {
-  if (!v) return "verdict-neutral";
-  if (v === "是") return "verdict-yes";
-  if (v === "否") return "verdict-no";
-  if (v === "部分是") return "verdict-partial";
-  return "verdict-neutral";
-}
-
 export default function ScenarioRosterDetail() {
   const { scenarioSlug, rosterId } = useParams<{ scenarioSlug: string; rosterId: string }>();
   const detailQuery = useApiQuery<Detail>(`/scenarios/${scenarioSlug}/rosters/${rosterId}`, !!scenarioSlug && !!rosterId);
@@ -161,7 +147,7 @@ export default function ScenarioRosterDetail() {
     if (cards.length) setActiveCard((i) => (i + step + cards.length) % cards.length);
   };
 
-  if (error) return <p className="roster-error">{error}</p>;
+  if (error && !detail) return <p className="roster-error">{error}</p>;
   if (!detail) return <div className="roster-skeleton" />;
 
   const cracked = cards.filter((c) => c.cracked).length;
@@ -335,6 +321,15 @@ export default function ScenarioRosterDetail() {
           </div>
         </div>
       </section>
+      {detail.viewer_role === "challenger" && <GuessFloatingPanel
+        key={rosterId}
+        rosterPath={`/scenarios/${scenarioSlug}/rosters/${rosterId}`}
+        characterName={detail.roster.character_name}
+        history={detail.my_challenges}
+        rounds={progress?.guess_rounds ?? []}
+        cards={cards}
+        credits={progress?.guess_credits ?? 0}
+      />}
     </div>
   );
 }
