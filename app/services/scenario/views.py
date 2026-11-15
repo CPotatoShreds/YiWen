@@ -32,6 +32,18 @@ def public_cards(cards: list[dict] | None) -> list[dict]:
                 feedback.append({"text": str(entry.get("text", "")), "verdict": public_verdict(entry.get("verdict")), "round": entry.get("round")})
         if feedback:
             item["feedback"] = feedback
+        # 仅公开检定的顺序与真假结果；缺口和模型分析继续留在服务端。
+        verifies = []
+        for entry in card.get("verifies") or []:
+            if not isinstance(entry, dict) or type(entry.get("round")) is not int or type(entry.get("cracked")) is not bool:
+                continue
+            visible = {"round": entry["round"], "cracked": entry["cracked"]}
+            for key in ("id", "created_at"):
+                if isinstance(entry.get(key), str):
+                    visible[key] = entry[key]
+            verifies.append(visible)
+        if verifies:
+            item["verifies"] = verifies
         result.append(item)
     return result
 

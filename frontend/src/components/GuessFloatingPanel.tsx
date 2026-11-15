@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "../api";
-import { roundMatches, verdictClass, type GuessCard, type GuessRound, type GuessState } from "../guessModel";
+import { guessAtoms, verificationRows, type GuessCard, type GuessRound, type GuessState } from "../guessModel";
 import type { ScenarioHistoryItem } from "../scenarioModel";
 import { XIcon } from "./icons";
+import { useFloatingBall } from "../useFloatingBall";
+import GuessAnswers from "./GuessAnswers";
 import "./GuessFloatingPanel.css";
 
 type Props = {
@@ -23,18 +25,20 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
   const [draft, setDraft] = useState("");
   const [selectedRound, setSelectedRound] = useState<string>();
   const [submittedText, setSubmittedText] = useState("");
-  const [verifyRequested, setVerifyRequested] = useState(false);
-  const [viewport, setViewport] = useState<CSSProperties>({});
+  const [verification, setVerification] = useState<{ id: string; afterRound: number; legacy: boolean }>();
+  const floating = useFloatingBall();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const submitLock = useRef(false);
   const inputId = useId();
+  const dragHintId = useId();
   const pendingRound = [...rounds].reverse().find(round =>
     (round.status === "splitting" || round.status === "matching") &&
     !history.some(item => item.id === round.challenge_id && (item.status === "failed" || item.is_trial)),
   );
-  // 固定在本次访问的对局，避免详情刷新时把仍在判定的请求切到另一场。
-  const [challengeId] = useState(() => pendingRound?.challenge_id ?? history.find(item => item.status !== "failed" && !item.is_trial)?.id);
+  const [boundChallenge, setBoundChallenge] = useState<string>();
+  const candidate = pendingRound?.challenge_id ?? history.find(item => item.status !== "failed" && !item.is_trial)?.id;
+  const challengeId = boundChallenge && !history.some(item => item.id === boundChallenge && item.status === "failed") ? boundChallenge : candidate;
   const path = `/scenario-challenges/${challengeId}`;
   const state = useQuery<GuessState>({
     queryKey: ["api", path],
@@ -49,38 +53,22 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
     if (state.data) void client.invalidateQueries({ queryKey: ["api", rosterPath], exact: true });
   }, [state.data, client, rosterPath]);
 
-  useEffect(() => {
-    if (!open || !window.visualViewport) return;
-    const visual = window.visualViewport;
-    const update = () => setViewport({
-      "--guess-viewport-height": `${visual.height}px`,
-      "--guess-keyboard-offset": `${Math.max(0, window.innerHeight - visual.height - visual.offsetTop)}px`,
-    } as CSSProperties);
-    update();
-    visual.addEventListener("resize", update);
-    visual.addEventListener("scroll", update);
-    return () => {
-      visual.removeEventListener("resize", update);
-      visual.removeEventListener("scroll", update);
-    };
-  }, [open]);
-
   const guess = useMutation({
     mutationFn: (text: string) => request<{ round_id: string }>(`${path}/guess`, { method: "POST", body: JSON.stringify({ text }) }),
     onSuccess: async (result, text) => {
       setSelectedRound(result.round_id);
       setSubmittedText(text);
       setDraft("");
-      setVerifyRequested(false);
+
       await state.refetch();
     },
     // POST 不自动重试：先回读服务端状态，避免网络中断导致重复扣次数。
     onError: async () => { await state.refetch(); },
   });
   const verify = useMutation({
-    mutationFn: () => request(`${path}/guess/verify`, { method: "POST" }),
-    onSuccess: async () => {
-      setVerifyRequested(true);
+    mutationFn: () => request<{ verification_id?: string }>(`${path}/guess/verify`, { method: "POST" }),
+    onSuccess: async result => {
+      setVerification({ id: result.verification_id ?? `local:${Date.now()}`, afterRound: knownRounds.length, legacy: !result.verification_id });
       await state.refetch();
     },
     onError: async () => { await state.refetch(); },
@@ -105,22 +93,33 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
   const latestStatus = shownRounds[0]?.status;
   const status = state.data?.verify_in_flight || verify.isPending ? "检定中" : busy ? "判定中" : latestStatus === "failed" ? "本次猜测失败" : "";
 
+  const verifications = verificationRows(knownCards, verification ? { ...verification, complete: !busy && !state.isError } : undefined, Boolean(state.data?.verify_in_flight));
+  const timeline: ({ kind: "guess"; key: string; round: GuessRound; latest: boolean } | { kind: "verify"; key: string; result: typeof verifications[number] })[] = [];
+  [...shownRounds].reverse().forEach((round, index) => {
+    timeline.push({ kind: "guess", key: `guess:${round.id ?? index}`, round, latest: round === shownRounds[0] });
+    verifications.filter(item => item.afterRound === index + 1).forEach(result => timeline.push({ kind: "verify", key: result.id, result }));
+  });
+  verifications.filter(item => item.afterRound <= 0 || item.afterRound > shownRounds.length).forEach(result => timeline.push({ kind: "verify", key: result.id, result }));
+  timeline.reverse();
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
     if (!text || busy || blocked || unavailable || submitLock.current) return;
     submitLock.current = true;
+    setBoundChallenge(challengeId);
     verify.reset();
     try { await guess.mutateAsync(text); } catch { /* 错误在窗口内显示，草稿保留 */ }
     finally { submitLock.current = false; }
   }
 
   return <Dialog.Root open={open} onOpenChange={setOpen} modal={false}>
-    <Dialog.Trigger className="guess-fab" style={viewport} aria-label="道出猜测" aria-busy={busy}>
+    <Dialog.Trigger className="guess-fab" style={floating.style} {...floating.handlers} data-dragging={floating.dragging} data-covered={floating.covered} aria-label="道出猜测" aria-describedby={dragHintId} aria-busy={busy}>
       猜测{busy && <span className="guess-fab__pending" aria-hidden="true" />}
     </Dialog.Trigger>
+    <span id={dragHintId} className="guess-drag-hint">可拖动；方向键调整位置，按 Enter 展开。</span>
     <Dialog.Portal>
-      <Dialog.Content className="guess-window" style={viewport} aria-describedby={undefined}
+      <Dialog.Content className="guess-window" style={floating.style} aria-describedby={undefined}
         onOpenAutoFocus={event => {
           event.preventDefault();
           if (window.matchMedia("(max-width: 600px)").matches || inputRef.current?.disabled) titleRef.current?.focus();
@@ -136,17 +135,15 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
           {challengeId && state.isPending && <p role="status">载入中</p>}
           {state.isError && <div role="alert"><p className="err">{state.error.message}</p><button className="btn" onClick={() => void state.refetch()}>重试</button></div>}
           {status && <p role="status" className="guess-window__status">{status}</p>}
-          {shownRounds.length > 0 && shownRounds.map((round, index) => {
-            const matches = roundMatches(round);
-            return <section key={round.id ?? round.text} className="guess-window__round" aria-label={index === 0 ? "本次猜词结果" : "往次猜词结果"}>
-              {round.text && <p className="guess-window__question">{round.text}</p>}
-              {matches.length > 0 && <div className="roster-clues">{matches.map((match, index) => <article className="roster-clue" key={`${match.card_index}-${match.atom_index}-${index}`}>
-                <div><span className="muted">第 {match.card_index ?? "?"} 门奇术</span><p className="roster-clue__text">{match.text}</p></div>
-                <span className={`roster-clue__verdict ${verdictClass(match.verdict)}`}>{match.status === "failed" ? "判定失败" : match.verdict === "不能确定" ? "不确定" : match.verdict === "半对" ? "部分是" : match.verdict}</span>
-              </article>)}</div>}
-            </section>;
-          })}
-          {verifyRequested && !busy && !state.isError && <p role="status">已看破 {knownCards.filter(card => card.cracked).length} / {knownCards.length} 门</p>}
+          {timeline.map(entry => entry.kind === "guess" ? <section key={entry.key} className="guess-window__round" aria-label={entry.latest ? "本次猜词结果" : "往次猜词结果"}>
+            {guessAtoms(entry.round, knownCards).map(atom => <article className="guess-atom" key={atom.index}>
+              <p className="guess-window__question">{atom.text}</p>
+              <GuessAnswers answers={atom.answers} />
+            </article>)}
+          </section> : <section key={entry.key} className="guess-window__round" aria-label="看破检定结果">
+            <p className="guess-window__question">进行了看破检定</p>
+            <GuessAnswers answers={entry.result.answers} />
+          </section>)}
           {unavailable && <p className="muted">{unavailable}</p>}
           {(guess.error || verify.error) && <p className="err" role="alert">{(guess.error || verify.error)?.message}</p>}
         </div>
@@ -154,7 +151,7 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
           <label htmlFor={inputId}>猜测内容</label>
           <textarea id={inputId} ref={inputRef} className="textarea" rows={3} value={draft} onChange={event => setDraft(event.target.value)} disabled={!challengeId || allCracked} />
           <div className="guess-window__actions">
-            <button className="btn btn-ghost" type="button" disabled={busy || blocked || allCracked || !knownRounds.some(item => item.status === "complete")} onClick={() => { guess.reset(); verify.mutate(); }}>检定看破</button>
+            <button className="btn btn-ghost" type="button" disabled={busy || blocked || allCracked || !knownRounds.some(item => item.status === "complete")} onClick={() => { if (busy || blocked || submitLock.current) return; setBoundChallenge(challengeId); guess.reset(); verify.mutate(); }}>检定看破</button>
             <button className="btn btn-primary" disabled={busy || blocked || Boolean(unavailable) || !draft.trim()}>道出猜测</button>
           </div>
         </form>

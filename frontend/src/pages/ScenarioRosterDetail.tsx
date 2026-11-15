@@ -6,8 +6,7 @@ import { CardBack, SealStamp } from "../components/Ornaments";
 import { BackButton } from "../components/PageShell";
 import { ScenarioHistory } from "../components/ScenarioHistory";
 import { isInProgress, type ScenarioHistoryItem } from "../scenarioModel";
-import GuessFloatingPanel from "../components/GuessFloatingPanel";
-import { verdictClass, type GuessCard as Card, type GuessRound } from "../guessModel";
+import { cardClues, verdictClass, type GuessCard as Card, type GuessRound } from "../guessModel";
 
 type Progress = {
   attempts: number;
@@ -123,30 +122,7 @@ export default function ScenarioRosterDetail() {
   const progress = detail?.my_progress;
   const current = cards[activeCard];
 
-  const clues = useMemo<Clue[]>(() => {
-    if (!current || !progress) return [];
-    // feedback 已是这张卡聚合好的线索；与 guess_rounds 的 matches/comments 是后端同一份数据的
-    // 冗余视图，若两者都收集会重复显示，故只在 feedback 缺失时回退到 guess_rounds（兼容旧数据）。
-    if (current.feedback?.length) {
-      return [...current.feedback]
-        .filter((item) => item.text)
-        .map((item) => ({ text: item.text, verdict: item.verdict, round: item.round }))
-        .reverse();
-    }
-    const collected: Clue[] = [];
-    for (const [ri, round] of (progress.guess_rounds ?? []).entries()) {
-      for (const m of round.matches ?? [])
-        if (m.card_index === current.index && m.text)
-          collected.push({ text: m.text, verdict: m.verdict, round: round.attempt ?? ri + 1 });
-      for (const g of round.comments ?? [])
-        if (g.index === current.index)
-          for (const c of g.items ?? [])
-            if (c.text) collected.push({ text: c.text, verdict: c.verdict, round: round.attempt ?? ri + 1 });
-    }
-    const unique = new Map<string, Clue>();
-    for (const clue of collected) unique.set(`${clue.round}-${clue.text}`, clue);
-    return [...unique.values()].reverse();
-  }, [current, progress]);
+  const clues = useMemo<Clue[]>(() => current ? cardClues(progress?.guess_rounds ?? [], current) : [], [current, progress]);
 
   const moveCard = (step: number) => {
     if (cards.length) setActiveCard((i) => (i + step + cards.length) % cards.length);
@@ -326,15 +302,6 @@ export default function ScenarioRosterDetail() {
           </div>
         </div>
       </section>
-      {detail.viewer_role === "challenger" && <GuessFloatingPanel
-        key={rosterId}
-        rosterPath={`/scenarios/${scenarioSlug}/rosters/${rosterId}`}
-        characterName={detail.roster.character_name}
-        history={detail.my_challenges}
-        rounds={progress?.guess_rounds ?? []}
-        cards={cards}
-        credits={progress?.guess_credits ?? 0}
-      />}
     </div>
   );
 }

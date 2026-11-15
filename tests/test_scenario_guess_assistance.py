@@ -2,7 +2,56 @@ import asyncio
 from types import SimpleNamespace
 
 from app.services.guess import pipeline
+from app.services.scenario import flows
 from app.services.scenario.views import public_cards, public_guess_rounds
+
+
+def test_public_verification_history_exposes_only_identity_order_and_boolean():
+    payload = public_cards([{
+        "index": 1, "cracked": False,
+        "verifies": [{"id": "verify-1", "round": 2, "created_at": "2026-11-16T01:00:00", "cracked": False, "missing": "秘密条件", "reason": "内部分析"}, "old-invalid"],
+    }])
+    assert payload[0]["verifies"] == [{"id": "verify-1", "round": 2, "created_at": "2026-11-16T01:00:00", "cracked": False}]
+    assert "秘密条件" not in str(payload)
+    assert "内部分析" not in str(payload)
+
+
+def test_verification_uses_one_id_and_fixed_guess_round_for_all_card_results(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from app.models.scenario_domain import ScenarioChallengeRun
+
+    challenge = SimpleNamespace(roster_id="roster-1", challenger_id=1, roster_snapshot={"abilities": [{"name": "甲", "effect": "甲"}, {"name": "乙", "effect": "乙"}]}, verify_in_flight=True)
+    progress = SimpleNamespace(cracked_cards=[], guess_rounds=[{"text": "猜测一"}, {"text": "猜测二"}])
+    saved = []
+
+    class Session:
+        async def get(self, model, _key):
+            return challenge if model is ScenarioChallengeRun else progress
+
+        async def commit(self):
+            pass
+
+    @asynccontextmanager
+    async def session():
+        yield Session()
+
+    async def verification(**kwargs):
+        progress.guess_rounds.append({"text": "后来新增"})
+        await kwargs["on_result"](1, {"cracked": False, "missing": "内部"})
+        await kwargs["on_result"](0, {"cracked": True, "missing": ""})
+
+    async def save(_challenge_id, index, _verdict, **metadata):
+        saved.append({"index": index, **metadata})
+
+    monkeypatch.setattr(flows, "async_session_factory", session)
+    monkeypatch.setattr(flows, "run_guess_verification", verification)
+    monkeypatch.setattr(flows, "save_verify_result", save)
+    asyncio.run(flows.run_guess_verify("challenge-1", "verification-1"))
+    assert [item["verification_id"] for item in saved] == ["verification-1", "verification-1"]
+    assert [item["round_no"] for item in saved] == [2, 2]
+    assert saved[0]["created_at"] == saved[1]["created_at"]
+    assert challenge.verify_in_flight is False
 
 
 def test_public_guess_payload_hides_missing_and_normalizes_uncertain_verdict():

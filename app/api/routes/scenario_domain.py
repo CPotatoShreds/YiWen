@@ -44,13 +44,11 @@ from app.schemas.scenario_domain import (
 from app.services.scenario.flows import now as _now
 from app.services.scenario.normalization import normalize_title, slugify_title
 from app.services.scenario.stream import get_scenario_stream
-from app.services.scenario.views import (
-    guess_cards as _guess_cards,
-    public_cards as _public_cards,
-    public_guess_rounds as _public_guess_rounds,
-    sees_all as _sees_all,
-    visible_turn as _visible_turn,
-)
+from app.services.scenario.views import guess_cards as _guess_cards
+from app.services.scenario.views import public_cards as _public_cards
+from app.services.scenario.views import public_guess_rounds as _public_guess_rounds
+from app.services.scenario.views import sees_all as _sees_all
+from app.services.scenario.views import visible_turn as _visible_turn
 
 creator_router = APIRouter(prefix="/creator/scenarios", tags=["creator-scenario-rosters"])
 creator_roster_router = APIRouter(prefix="/creator/scenario-rosters", tags=["creator-scenario-rosters"])
@@ -725,8 +723,9 @@ async def challenge_verify(challenge_id: UUID, current: Annotated[User, Depends(
         raise HTTPException(400, "请先道出猜测")
     challenge.verify_in_flight = True
     await db.commit()
-    await dispatch("guess_verify", challenge.id)
-    return {"status": "accepted", "verify_in_flight": True, "guess_credits": progress.guess_credits}
+    verification_id = str(uuid4())
+    await dispatch("guess_verify", challenge.id, verification_id)
+    return {"status": "accepted", "verification_id": verification_id, "verify_in_flight": True, "guess_credits": progress.guess_credits}
 
 
 @challenge_router.post("/scenario-challenges/{challenge_id}/derive", status_code=202)

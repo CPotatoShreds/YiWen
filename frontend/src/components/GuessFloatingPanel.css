@@ -1,29 +1,33 @@
 .guess-fab {
   position: fixed;
   z-index: 40;
-  right: max(24px, env(safe-area-inset-right));
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: var(--guess-ball-left);
+  top: var(--guess-ball-top);
   width: 56px;
   height: 56px;
   border: 1px solid var(--accent-strong);
   border-radius: 50%;
-  background: var(--accent);
+  background: radial-gradient(circle at 32% 25%, color-mix(in srgb, var(--accent) 72%, var(--surface)), var(--accent) 48%, var(--accent-strong));
   color: var(--on-accent);
-  box-shadow: 0 5px 18px rgba(var(--ink-rgb), .22);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,.3), inset 0 -3px 6px rgba(var(--ink-rgb), .18), 0 5px 18px rgba(var(--ink-rgb), .25);
   font: 700 14px var(--font-body);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.guess-fab:hover, .guess-fab[data-state="open"] { background: var(--accent-strong); }
+.guess-fab[data-dragging="true"] { cursor: grabbing; }
+.guess-fab[data-covered="true"][data-state="open"] { visibility: hidden; }
+.guess-drag-hint { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .guess-fab__pending { position: absolute; top: 1px; right: 1px; width: 10px; height: 10px; border: 2px solid var(--surface); border-radius: 50%; background: var(--ink); }
 .guess-window {
   position: fixed;
   z-index: 41;
-  right: max(24px, env(safe-area-inset-right));
-  bottom: calc(96px + env(safe-area-inset-bottom) + var(--guess-keyboard-offset, 0px));
+  left: var(--guess-panel-left);
+  top: var(--guess-panel-top);
   display: flex;
   flex-direction: column;
-  width: min(400px, calc(100vw - 32px));
-  height: min(560px, calc(var(--guess-viewport-height, 100dvh) - 120px));
+  width: var(--guess-panel-width);
+  height: var(--guess-panel-height);
   border: 1px solid var(--line-strong);
   border-top: 3px solid var(--accent);
   border-radius: var(--radius);
@@ -39,22 +43,22 @@
 .guess-window__header .btn { flex: none; min-width: 44px; padding: 10px; }
 .guess-window__results { flex: 1; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
 .guess-window__status { margin-bottom: 12px; font-size: 13px; color: var(--muted); }
-.guess-window__round { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.guess-window__round { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
 .guess-window__round:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-.guess-window__question { margin-bottom: 16px; padding-left: 10px; border-left: 3px solid var(--accent); white-space: pre-wrap; font-size: 14px; }
-.guess-window .roster-clue { gap: 16px; }
-.guess-window .roster-clue > div { flex: 1; min-width: 0; }
-.guess-window .roster-clue__text { font-size: 14px; }
-.guess-window .roster-clue__verdict { flex: none; font-size: 12px; }
+.guess-window__question { margin-bottom: 10px; padding-left: 10px; border-left: 3px solid var(--accent); white-space: pre-wrap; font-size: 14px; }
+.guess-atom + .guess-atom { margin-top: 14px; }
+.guess-answers { display: grid; grid-template-columns: repeat(var(--guess-card-count), minmax(0, 1fr)); gap: 6px; list-style: none; margin: 0; padding: 0; }
+.guess-answer { display: flex; gap: 4px; align-items: center; justify-content: center; min-width: 0; padding: 7px 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12px; white-space: nowrap; }
+.guess-answer__index { font: 10px var(--font-mono); opacity: .75; }
+.guess-answer.verdict-yes { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 30%, var(--line)); }
+.guess-answer.verdict-no { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.guess-answer.verdict-partial, .guess-answer.verdict-neutral { color: var(--muted); }
 .guess-window__form { flex: none; display: grid; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid var(--line); }
 .guess-window__form label { font-size: 14px; font-weight: 600; }
 .guess-window__form .textarea { width: 100%; min-height: 64px; max-height: 120px; resize: vertical; }
 .guess-window__actions { display: flex; gap: 12px; justify-content: space-between; }
 @media (max-width: 600px) {
-  .roster-page:has(.guess-fab) { padding-bottom: 64px; }
-  .guess-fab { right: max(16px, env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
-  .guess-fab[data-state="open"] { visibility: hidden; }
-  .guess-window { right: max(16px, env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom) + var(--guess-keyboard-offset, 0px)); height: min(560px, calc(var(--guess-viewport-height, 100dvh) - 32px - env(safe-area-inset-bottom))); }
+  .app-redesign:has(.guess-fab) .container { padding-bottom: 96px; }
   .guess-window__header { padding: 8px 12px; gap: 8px; }
   .guess-window__form { padding: 8px 12px; gap: 6px; }
   .guess-window__form .textarea { height: clamp(64px, calc(var(--guess-viewport-height, 100dvh) - 300px), 96px); resize: none; }

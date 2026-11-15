@@ -11,7 +11,7 @@ import asyncio
 import json
 from collections.abc import Awaitable
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
@@ -451,7 +451,7 @@ async def run_guess_round(challenge_id: UUID, round_id: str, text: str) -> None:
                 await db.commit()
 
 
-async def save_verify_result(challenge_id: UUID, card_index: int, verdict: dict) -> None:
+async def save_verify_result(challenge_id: UUID, card_index: int, verdict: dict, *, verification_id: str, round_no: int, created_at: str) -> None:
     async with async_session_factory() as db:
         challenge = await db.get(ScenarioChallengeRun, challenge_id)
         if challenge is None:
@@ -461,10 +461,10 @@ async def save_verify_result(challenge_id: UUID, card_index: int, verdict: dict)
             return
         cards = guess_cards(progress, challenge.roster_snapshot.get("abilities", []))
         card = cards[card_index]
-        card["verifies"] = [*card.get("verifies", []), {"round": len(progress.guess_rounds), "cracked": verdict["cracked"], "missing": verdict["missing"]}]
+        card["verifies"] = [*card.get("verifies", []), {"id": verification_id, "round": round_no, "created_at": created_at, "cracked": verdict["cracked"], "missing": verdict["missing"]}]
         if verdict["cracked"]:
             card["cracked"] = True
-            card["cracked_round"] = len(progress.guess_rounds)
+            card["cracked_round"] = round_no
             card["missing"] = ""
         else:
             card["missing"] = verdict["missing"]
@@ -472,7 +472,9 @@ async def save_verify_result(challenge_id: UUID, card_index: int, verdict: dict)
         await db.commit()
 
 
-async def run_guess_verify(challenge_id: UUID) -> None:
+async def run_guess_verify(challenge_id: UUID, verification_id: str | None = None) -> None:
+    verification_id = verification_id or str(uuid4())
+    created_at = now().isoformat()
     try:
         async with async_session_factory() as db:
             challenge = await db.get(ScenarioChallengeRun, challenge_id)
@@ -493,7 +495,7 @@ async def run_guess_verify(challenge_id: UUID) -> None:
             cards=cards,
             round_no=len(rounds),
             trace_context={"kind": "scenario", "trace_id": str(challenge_id)},
-            on_result=lambda index, verdict: save_verify_result(challenge_id, index, verdict),
+            on_result=lambda index, verdict: save_verify_result(challenge_id, index, verdict, verification_id=verification_id, round_no=len(rounds), created_at=created_at),
         )
     finally:
         async with async_session_factory() as db:
