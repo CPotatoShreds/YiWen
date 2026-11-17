@@ -100,7 +100,8 @@ export function guessAtoms(round: GuessRound, cards: GuessCard[]): GuessAtom[] {
 }
 
 export function cardClues(rounds: GuessRound[], card: GuessCard) {
-  const clues = [...rounds].reverse().flatMap((round, index) => guessAtoms(round, [card]).map(atom => ({
+  // 正序：旧轮次在上、新轮次在下（新线索追加在底部）
+  const clues = [...rounds].flatMap((round, index) => guessAtoms(round, [card]).map(atom => ({
     text: atom.text, verdict: atom.answers[0]?.label, round: `${round.id ?? rounds.length - index}/${atom.index}`,
   })));
   if (clues.length) return clues;

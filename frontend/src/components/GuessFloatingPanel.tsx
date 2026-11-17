@@ -95,12 +95,12 @@ export default function GuessFloatingPanel({ rosterPath, characterName, history,
 
   const verifications = verificationRows(knownCards, verification ? { ...verification, complete: !busy && !state.isError } : undefined, Boolean(state.data?.verify_in_flight));
   const timeline: ({ kind: "guess"; key: string; round: GuessRound; latest: boolean } | { kind: "verify"; key: string; result: typeof verifications[number] })[] = [];
+  // 旧轮次在上、新轮次在下：shownRounds 是「最新在上」，倒过来遍历即得正序时间线
   [...shownRounds].reverse().forEach((round, index) => {
     timeline.push({ kind: "guess", key: `guess:${round.id ?? index}`, round, latest: round === shownRounds[0] });
     verifications.filter(item => item.afterRound === index + 1).forEach(result => timeline.push({ kind: "verify", key: result.id, result }));
   });
   verifications.filter(item => item.afterRound <= 0 || item.afterRound > shownRounds.length).forEach(result => timeline.push({ kind: "verify", key: result.id, result }));
-  timeline.reverse();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
